@@ -469,7 +469,7 @@ export const getMyConversationFn = createServerFn({ method: 'GET' })
       await import('@/lib/server/domains/settings/settings.widget')
     const { isConversationsEnabled } =
       await import('@/lib/server/domains/settings/settings.support')
-    const { getSettings } = await import('./workspace')
+    const { readSettings } = await import('./workspace')
     const { isEmailConfigured } = await import('@quackback/email')
     const { canEmailVisitor } = await import('@/lib/shared/conversation/reply-capability')
     const { widgetTranslationFor } = await import('@/lib/shared/widget/translations')
@@ -478,7 +478,7 @@ export const getMyConversationFn = createServerFn({ method: 'GET' })
     const [enabled, messengerConfig, appSettings, widgetConfig] = await Promise.all([
       isConversationsEnabled(),
       getMessengerConfig(),
-      getSettings(),
+      readSettings(),
       getWidgetConfig(),
     ])
     // Per-locale copy override for this visitor's language (base copy is the

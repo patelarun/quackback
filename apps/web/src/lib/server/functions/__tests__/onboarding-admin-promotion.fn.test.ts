@@ -22,7 +22,10 @@ const hoisted = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/server/auth/session', () => ({ getSession: hoisted.getSession }))
-vi.mock('@/lib/server/functions/workspace', () => ({ getSettings: hoisted.getSettings }))
+vi.mock('@/lib/server/functions/workspace', () => ({
+  getSettings: hoisted.getSettings,
+  readSettings: hoisted.getSettings,
+}))
 vi.mock('@/lib/server/domains/principals/principal.service', () => ({
   syncPrincipalProfile: vi.fn(),
 }))

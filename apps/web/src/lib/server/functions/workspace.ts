@@ -18,35 +18,49 @@ const log = logger.child({ component: 'workspace' })
  * reads use the settings domain service (getTenantSettings / isFeatureEnabled)
  * instead of casting a column off this row.
  */
-export const getSettings = createServerFn({ method: 'GET' }).handler(async () => {
+export const getSettings = createServerFn({ method: 'GET' }).handler(async () => readSettings())
+
+/**
+ * Plain (non-server-function) settings read, for callers that are ALREADY on the
+ * server.
+ *
+ * Calling a server function from inside another one makes the compiler emit a
+ * client RPC stub for the inner call, and that stub's id is never registered in
+ * the server manifest — the call then fails at runtime with "Server function
+ * info not found for <id>". Server-side callers must use this instead.
+ */
+export async function readSettings() {
   const org = await db.query.settings.findFirst()
   return org ?? null
-})
+}
 
 /**
  * Get current user's role if logged in
  */
 export const getCurrentUserRole = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<Role | null> => {
-    log.debug('get current user role')
-    const session = await getSession()
-    if (!session?.user) {
-      log.debug('no session')
-      return null
-    }
-
-    const principalRecord = await db.query.principal.findFirst({
-      where: eq(principal.userId, session.user.id),
-    })
-
-    if (!principalRecord) {
-      log.debug('no principal')
-      return null
-    }
-    log.debug({ role: principalRecord.role }, 'current user role')
-    return principalRecord.role as Role
-  }
+  async (): Promise<Role | null> => readCurrentUserRole()
 )
+
+/** Plain current-user-role read for server-side callers. See {@link readSettings}. */
+export async function readCurrentUserRole(): Promise<Role | null> {
+  log.debug('get current user role')
+  const session = await getSession()
+  if (!session?.user) {
+    log.debug('no session')
+    return null
+  }
+
+  const principalRecord = await db.query.principal.findFirst({
+    where: eq(principal.userId, session.user.id),
+  })
+
+  if (!principalRecord) {
+    log.debug('no principal')
+    return null
+  }
+  log.debug({ role: principalRecord.role }, 'current user role')
+  return principalRecord.role as Role
+}
 
 /**
  * Validate API workspace access

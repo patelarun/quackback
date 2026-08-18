@@ -12,8 +12,8 @@ import type { BoardId, PostTagId, RoleId, UserTagId } from '@quackback/ids'
 import { getSetupState, isOnboardingComplete as checkComplete } from '@/lib/server/db'
 import type { TiptapContent } from '@/lib/shared/schemas/posts'
 import { requireAuth } from './auth-helpers'
+import { readSettings } from './workspace'
 import { getSession } from '@/lib/server/auth/session'
-import { getSettings } from './workspace'
 import {
   db,
   invitation,
@@ -376,7 +376,7 @@ export const fetchOnboardingStatus = createServerFn({ method: 'GET' }).handler(a
       .select({ id: principal.id })
       .from(principal)
       .where(and(eq(principal.type, 'user'), inArray(principal.role, ['admin', 'member']))),
-    getSettings(),
+    readSettings(),
     getWidgetConfig(),
     db.query.integrations.findFirst({
       columns: { id: true },
@@ -748,7 +748,7 @@ export const checkOnboardingState = createServerFn({ method: 'GET' }).handler(as
   }
 
   // Get settings to check setup state
-  const currentSettings = await getSettings()
+  const currentSettings = await readSettings()
   const setupState = getSetupState(currentSettings?.setupState ?? null)
   const isOnboardingComplete = checkComplete(setupState)
 

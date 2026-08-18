@@ -102,7 +102,7 @@ vi.mock('@/lib/server/functions/auth-helpers', () => ({
   policyActorFromAuth: (...a: unknown[]) => mockPolicyActor(...a),
 }))
 
-vi.mock('@/lib/server/functions/workspace', () => ({ getSettings: vi.fn() }))
+vi.mock('@/lib/server/functions/workspace', () => ({ getSettings: vi.fn(), readSettings: vi.fn() }))
 vi.mock('@/lib/server/domains/settings/settings.service', () => ({
   getPortalConfig: vi.fn().mockResolvedValue({}),
 }))
@@ -594,8 +594,8 @@ describe('getVoteSidebarDataFn — portal-visibility gate', () => {
     // exists is what gates the canVote computation.
     mockBoardRowLimit.mockResolvedValueOnce([{ access: { vote: 'authenticated' } }])
     // allowAnonymous flag returns true (workspace ON)
-    const { getSettings } = await import('../workspace')
-    vi.mocked(getSettings).mockResolvedValueOnce({
+    const { readSettings } = await import('../workspace')
+    vi.mocked(readSettings).mockResolvedValueOnce({
       portalConfig: { features: { allowAnonymous: true } },
     } as never)
     // Vote tier denies anonymous
@@ -613,8 +613,8 @@ describe('getVoteSidebarDataFn — portal-visibility gate', () => {
     const { hasAuthCredentials } = await import('../auth-helpers')
     vi.mocked(hasAuthCredentials).mockReturnValueOnce(false)
     mockBoardRowLimit.mockResolvedValueOnce([{ access: { vote: 'anonymous' } }])
-    const { getSettings } = await import('../workspace')
-    vi.mocked(getSettings).mockResolvedValueOnce({
+    const { readSettings } = await import('../workspace')
+    vi.mocked(readSettings).mockResolvedValueOnce({
       portalConfig: { features: { allowAnonymous: true } },
     } as never)
     mockCanVotePost.mockReturnValueOnce({ allowed: true })
@@ -632,8 +632,8 @@ describe('getVoteSidebarDataFn — portal-visibility gate', () => {
     const { hasAuthCredentials } = await import('../auth-helpers')
     vi.mocked(hasAuthCredentials).mockReturnValueOnce(false)
     mockBoardRowLimit.mockResolvedValueOnce([{ access: { vote: 'anonymous' } }])
-    const { getSettings } = await import('../workspace')
-    vi.mocked(getSettings).mockResolvedValueOnce({
+    const { readSettings } = await import('../workspace')
+    vi.mocked(readSettings).mockResolvedValueOnce({
       portalConfig: { features: { allowAnonymous: false } },
     } as never)
     mockCanVotePost.mockReturnValueOnce({ allowed: true })
@@ -665,8 +665,8 @@ describe('getVoteSidebarDataFn — portal-visibility gate', () => {
       .mockResolvedValueOnce(anonSession as never)
     mockBoardRowLimit.mockResolvedValueOnce([{ access: { vote: 'anonymous' } }])
     mockCanVotePost.mockReturnValueOnce({ allowed: true })
-    const { getSettings } = await import('../workspace')
-    vi.mocked(getSettings).mockResolvedValueOnce({
+    const { readSettings } = await import('../workspace')
+    vi.mocked(readSettings).mockResolvedValueOnce({
       portalConfig: { features: { allowAnonymous: false } },
     } as never)
     const { getVoteAndSubscriptionStatus } =
@@ -704,7 +704,7 @@ describe('getVoteSidebarDataFn — portal-visibility gate', () => {
       hasVoted: false,
       subscription: { subscribed: false, level: 'none', reason: null },
     } as never)
-    const { getSettings } = await import('../workspace')
+    const { readSettings } = await import('../workspace')
 
     const result = (await publicPostsHandlers[GET_VOTE_SIDEBAR_DATA]({
       data: { postId: 'pst_x' },
@@ -713,7 +713,7 @@ describe('getVoteSidebarDataFn — portal-visibility gate', () => {
     expect(result.isMember).toBe(true)
     expect(result.canVote).toBe(true)
     // The anonymous master switch is not consulted for a non-anonymous principal.
-    expect(vi.mocked(getSettings)).not.toHaveBeenCalled()
+    expect(vi.mocked(readSettings)).not.toHaveBeenCalled()
   })
 })
 

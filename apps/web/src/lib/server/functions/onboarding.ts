@@ -10,7 +10,7 @@ import {
 } from '@/lib/server/db'
 import { isAdmin } from '@/lib/shared/roles'
 import { getSession } from '@/lib/server/auth/session'
-import { getSettings } from './workspace'
+import { readSettings } from './workspace'
 import { syncPrincipalProfile } from '@/lib/server/domains/principals/principal.service'
 import {
   ensurePrincipalForUser,
@@ -127,7 +127,7 @@ export const saveWorkspaceAndGoalFn = createServerFn({ method: 'POST' })
       const workspaceName = data.workspaceName.trim()
       const slug = slugify(workspaceName)
       if (slug.length < 2) throw new Error('Invalid workspace name - cannot generate valid slug')
-      const existingSettings = await getSettings()
+      const existingSettings = await readSettings()
       const setupState = getSetupState(existingSettings?.setupState ?? null)
 
       if (existingSettings && setupState?.steps.workspace) {

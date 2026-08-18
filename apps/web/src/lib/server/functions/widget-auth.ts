@@ -61,8 +61,8 @@ export async function getWidgetSession(opts?: {
 
   const userId = sessionRecord.userId as UserId
 
-  const { getSettings } = await import('./workspace')
-  const appSettings = await getSettings()
+  const { readSettings } = await import('./workspace')
+  const appSettings = await readSettings()
   if (!appSettings) return null
 
   const { principal: principalRecord } = await ensurePrincipalForUser({

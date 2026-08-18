@@ -100,10 +100,10 @@ export const createCommentFn = createServerFn({ method: 'POST' })
       // Fail closed on a missing flag — read the raw config, not
       // getPortalConfig's permissive merged default (matches the vote/post
       // gates). The per-board comment tier is enforced downstream.
-      const { getSettings } = await import('./workspace')
+      const { readSettings } = await import('./workspace')
       const { workspaceAllowsAnonymous } =
         await import('@/lib/server/domains/settings/settings.types')
-      const settings = await getSettings()
+      const settings = await readSettings()
       if (!workspaceAllowsAnonymous(settings?.portalConfig)) {
         throw new Error('Anonymous interaction is not enabled')
       }

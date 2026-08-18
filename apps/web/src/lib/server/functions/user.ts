@@ -4,7 +4,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { type UserId, type PrincipalId } from '@quackback/ids'
 import { getSession } from '@/lib/server/auth/session'
 import { requireAuth } from './auth-helpers'
-import { getCurrentUserRole } from './workspace'
+import { readCurrentUserRole } from './workspace'
 import {
   db,
   user,
@@ -274,7 +274,7 @@ export const getUserRoleFn = createServerFn({ method: 'GET' }).handler(
       throw new Error('Authentication required')
     }
 
-    const role = await getCurrentUserRole()
+    const role = await readCurrentUserRole()
     log.debug({ role }, 'user role fetched')
     return { role }
   }

@@ -23,7 +23,7 @@ import {
   hasAuthCredentials,
   policyActorFromAuth,
 } from './auth-helpers'
-import { getSettings } from './workspace'
+import { readSettings } from './workspace'
 import { workspaceAllowsAnonymous } from '@/lib/server/domains/settings/settings.types'
 import { listPublicPosts, getAllUserVotedPostIds } from '@/lib/server/domains/posts/post.public'
 import {
@@ -391,7 +391,7 @@ export const toggleVoteFn = createServerFn({ method: 'POST' })
         // getPortalConfig's permissive merged default (matches
         // createPublicPostFn / the vote-sidebar gate). The per-board vote
         // tier was already enforced above by assertPostVotable.
-        const settings = await getSettings()
+        const settings = await readSettings()
         if (!workspaceAllowsAnonymous(settings?.portalConfig)) {
           throw new Error('Anonymous interaction is not enabled')
         }
@@ -447,7 +447,7 @@ export const createPublicPostFn = createServerFn({ method: 'POST' })
       getPublicBoardById(boardId, actor),
       getMemberByUser(ctx.user.id as UserId),
       getDefaultStatus(),
-      getSettings(),
+      readSettings(),
     ])
 
     if (!board) {
@@ -752,7 +752,7 @@ export const getVoteSidebarDataFn = createServerFn({ method: 'GET' })
     // switch (collapsed from the legacy anonymousVoting flag in
     // migration 0084). The per-board vote tier is the inner ceiling.
     if (!hasAuthCredentials()) {
-      const settings = await getSettings()
+      const settings = await readSettings()
       const anonEnabled = workspaceAllowsAnonymous(settings?.portalConfig)
       const canVote = anonEnabled && voteDecision.allowed
       log.debug(
@@ -780,7 +780,7 @@ export const getVoteSidebarDataFn = createServerFn({ method: 'GET' })
     // anonymous sessions (sign-in cookie present but principal is anon).
     let canVote = voteDecision.allowed
     if (isAnonymous) {
-      const settings = await getSettings()
+      const settings = await readSettings()
       const anonEnabled = workspaceAllowsAnonymous(settings?.portalConfig)
       canVote = anonEnabled && voteDecision.allowed
     }

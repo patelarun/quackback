@@ -113,9 +113,9 @@ async function buildBoardPermissions(
  * migration 0084.
  */
 async function loadAllowAnonymous(): Promise<boolean> {
-  const { getSettings } = await import('./workspace')
+  const { readSettings } = await import('./workspace')
   const { workspaceAllowsAnonymous } = await import('@/lib/server/domains/settings/settings.types')
-  const settings = await getSettings()
+  const settings = await readSettings()
   return workspaceAllowsAnonymous(settings?.portalConfig)
 }
 

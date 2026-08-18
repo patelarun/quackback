@@ -45,6 +45,11 @@ vi.mock('@/lib/server/functions/workspace', () => ({
     slug: 'acme',
     name: 'Acme Inc',
   })),
+  readSettings: vi.fn(() => ({
+    id: 'ws_123',
+    slug: 'acme',
+    name: 'Acme Inc',
+  })),
 }))
 
 import { getWidgetSession } from '../widget-auth'

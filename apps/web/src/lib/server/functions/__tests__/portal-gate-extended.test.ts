@@ -179,6 +179,7 @@ vi.mock('@/lib/shared/roles', () => ({ isTeamMember: vi.fn().mockReturnValue(fal
 // getPortalConfig is still mocked for any merged-config consumers.
 vi.mock('@/lib/server/functions/workspace', () => ({
   getSettings: vi.fn().mockResolvedValue({ portalConfig: { features: { allowAnonymous: true } } }),
+  readSettings: vi.fn().mockResolvedValue({ portalConfig: { features: { allowAnonymous: true } } }),
 }))
 vi.mock('@/lib/server/domains/settings/settings.service', () => ({
   getPortalConfig: vi.fn().mockResolvedValue({ features: { allowAnonymous: true } }),
