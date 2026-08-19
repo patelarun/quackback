@@ -224,7 +224,11 @@ export function WidgetShell({
       {/* The Home hero backdrop fills the panel behind the header row and
           body; the header/content render transparently over it. */}
       {backdrop}
-      <div className="relative z-10 flex items-center justify-between gap-2 px-4 py-3 shrink-0">
+      {/* z-20, one above the body and tab bar: the user menu popover below is
+          absolutely positioned inside this header, so it can never paint above
+          a later sibling that shares the same z-index — its own z-50 only ranks
+          it within this stacking context. */}
+      <div className="relative z-20 flex items-center justify-between gap-2 px-4 py-3 shrink-0">
         {/* Left: back button on detail views; workspace logo on Home. */}
         <div className="flex items-center gap-1">
           {onHome && logoUrl && (
