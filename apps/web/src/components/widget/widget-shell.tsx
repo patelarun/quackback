@@ -427,18 +427,21 @@ export function WidgetShell({
           )}
         </AnimatePresence>
 
-        <div className="border-t border-border/20 py-2 flex items-center justify-center">
+        {/* Right-aligned and set smaller than body copy so the attribution
+            reads as a footnote rather than a call to action. The link, its
+            target and the tracking parameters are unchanged. */}
+        <div className="border-t border-border/20 px-4 py-1.5 flex items-center justify-end">
           <a
             href={`https://quackback.io?utm_campaign=${encodeURIComponent(orgSlug || 'unknown')}&utm_content=widget&utm_medium=referral&utm_source=powered-by`}
             target="_blank"
-            className="group inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-all"
+            className="group inline-flex items-center gap-1 text-[11px] leading-none text-muted-foreground/70 hover:text-foreground transition-all"
           >
             <img
               src="/logo.png"
               alt=""
-              width={11}
-              height={11}
-              className="opacity-60 group-hover:opacity-100 transition-opacity"
+              width={10}
+              height={10}
+              className="opacity-50 group-hover:opacity-100 transition-opacity"
             />
             <span>
               <FormattedMessage
