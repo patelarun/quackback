@@ -232,7 +232,7 @@ export function WidgetShell({
         {/* Left: back button on detail views; workspace logo on Home. */}
         <div className="flex items-center gap-1">
           {onHome && logoUrl && (
-            <img src={logoUrl} alt="" className="h-6 max-w-[120px] object-contain" />
+            <img src={logoUrl} alt="" className="h-8 max-w-[150px] object-contain" />
           )}
           {onBack && (
             <button
