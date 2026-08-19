@@ -20,6 +20,9 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { config } from '@/lib/server/config'
 import { sniffImageMime } from '@/lib/server/content/magic-bytes'
+import { logger } from '@/lib/server/logger'
+
+const log = logger.child({ component: 'storage-s3' })
 
 // ============================================================================
 // Configuration
@@ -103,6 +106,8 @@ interface S3Module {
     endpoint?: string
     forcePathStyle: boolean
     credentials: { accessKeyId: string; secretAccessKey: string }
+    requestChecksumCalculation?: 'WHEN_SUPPORTED' | 'WHEN_REQUIRED'
+    responseChecksumValidation?: 'WHEN_SUPPORTED' | 'WHEN_REQUIRED'
   }) => S3ClientInstance
   PutObjectCommand: new (input: BucketKeyInput) => S3Command
   GetObjectCommand: new (input: BucketKeyInput) => S3Command
@@ -160,6 +165,14 @@ async function getS3Client(): Promise<S3ClientInstance> {
       accessKeyId: s3Config.accessKeyId,
       secretAccessKey: s3Config.secretAccessKey,
     },
+    // AWS SDK v3.729+ sends `x-amz-checksum-crc32` on every PutObject by
+    // default. DigitalOcean Spaces does not implement the flexible-checksum
+    // headers and rejects the request, so server-side uploads fail with an
+    // opaque 500. Restricting checksums to operations that actually require
+    // them keeps real S3 correct while staying compatible with Spaces (and
+    // other S3-compatible backends such as R2 and B2).
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
   })
 
   return _s3Client
@@ -430,7 +443,11 @@ export async function uploadImageFromFormData(
     }
     const publicUrl = await uploadObject(key, body, file.type)
     return Response.json({ publicUrl })
-  } catch {
+  } catch (error) {
+    // Log the underlying S3 error: without it a storage misconfiguration is
+    // indistinguishable from a bad upload, and the client only ever sees
+    // "Upload failed".
+    log.error({ err: error, prefix: storagePrefix }, 'form-data image upload failed')
     return Response.json({ error: 'Upload failed' }, { status: 500 })
   }
 }

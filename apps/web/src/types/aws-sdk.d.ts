@@ -14,6 +14,8 @@ declare module '@aws-sdk/client-s3' {
         accessKeyId: string
         secretAccessKey: string
       }
+      requestChecksumCalculation?: 'WHEN_SUPPORTED' | 'WHEN_REQUIRED'
+      responseChecksumValidation?: 'WHEN_SUPPORTED' | 'WHEN_REQUIRED'
     })
   }
 
