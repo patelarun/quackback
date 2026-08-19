@@ -12,7 +12,7 @@ vi.mock('@/lib/server/storage/s3', async () => {
 
 const mockGetSettings = vi.fn()
 vi.mock('@/lib/server/functions/workspace', () => ({
-  getSettings: (...args: unknown[]) => mockGetSettings(...args),
+  readSettings: (...args: unknown[]) => mockGetSettings(...args),
 }))
 
 const mockIncrementBucket = vi.fn()

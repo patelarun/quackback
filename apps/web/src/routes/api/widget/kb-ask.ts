@@ -53,7 +53,7 @@ import {
   widgetJsonError,
 } from '@/lib/server/widget/public-endpoint'
 import { resolveWidgetViewer } from '@/lib/server/widget/widget-viewer'
-import { getSettings } from '@/lib/server/functions/workspace'
+import { readSettings } from '@/lib/server/functions/workspace'
 import type { Actor } from '@/lib/server/policy/types'
 import { enforceAiTokenBudget } from '@/lib/server/domains/settings/tier-enforce'
 import { TierLimitError } from '@/lib/server/errors/tier-limit-error'
@@ -179,7 +179,7 @@ export async function handleKbAsk({ request }: { request: Request }): Promise<Re
 
   // Tenant bucket is keyed on the resolved workspace, not caller-supplied
   // headers, so it can't be evaded the way a Host-header key could.
-  const settings = await getSettings()
+  const settings = await readSettings()
   if (!settings) return widgetJsonError(503, 'WORKSPACE_UNAVAILABLE', 'Workspace unavailable')
 
   const limited = await enforceWidgetQuota(request, {

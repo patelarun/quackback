@@ -41,7 +41,7 @@ vi.mock('@/lib/server/domains/ai/models', () => ({
 
 const mockGetSettings = vi.fn()
 vi.mock('@/lib/server/functions/workspace', () => ({
-  getSettings: (...args: unknown[]) => mockGetSettings(...args),
+  readSettings: (...args: unknown[]) => mockGetSettings(...args),
 }))
 
 import { ANONYMOUS_ACTOR } from '@/lib/server/policy/types'
