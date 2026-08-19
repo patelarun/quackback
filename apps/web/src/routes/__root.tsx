@@ -117,7 +117,11 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       updateBannerDismissedVersion,
     }
   },
-  head: () => ({
+  // `match.context` carries the `settings` resolved in beforeLoad, so admin and
+  // auth screens brand themselves from the workspace record instead of showing
+  // the upstream product name. The portal has its own richer head in
+  // `_portal.tsx` (OG tags, per-page titles) which overrides this one.
+  head: ({ match }) => ({
     meta: [
       {
         charSet: 'utf-8',
@@ -127,7 +131,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
         content: 'width=device-width, initial-scale=1, viewport-fit=cover',
       },
       {
-        title: 'Quackback',
+        title: match.context.settings?.name || 'Quackback',
       },
       {
         name: 'description',
@@ -146,6 +150,15 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       {
         rel: 'stylesheet',
         href: appCss,
+      },
+      // Same priority as the portal: uploaded favicon > workspace logo >
+      // bundled default.
+      {
+        rel: 'icon',
+        href:
+          match.context.settings?.faviconData?.url ||
+          match.context.settings?.brandingData?.logoUrl ||
+          '/logo.png',
       },
       {
         rel: 'alternate',
