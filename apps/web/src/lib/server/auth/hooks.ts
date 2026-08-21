@@ -20,7 +20,6 @@
  */
 
 import { APIError, createAuthMiddleware } from 'better-auth/api'
-import type { UserId } from '@quackback/ids'
 import type { Role } from '@/lib/shared/roles'
 import {
   findProviderForDomainEmail,
@@ -1097,27 +1096,29 @@ export async function handleSignInSuccessAudit(ctx: {
 }
 
 /**
- * First-sight new-device notification. Atomic SADD claims the
- * fingerprint; on success we fire the email + audit row in parallel
- * and refresh the SET's 90-day TTL. On failure we roll back the
- * claim so the next sign-in re-fires the alert rather than losing
- * it to a transient SMTP outage. All errors swallowed — Redis/SMTP
- * outages must not break sign-in.
+ * First-sight new-device audit row. Atomic SADD claims the
+ * fingerprint; on success we record the audit event and refresh the
+ * SET's 90-day TTL. On failure we roll back the claim so the next
+ * sign-in re-records it rather than losing the row to a transient
+ * audit-store outage. All errors swallowed — Redis/audit outages must
+ * not break sign-in.
+ *
+ * Deliberately sends no mail. Upstream also emailed the account on
+ * every first-sight device, which for an embedded feedback widget
+ * means a security alert nobody asked for: the host app has already
+ * authenticated these people, and the widget's own identify path
+ * (`/api/widget/identify`) is not even a sign-in they performed. The
+ * audit row is the half with value to us, so it is the half we keep.
  */
-export async function handleNewDeviceNotification(
-  ctx: {
-    path?: string
-    context?: {
-      newSession?: {
-        user?: { id?: string; email?: string }
-        session?: { token?: string }
-      } | null
-    }
-  },
-  tenant: Awaited<
-    ReturnType<typeof import('@/lib/server/domains/settings/settings.service').getTenantSettings>
-  >
-): Promise<void> {
+export async function handleNewDeviceNotification(ctx: {
+  path?: string
+  context?: {
+    newSession?: {
+      user?: { id?: string; email?: string }
+      session?: { token?: string }
+    } | null
+  }
+}): Promise<void> {
   const userId = ctx.context?.newSession?.user?.id
   const email = ctx.context?.newSession?.user?.email
   const token = ctx.context?.newSession?.session?.token
@@ -1131,45 +1132,20 @@ export async function handleNewDeviceNotification(
   const unseen = await isDeviceUnseen(userId, fingerprint).catch(() => false)
   if (!unseen) return
 
-  // Email + audit are independent — fire in parallel. TTL refresh
-  // runs only on full success so a failure can roll back via
-  // `forgetDevice` and re-fire on the next sign-in.
+  // TTL refresh runs only on success so a failure can roll back via
+  // `forgetDevice` and re-record on the next sign-in.
   try {
-    const { sendNewSignInEmail } = await import('@quackback/email')
     const { recordAuditEvent } = await import('@/lib/server/audit/log')
-    const { resolveAccountRecipient } = await import('@/lib/server/email/recipient')
-    const occurredAt = new Date().toISOString()
-    // Account class, and deliberately no contact-address fallback: this alert
-    // discloses IP, user agent and sign-in timing, and a contact address can be
-    // one an agent typed into the inbox. An account with no deliverable address
-    // simply does not get the alert. The audit row and markDeviceSeen still run,
-    // or every subsequent sign-in would retry a send that can never succeed.
-    const to = await resolveAccountRecipient(userId as UserId)
-    if (!to) {
-      log.warn({ user_id: userId }, 'new-device alert skipped: no deliverable account address')
-    }
-    await Promise.all([
-      to
-        ? sendNewSignInEmail({
-            to,
-            workspaceName: tenant?.name,
-            occurredAt,
-            ipAddress: ip,
-            userAgent,
-            logoUrl: tenant?.brandingData?.logoUrl ?? undefined,
-          })
-        : Promise.resolve(),
-      recordAuditEvent({
-        event: 'auth.signin.new_device',
-        outcome: 'success',
-        actor: { userId: userId as `user_${string}`, email },
-        headers,
-        metadata: { ip, userAgent },
-      }),
-    ])
+    await recordAuditEvent({
+      event: 'auth.signin.new_device',
+      outcome: 'success',
+      actor: { userId: userId as `user_${string}`, email },
+      headers,
+      metadata: { ip, userAgent },
+    })
     await markDeviceSeen(userId)
   } catch (error) {
-    log.error({ err: error }, 'new-device notification failed')
+    log.error({ err: error }, 'new-device audit failed')
     await forgetDevice(userId, fingerprint)
   }
 }
@@ -1226,9 +1202,9 @@ export async function handleCountryCapture(ctx: {
  *     session still exists at this point (i.e. wasn't revoked by
  *     prior steps). Runs after the gates so it only records sign-ins
  *     that actually stuck.
- *  5. `handleNewDeviceNotification` — sends a "new device" email +
- *     records an audit row when the user's UA + /24-IP combination
- *     hasn't been seen for them within the last 90 days.
+ *  5. `handleNewDeviceNotification` — records an `auth.signin.new_device`
+ *     audit row when the user's UA + /24-IP combination hasn't been seen
+ *     for them within the last 90 days. Audit only; sends no mail.
  */
 export const hooksAfter = createAuthMiddleware(async (ctx) => {
   if (process.env.AUTH_HOOKS_DEBUG === '1') {
@@ -1286,9 +1262,6 @@ export const hooksAfter = createAuthMiddleware(async (ctx) => {
   // Geo-IP country from CDN headers; written best-effort, never blocks.
   await handleCountryCapture(ctx as Parameters<typeof handleCountryCapture>[0])
   // Fires only when a new device fingerprint (UA + /24) for this user
-  // is observed; default-on but workspace can opt out.
-  await handleNewDeviceNotification(
-    ctx as Parameters<typeof handleNewDeviceNotification>[0],
-    tenant
-  )
+  // is observed. Always on — there is no setting, and nothing is mailed.
+  await handleNewDeviceNotification(ctx as Parameters<typeof handleNewDeviceNotification>[0])
 })

@@ -19,7 +19,6 @@ import * as mail from '@quackback/email'
 const MAIL_CLASS: Record<string, 'account' | 'sealed' | 'contact' | 'unused'> = {
   // Capability over an existing account: recipient is user.email by id.
   sendPasswordResetEmail: 'account',
-  sendNewSignInEmail: 'account',
   sendRecoveryCodeUsedEmail: 'account',
 
   // Capability over whoever holds the address: mail exactly what was minted.
@@ -47,6 +46,11 @@ const MAIL_CLASS: Record<string, 'account' | 'sealed' | 'contact' | 'unused'> = 
   sendWelcomeEmail: 'unused',
   sendFeedbackLinkedEmail: 'unused',
   sendRawEmail: 'unused',
+  // Was 'account'. This fork dropped the only caller
+  // (`handleNewDeviceNotification`): mailing an unsolicited security alert on
+  // every first-seen device is wrong for an embedded feedback widget. Left
+  // exported and classified so re-enabling it stays a deliberate change.
+  sendNewSignInEmail: 'unused',
 }
 
 describe('mail class coverage', () => {
