@@ -23,6 +23,11 @@ interface HelpCenterMetadataSidebarProps {
   isPublished: boolean
   onPublishToggle: () => void
   authorName?: string | null
+  /** Validation message for the category field. The Select is a plain control
+   * rather than a react-hook-form FormField, so without this the host form has
+   * nowhere to render "Category is required" — and a submit blocked on it looks
+   * to the user like the button does nothing. */
+  categoryError?: string
 }
 
 function SidebarContent({
@@ -31,6 +36,7 @@ function SidebarContent({
   isPublished,
   onPublishToggle,
   authorName,
+  categoryError,
 }: HelpCenterMetadataSidebarProps) {
   const [createCategoryOpen, setCreateCategoryOpen] = useState(false)
   const { data: categories } = useQuery(helpCenterQueries.categories())
@@ -49,31 +55,42 @@ function SidebarContent({
 
       <SidebarDivider />
 
-      <SidebarRow label="Category">
-        <div className="flex items-center gap-1.5">
-          <Select value={categoryId || undefined} onValueChange={onCategoryChange}>
-            <SelectTrigger size="sm" className="flex-1 min-w-0">
-              <SelectValue placeholder="Select category..." />
-            </SelectTrigger>
-            <SelectContent align="end">
-              {categories?.map((cat) => (
-                <SelectItem key={cat.id} value={cat.id}>
-                  <span className="flex items-center gap-1.5">
-                    {cat.icon && <CategoryIcon icon={cat.icon} className="w-4 h-4 shrink-0" />}
-                    <span className="truncate">{cat.name}</span>
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <button
-            type="button"
-            onClick={() => setCreateCategoryOpen(true)}
-            className="h-8 w-8 flex items-center justify-center rounded-md border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
-            title="Create new category"
-          >
-            <PlusIcon className="h-3.5 w-3.5" />
-          </button>
+      <SidebarRow label="Category" alignTop={Boolean(categoryError)}>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-1.5">
+            <Select value={categoryId || undefined} onValueChange={onCategoryChange}>
+              <SelectTrigger
+                size="sm"
+                className="flex-1 min-w-0"
+                aria-invalid={Boolean(categoryError)}
+              >
+                <SelectValue placeholder="Select category..." />
+              </SelectTrigger>
+              <SelectContent align="end">
+                {categories?.map((cat) => (
+                  <SelectItem key={cat.id} value={cat.id}>
+                    <span className="flex items-center gap-1.5">
+                      {cat.icon && <CategoryIcon icon={cat.icon} className="w-4 h-4 shrink-0" />}
+                      <span className="truncate">{cat.name}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <button
+              type="button"
+              onClick={() => setCreateCategoryOpen(true)}
+              className="h-8 w-8 flex items-center justify-center rounded-md border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+              title="Create new category"
+            >
+              <PlusIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {categoryError && (
+            <p role="alert" className="text-xs text-destructive">
+              {categoryError}
+            </p>
+          )}
         </div>
       </SidebarRow>
 

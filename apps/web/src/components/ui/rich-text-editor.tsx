@@ -1757,8 +1757,14 @@ function MarkdownImportDialog({ editor, open, onOpenChange }: MarkdownImportDial
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-2xl" onKeyDown={handleKeyDown}>
-        <DialogHeader>
+      {/* A whole article's worth of markdown is the normal input here, so the
+          dialog is capped at the viewport and laid out as a column: header and
+          footer keep their height, and the paste box is the only part that
+          flexes. Without the cap, DialogContent (which is `grid` with no
+          max-height, centred by a -50% translate) grows with its content and
+          carries the Insert button off the bottom of the screen. */}
+      <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-2xl" onKeyDown={handleKeyDown}>
+        <DialogHeader className="shrink-0">
           <DialogTitle>Import Markdown</DialogTitle>
           <DialogDescription>
             Paste markdown below. It will be converted to formatted content and inserted at the
@@ -1766,15 +1772,19 @@ function MarkdownImportDialog({ editor, open, onOpenChange }: MarkdownImportDial
           </DialogDescription>
         </DialogHeader>
 
+        {/* `field-sizing-fixed` cancels the Textarea primitive's default
+            `field-sizing-content`, which auto-grows the control to fit its
+            value with no ceiling. Long input has to scroll inside the box
+            rather than stretch it. */}
         <Textarea
           value={markdownSource}
           onChange={(event) => setMarkdownSource(event.target.value)}
           placeholder={'# Heading\n\nSome **bold** text and a list:\n\n- First item\n- Second item'}
-          className="min-h-64 font-mono text-xs"
+          className="field-sizing-fixed min-h-32 flex-1 resize-none overflow-y-auto font-mono text-xs"
           autoFocus
         />
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
             Cancel
           </Button>

@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { toast } from 'sonner'
 import { useNavigate } from '@tanstack/react-router'
 import { useKeyboardSubmit } from '@/lib/client/hooks/use-keyboard-submit'
 import { ModalFooter } from '@/components/shared/modal-footer'
@@ -63,28 +64,44 @@ export function CreateArticleDialog({
     [form]
   )
 
-  const handleSubmit = form.handleSubmit((data) => {
-    createArticleMutation.mutate(
-      {
-        categoryId: data.categoryId,
-        title: data.title,
-        content: data.content,
-        contentJson: contentJson as TiptapContent | null,
-      },
-      {
-        onSuccess: (newArticle) => {
-          handleOpenChange(false)
-          form.reset()
-          setContentJson(null)
-          setCategoryId('')
-          void navigate({
-            to: '/admin/help-center/articles/$articleId',
-            params: { articleId: newArticle.id as string },
-          })
+  const handleSubmit = form.handleSubmit(
+    (data) => {
+      createArticleMutation.mutate(
+        {
+          categoryId: data.categoryId,
+          title: data.title,
+          content: data.content,
+          contentJson: contentJson as TiptapContent | null,
         },
-      }
-    )
-  })
+        {
+          onSuccess: (newArticle) => {
+            handleOpenChange(false)
+            form.reset()
+            setContentJson(null)
+            setCategoryId('')
+            void navigate({
+              to: '/admin/help-center/articles/$articleId',
+              params: { articleId: newArticle.id as string },
+            })
+          },
+        }
+      )
+    },
+    (errors) => {
+      // Backstop against a silent submit. Title and content render their own
+      // FormMessage, but the category Select lives in a sidebar that is
+      // `hidden lg:block` — on a narrow window it sits behind the Settings
+      // sheet, so its inline error can be off-screen at the moment the user
+      // clicks Save. Without this, a submit blocked on it looks exactly like a
+      // dead button. Announcing the first error covers any future required
+      // field that has nowhere visible to render one.
+      const firstErrorMessage = Object.values(errors).find((error) => error?.message)?.message
+      toast.error(
+        typeof firstErrorMessage === 'string' ? firstErrorMessage : 'Please complete every field.'
+      )
+      if (errors.categoryId) setMobileSettingsOpen(true)
+    }
+  )
 
   function handleOpenChange(isOpen: boolean) {
     if (isControlled) {
@@ -138,6 +155,7 @@ export function CreateArticleDialog({
                 onCategoryChange={handleCategoryChange}
                 isPublished={false}
                 onPublishToggle={() => {}}
+                categoryError={form.formState.errors.categoryId?.message}
               />
             </div>
 
@@ -163,6 +181,7 @@ export function CreateArticleDialog({
                       onCategoryChange={handleCategoryChange}
                       isPublished={false}
                       onPublishToggle={() => {}}
+                      categoryError={form.formState.errors.categoryId?.message}
                     />
                   </div>
                 </SheetContent>
