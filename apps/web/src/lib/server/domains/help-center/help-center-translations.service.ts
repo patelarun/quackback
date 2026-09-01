@@ -11,6 +11,7 @@ import {
   helpCenterCategoryTranslations,
   type TiptapContent,
 } from '@/lib/server/db'
+import { markdownToTiptapJson } from '@/lib/server/markdown-tiptap'
 import type { KbArticleId, KbCategoryId } from '@quackback/ids'
 import { NotFoundError } from '@/lib/shared/errors'
 import type {
@@ -67,6 +68,13 @@ export async function getPublishedArticleTranslation(
 export async function upsertArticleTranslation(
   input: UpsertArticleTranslationInput
 ): Promise<HelpCenterArticleTranslation> {
+  // The public page renders `contentJson`, and `getPublicArticleBySlugForLocale` falls back to the
+  // base article's when a translation has none -- so a null here does not show an empty body, it
+  // silently shows the untranslated one. `contentJson` is optional on the way in (the admin
+  // translations dialog only sends markdown), so derive it rather than storing null and losing the
+  // translated body on every save.
+  const contentJson = input.contentJson ?? markdownToTiptapJson(input.content)
+
   const [row] = await db
     .insert(helpCenterArticleTranslations)
     .values({
@@ -75,7 +83,7 @@ export async function upsertArticleTranslation(
       title: input.title,
       description: input.description ?? null,
       content: input.content,
-      contentJson: input.contentJson ?? null,
+      contentJson,
     })
     .onConflictDoUpdate({
       target: [helpCenterArticleTranslations.articleId, helpCenterArticleTranslations.locale],
@@ -83,7 +91,7 @@ export async function upsertArticleTranslation(
         title: input.title,
         description: input.description ?? null,
         content: input.content,
-        contentJson: input.contentJson ?? null,
+        contentJson,
         updatedAt: new Date(),
       },
     })

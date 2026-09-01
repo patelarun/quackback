@@ -142,6 +142,38 @@ describe('article translations', () => {
     expect(result.title).toBe('Titel')
   })
 
+  it('derives contentJson from the markdown when the caller omits it', async () => {
+    // The public page renders contentJson, and getPublicArticleBySlugForLocale falls back to the
+    // base article's when the translation has none -- so storing null silently serves the
+    // untranslated body. The admin translations dialog sends markdown only, which made every save
+    // from it wipe the translated body.
+    await upsertArticleTranslation({
+      articleId: 'kb_article_1' as KbArticleId,
+      locale: 'de',
+      title: 'Titel',
+      content: '## Was ist das?\n\nEin Absatz.',
+    })
+
+    const inserted = insertValuesCalls[0][0] as { contentJson: unknown }
+    expect(inserted.contentJson).not.toBeNull()
+    expect(inserted.contentJson).toMatchObject({ type: 'doc' })
+
+    const conflictSet = (onConflictCalls[0][0] as { set: { contentJson: unknown } }).set
+    expect(conflictSet.contentJson).toEqual(inserted.contentJson)
+  })
+
+  it('keeps an explicitly supplied contentJson rather than re-deriving it', async () => {
+    const explicit = { type: 'doc' as const, content: [] }
+    await upsertArticleTranslation({
+      articleId: 'kb_article_1' as KbArticleId,
+      locale: 'de',
+      title: 'Titel',
+      content: 'Inhalt',
+      contentJson: explicit,
+    })
+    expect(insertValuesCalls[0][0]).toMatchObject({ contentJson: explicit })
+  })
+
   it('sets translation status and errors when the translation does not exist', async () => {
     const result = await setArticleTranslationStatus(
       'kb_article_1' as KbArticleId,
