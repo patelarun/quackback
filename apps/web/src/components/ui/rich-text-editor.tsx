@@ -99,6 +99,7 @@ import {
   Copy,
   Expand,
   Link2,
+  ClipboardPaste as MarkdownImportIcon,
 } from 'lucide-react'
 import {
   ArrowUturnLeftIcon,
@@ -123,6 +124,15 @@ import {
   ContextMenuTrigger,
 } from './context-menu'
 import { ScrollArea } from './scroll-area'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './dialog'
+import { Textarea } from './textarea'
 
 // Curated grammar set instead of lowlight's `common` (~37 languages): the
 // bundle cost of every registered grammar is paid by all editor surfaces,
@@ -179,9 +189,13 @@ export function buildExtensions(
     onImageUpload?: (file: File) => Promise<string>
     /** When set, Enter submits (chat-send) instead of splitting the block. */
     onSubmit?: () => void
+    /** Opens the host's markdown paste box. MUST be a stable callback for the
+     * same reason as `onSubmit`: it is baked into the slash-menu item list at
+     * extension-creation time and is not refreshed by setOptions. */
+    onOpenMarkdownImport?: () => void
   }
 ) {
-  const { placeholder, onImageUpload, onSubmit } = options
+  const { placeholder, onImageUpload, onSubmit, onOpenMarkdownImport } = options
   return [
     StarterKit.configure({
       heading: features.headings ? { levels: [1, 2, 3] } : false,
@@ -272,7 +286,9 @@ export function buildExtensions(
           }),
         ]
       : []),
-    ...(features.slashMenu !== false ? [createSlashCommands(features, onImageUpload)] : []),
+    ...(features.slashMenu !== false
+      ? [createSlashCommands(features, onImageUpload, onOpenMarkdownImport)]
+      : []),
     ...(features.emojiPicker !== false ? [createEmojiExtension()] : []),
     // Enter-key bindings, highest precedence first. createSubmitOnEnter registers
     // at a higher priority than createEnterAsHardBreak (see the factory below), so
@@ -415,6 +431,17 @@ export interface EditorFeatures {
    * round-trip; disable for visitor-facing composers where there's nobody to
    * mention. */
   mentions?: boolean
+  /** Enable the "Import Markdown" action: a toolbar button and a `/markdown`
+   * slash item that open a paste box and convert the pasted markdown into rich
+   * content at the cursor (via @tiptap/markdown, which is already registered
+   * for the `getMarkdown()` serialization direction).
+   *
+   * Off by default and deliberately explicit rather than automatic on paste:
+   * a plain-text paste containing `#` comments or `- ` prefixed lines is
+   * indistinguishable from markdown, so silently converting every paste would
+   * mangle code snippets and diffs. Document-shaped editors (help center
+   * articles) opt in; chat-shaped composers should leave it off. */
+  markdownImport?: boolean
 }
 
 // ============================================================================
@@ -432,7 +459,8 @@ interface SlashMenuItem {
 
 function getSlashMenuItems(
   features: EditorFeatures,
-  onImageUpload?: (file: File) => Promise<string>
+  onImageUpload?: (file: File) => Promise<string>,
+  onOpenMarkdownImport?: () => void
 ): SlashMenuItem[] {
   const items: SlashMenuItem[] = [
     // Text group - always available
@@ -637,6 +665,22 @@ function getSlashMenuItems(
     })
   }
 
+  // Import Markdown - conditional. The host owns the paste box (it needs React
+  // state), so the item only appears when it supplied an opener.
+  if (features.markdownImport && onOpenMarkdownImport) {
+    items.push({
+      title: 'Import Markdown',
+      description: 'Paste markdown and convert it to rich text',
+      icon: <MarkdownImportIcon className="size-4" />,
+      command: ({ editor, range }) => {
+        editor.chain().focus().deleteRange(range).run()
+        onOpenMarkdownImport()
+      },
+      aliases: ['markdown', 'md', 'import'],
+      group: 'advanced',
+    })
+  }
+
   return items
 }
 
@@ -804,12 +848,13 @@ SlashMenuList.displayName = 'SlashMenuList'
 // Create the slash commands extension
 function createSlashCommands(
   features: EditorFeatures,
-  onImageUpload?: (file: File) => Promise<string>
+  onImageUpload?: (file: File) => Promise<string>,
+  onOpenMarkdownImport?: () => void
 ) {
   // Compute once per extension instance. Since buildExtensions() is wrapped in
   // useMemo, this only re-runs when features or onImageUpload actually changes —
   // NOT on every keystroke.
-  const allItems = getSlashMenuItems(features, onImageUpload)
+  const allItems = getSlashMenuItems(features, onImageUpload, onOpenMarkdownImport)
 
   return Extension.create({
     name: 'slashCommands',
@@ -1225,13 +1270,24 @@ function RichTextEditorBase({
   onSubmit,
   editorRef,
 }: RichTextEditorProps) {
+  const [isMarkdownImportOpen, setIsMarkdownImportOpen] = useState(false)
+  // Stable across renders (the setState setter is), which is what lets it be
+  // baked into the slash-menu item list without invalidating the extension memo.
+  const openMarkdownImport = useCallback(() => setIsMarkdownImportOpen(true), [])
+
   // Memoize extensions keyed on individual feature flags.
   // TipTap v3's useEditor calls editor.setOptions() whenever the extensions
   // array reference changes (uses reference equality via compareOptions).
   // Rebuilding the array on every render causes setOptions→transaction→onUpdate
   // on every keystroke, resulting in 300–400 ms input violations.
   const extensions = useMemo(
-    () => buildExtensions(features, { placeholder, onImageUpload, onSubmit }),
+    () =>
+      buildExtensions(features, {
+        placeholder,
+        onImageUpload,
+        onSubmit,
+        onOpenMarkdownImport: openMarkdownImport,
+      }),
 
     [
       features.headings,
@@ -1247,8 +1303,10 @@ function RichTextEditorBase({
       features.emojiPicker,
       features.enterAsHardBreak,
       features.mentions,
+      features.markdownImport,
       onImageUpload,
       onSubmit,
+      openMarkdownImport,
       placeholder,
     ]
   )
@@ -1471,6 +1529,7 @@ function RichTextEditorBase({
               features={features}
               onImageUpload={onImageUpload}
               variant="top"
+              onOpenMarkdownImport={openMarkdownImport}
             />
           )}
 
@@ -1484,6 +1543,7 @@ function RichTextEditorBase({
               onImageUpload={onImageUpload}
               variant="bottom"
               borderless={borderless}
+              onOpenMarkdownImport={openMarkdownImport}
             />
           )}
         </div>
@@ -1535,6 +1595,14 @@ function RichTextEditorBase({
         >
           <BubbleMenuContent editor={editor} disabled={disabled} />
         </BubbleMenu>
+      )}
+
+      {features.markdownImport && (
+        <MarkdownImportDialog
+          editor={editor}
+          open={isMarkdownImportOpen}
+          onOpenChange={setIsMarkdownImportOpen}
+        />
       )}
 
       {features.tables && (
@@ -1608,9 +1676,116 @@ export const RichTextEditor = memo(RichTextEditorBase, (prev, next) => {
     pf.emojiPicker === nf.emojiPicker &&
     pf.enterAsHardBreak === nf.enterAsHardBreak &&
     pf.mentions === nf.mentions &&
-    pf.bubbleMenu === nf.bubbleMenu
+    pf.bubbleMenu === nf.bubbleMenu &&
+    pf.markdownImport === nf.markdownImport
   )
 })
+
+// ============================================================================
+// Markdown Import
+// ============================================================================
+
+interface MarkdownImportDialogProps {
+  editor: Editor
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}
+
+/**
+ * Paste box for the "Import Markdown" action.
+ *
+ * Converts a markdown document into rich content and inserts it at the cursor
+ * via `insertContent(..., { contentType: 'markdown' })`, which @tiptap/markdown
+ * routes through its own parser. Insertion (rather than `setContent`) keeps the
+ * action non-destructive and undoable: it never discards what is already in the
+ * editor, and one Ctrl+Z reverts it.
+ *
+ * Conversion is one-way by design. The editor's custom nodes (resizable images,
+ * mentions, Quackback embeds, YouTube) define no `parseMarkdown` handlers, so
+ * they have no markdown spelling to import — which is exactly why this is an
+ * explicit import step and not a round-trippable "markdown source mode".
+ */
+function MarkdownImportDialog({ editor, open, onOpenChange }: MarkdownImportDialogProps) {
+  const [markdownSource, setMarkdownSource] = useState('')
+
+  const insertMarkdown = useCallback(() => {
+    const trimmedMarkdown = markdownSource.trim()
+    if (!trimmedMarkdown) return
+
+    try {
+      editor.chain().focus().insertContent(trimmedMarkdown, { contentType: 'markdown' }).run()
+    } catch (error) {
+      // marked throws on a handful of malformed inputs. Surface it rather than
+      // closing the dialog on a no-op, so the pasted source isn't lost.
+      console.error('Failed to import markdown:', error)
+      void import('sonner').then(({ toast }) =>
+        toast.error("Couldn't convert that markdown. Check the formatting and try again.")
+      )
+      return
+    }
+
+    setMarkdownSource('')
+    onOpenChange(false)
+  }, [editor, markdownSource, onOpenChange])
+
+  function handleOpenChange(isOpen: boolean) {
+    if (!isOpen) setMarkdownSource('')
+    onOpenChange(isOpen)
+  }
+
+  /**
+   * This dialog is mounted inside the host form's React tree, and React
+   * synthetic events bubble through the tree even across a Radix portal. Left
+   * unhandled, Cmd/Ctrl+Enter typed in the paste box would reach the
+   * surrounding form's useKeyboardSubmit handler and SAVE the article instead
+   * of inserting the markdown. So claim the shortcut for Insert and stop it
+   * here. Escape is stopped for the same reason (a host may bind it to cancel);
+   * Radix closes this dialog from its own document-level listener, which a
+   * React-level stopPropagation cannot suppress.
+   */
+  function handleKeyDown(event: React.KeyboardEvent) {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault()
+      event.stopPropagation()
+      insertMarkdown()
+      return
+    }
+    if (event.key === 'Escape') {
+      event.stopPropagation()
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="sm:max-w-2xl" onKeyDown={handleKeyDown}>
+        <DialogHeader>
+          <DialogTitle>Import Markdown</DialogTitle>
+          <DialogDescription>
+            Paste markdown below. It will be converted to formatted content and inserted at the
+            cursor.
+          </DialogDescription>
+        </DialogHeader>
+
+        <Textarea
+          value={markdownSource}
+          onChange={(event) => setMarkdownSource(event.target.value)}
+          placeholder={'# Heading\n\nSome **bold** text and a list:\n\n- First item\n- Second item'}
+          className="min-h-64 font-mono text-xs"
+          autoFocus
+        />
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={insertMarkdown} disabled={!markdownSource.trim()}>
+            Insert
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 // ============================================================================
 // Image Handling
@@ -2186,6 +2361,9 @@ interface MenuBarProps {
    * borderless the consumer supplies its own horizontal padding, so the row
    * drops its own px to stay flush with the content's left edge. */
   borderless?: boolean
+  /** Opens the host's markdown paste box. Rendered only when
+   * `features.markdownImport` is on and the host supplied an opener. */
+  onOpenMarkdownImport?: () => void
 }
 
 function MenuBar({
@@ -2195,6 +2373,7 @@ function MenuBar({
   onImageUpload,
   variant = 'top',
   borderless = false,
+  onOpenMarkdownImport,
 }: MenuBarProps) {
   const isBottom = variant === 'bottom'
   // Muted ghost buttons on the transparent bottom row; filled active-state on top.
@@ -2354,6 +2533,17 @@ function MenuBar({
           onClick={insertImage}
           disabled={disabled}
           title="Insert Image"
+        />
+      )}
+
+      {/* Import Markdown button */}
+      {features.markdownImport && onOpenMarkdownImport && (
+        <ToolbarButton
+          variant={btn}
+          icon={<MarkdownImportIcon className="size-4" />}
+          onClick={onOpenMarkdownImport}
+          disabled={disabled}
+          title="Import Markdown"
         />
       )}
 

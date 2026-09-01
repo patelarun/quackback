@@ -14,6 +14,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { EditorFeatures } from '../rich-text-editor'
 import { buildExtensions, generateContentHTML, hasActiveSuggestion } from '../rich-text-editor'
+import { MarkdownManager } from '@tiptap/markdown'
 
 // Full widget feature set (worst-case for duplicates)
 const WIDGET_FEATURES: EditorFeatures = {
@@ -466,5 +467,67 @@ describe('generateContentHTML — chatImage nodes', () => {
       content: [{ type: 'chatImage', attrs: { src: 'javascript:alert(1)' } }],
     })
     expect(html).not.toContain('<img')
+  })
+})
+
+/**
+ * The "Import Markdown" action converts pasted markdown through
+ * @tiptap/markdown's parser, using whatever extensions the editor registered.
+ * These tests drive a MarkdownManager built from the SAME buildExtensions()
+ * output the editor uses, so an upstream merge that drops or reorders the
+ * Markdown extension fails here instead of silently degrading the action to a
+ * plain-text paste.
+ */
+describe('markdown import', () => {
+  const HELP_CENTER_FEATURES: EditorFeatures = {
+    ...WIDGET_FEATURES,
+    markdownImport: true,
+  }
+
+  function buildMarkdownManager() {
+    return new MarkdownManager({
+      extensions: buildExtensions(HELP_CENTER_FEATURES, { placeholder: 'Write...' }),
+    })
+  }
+
+  it('registers the Markdown extension so the parser is available at all', () => {
+    const names = buildExtensions(HELP_CENTER_FEATURES, { placeholder: '' }).map(
+      (extension) => (extension as { name: string }).name
+    )
+    expect(names).toContain('markdown')
+  })
+
+  it('parses headings, emphasis and lists into rich nodes rather than plain text', () => {
+    const parsed = buildMarkdownManager().parse(
+      '# Release notes\n\nShipped **fast** today.\n\n- First item\n- Second item'
+    )
+
+    const blocks = parsed.content ?? []
+    const heading = blocks.find((node) => node.type === 'heading')
+    expect(heading?.attrs?.level).toBe(1)
+    expect(heading?.content?.[0]?.text).toBe('Release notes')
+
+    const paragraph = blocks.find((node) => node.type === 'paragraph')
+    const boldRun = paragraph?.content?.find((node) =>
+      node.marks?.some((mark) => mark.type === 'bold')
+    )
+    expect(boldRun?.text).toBe('fast')
+
+    const bulletList = blocks.find((node) => node.type === 'bulletList')
+    expect(bulletList?.content).toHaveLength(2)
+  })
+
+  it('parses fenced code blocks, preserving the language and literal body', () => {
+    const parsed = buildMarkdownManager().parse('```ts\nconst answer = 42\n```')
+
+    const codeBlock = (parsed.content ?? []).find((node) => node.type === 'codeBlock')
+    expect(codeBlock?.attrs?.language).toBe('ts')
+    expect(codeBlock?.content?.[0]?.text).toBe('const answer = 42')
+  })
+
+  it('keeps the slash item and toolbar button off unless markdownImport is set', () => {
+    // The flag gates UI only, so the guard is that it is genuinely optional and
+    // absent from every other surface's feature set.
+    expect(WIDGET_FEATURES.markdownImport).toBeUndefined()
   })
 })

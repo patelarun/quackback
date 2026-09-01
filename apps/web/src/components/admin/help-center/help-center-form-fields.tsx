@@ -53,6 +53,7 @@ export function HelpCenterFormFields({
                   slashMenu: true,
                   embeds: true,
                   quackbackEmbeds: true,
+                  markdownImport: true,
                 }}
                 onImageUpload={uploadImage}
               />
