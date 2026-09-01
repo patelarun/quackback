@@ -442,6 +442,15 @@ export interface EditorFeatures {
    * mangle code snippets and diffs. Document-shaped editors (help center
    * articles) opt in; chat-shaped composers should leave it off. */
   markdownImport?: boolean
+  /** Convert pasted markdown to rich content automatically, when the pasted
+   * text is confidently markdown (see `looksLikeMarkdown`). Pairs with
+   * `markdownImport`, which stays the reliable path for text this declines.
+   *
+   * Only ever fires for a plain-text clipboard outside a code context, and
+   * every conversion offers an undo, because the detection is a heuristic and
+   * a wrong call would otherwise be unrecoverable — re-pasting just converts
+   * again. */
+  markdownPaste?: boolean
 }
 
 // ============================================================================
@@ -1271,6 +1280,12 @@ function RichTextEditorBase({
   editorRef,
 }: RichTextEditorProps) {
   const [isMarkdownImportOpen, setIsMarkdownImportOpen] = useState(false)
+  // A live handle on the editor for the paste handler below. editorProps is
+  // memoized and built before useEditor() returns, so the handler cannot close
+  // over `editor` directly without rebuilding editorProps once the instance
+  // arrives — which is exactly the setOptions-per-render churn the memo exists
+  // to prevent.
+  const editorInstanceRef = useRef<Editor | null>(null)
   // Stable across renders (the setState setter is), which is what lets it be
   // baked into the slash-menu item list without invalidating the extension memo.
   const openMarkdownImport = useCallback(() => setIsMarkdownImportOpen(true), [])
@@ -1324,10 +1339,26 @@ function RichTextEditorBase({
         style: `--editor-min-height: ${minHeight}`,
       },
       handleDrop: features.images && onImageUpload ? handleImageDrop(onImageUpload) : undefined,
-      handlePaste: features.images && onImageUpload ? handleImagePaste(onImageUpload) : undefined,
+      // Images win: an image on the clipboard is unambiguous, and markdown
+      // detection only ever looks at text/plain. Either handler declining
+      // falls through to ProseMirror's default paste.
+      handlePaste: (
+        view: import('@tiptap/pm/view').EditorView,
+        event: ClipboardEvent,
+        slice: unknown
+      ) => {
+        if (features.images && onImageUpload && handleImagePaste(onImageUpload)(view, event, slice))
+          return true
+        if (
+          features.markdownPaste &&
+          handleMarkdownPaste(() => editorInstanceRef.current)(view, event)
+        )
+          return true
+        return false
+      },
     }),
 
-    [features.images, onImageUpload, borderless, minHeight]
+    [features.images, features.markdownPaste, onImageUpload, borderless, minHeight]
   )
 
   // Stores the last JSON emitted by onUpdate so the value-sync useEffect can
@@ -1385,6 +1416,12 @@ function RichTextEditorBase({
     }),
     [editor]
   )
+
+  // Mirror the editor instance into the ref the paste handler reads. Done in an
+  // effect (not during render) so it only ever tracks a committed instance.
+  useEffect(() => {
+    editorInstanceRef.current = editor
+  }, [editor])
 
   // Sync external value changes into the editor.
   // Skipped when the value is the exact object/string we just emitted via onUpdate.
@@ -1677,7 +1714,8 @@ export const RichTextEditor = memo(RichTextEditorBase, (prev, next) => {
     pf.enterAsHardBreak === nf.enterAsHardBreak &&
     pf.mentions === nf.mentions &&
     pf.bubbleMenu === nf.bubbleMenu &&
-    pf.markdownImport === nf.markdownImport
+    pf.markdownImport === nf.markdownImport &&
+    pf.markdownPaste === nf.markdownPaste
   )
 })
 
@@ -1795,6 +1833,125 @@ function MarkdownImportDialog({ editor, open, onOpenChange }: MarkdownImportDial
       </DialogContent>
     </Dialog>
   )
+}
+
+// ============================================================================
+// Markdown Paste Detection
+// ============================================================================
+
+/**
+ * Markdown constructs worth scoring, with how much each one proves.
+ *
+ * Weight 2 means "this is markdown and essentially nothing else": a fenced
+ * code block, a pipe table row, or an inline `[label](target)` link have no
+ * common plain-text meaning. Weight 1 covers constructs that plain text
+ * collides with — a shell script's `# comment` lines look exactly like ATX
+ * headings, and a diff's `- removed` lines look exactly like a bullet list.
+ *
+ * Requiring a total of 2 is what keeps those collisions from converting: a
+ * script whose only signal is `#` comments scores 1 and pastes literally,
+ * while a real article (a heading plus a list, or a heading plus bold) reaches
+ * 2 immediately.
+ */
+const MARKDOWN_SIGNALS: ReadonlyArray<{ pattern: RegExp; weight: number }> = [
+  { pattern: /^(?:```|~~~)/m, weight: 2 },
+  { pattern: /^\|.+\|[ \t]*$/m, weight: 2 },
+  { pattern: /!?\[[^\]\n]+\]\([^()\s]+\)/, weight: 2 },
+  { pattern: /^#{1,6} \S/m, weight: 1 },
+  { pattern: /^> \S/m, weight: 1 },
+  { pattern: /^[ \t]*[-*+] \S/m, weight: 1 },
+  { pattern: /^[ \t]*\d+[.)] \S/m, weight: 1 },
+  { pattern: /\*\*[^\s*][^*]*\*\*/, weight: 1 },
+  { pattern: /`[^`\n]+`/, weight: 1 },
+  { pattern: /^(?:-{3,}|\*{3,}|_{3,})[ \t]*$/m, weight: 1 },
+]
+
+const MARKDOWN_CONFIDENCE_THRESHOLD = 2
+
+/**
+ * Whether a pasted string is confidently a markdown document.
+ *
+ * Single-line input never qualifies, whatever it contains: converting one
+ * pasted line is all cost and no benefit (the editor's input rules already
+ * handle inline markdown as you type), and single lines are where plain-text
+ * collisions are most likely.
+ */
+export function looksLikeMarkdown(text: string): boolean {
+  if (!text.includes('\n')) return false
+
+  let confidence = 0
+  for (const { pattern, weight } of MARKDOWN_SIGNALS) {
+    if (pattern.test(text)) confidence += weight
+    if (confidence >= MARKDOWN_CONFIDENCE_THRESHOLD) return true
+  }
+  return false
+}
+
+/** Re-frames raw text as plain paragraphs, splitting blank lines into separate
+ *  paragraphs and single newlines into hard breaks — what an unconverted paste
+ *  would have produced. Backs the "Paste as plain text" undo. */
+function buildPlainTextContent(text: string): JSONContent[] {
+  return text.split(/\n{2,}/).map((paragraph) => ({
+    type: 'paragraph',
+    content: paragraph
+      .split('\n')
+      .flatMap((line, index) => [
+        ...(index > 0 ? [{ type: 'hardBreak' as const }] : []),
+        ...(line ? [{ type: 'text' as const, text: line }] : []),
+      ]),
+  }))
+}
+
+/**
+ * Converts a confidently-markdown plain-text paste into rich content.
+ *
+ * Declines (returning false, so ProseMirror pastes literally) whenever the
+ * clipboard also carries text/html — a copy from a web page, a document editor
+ * or another rich editor — because ProseMirror's own HTML parser reads that far
+ * more faithfully than re-reading the plain-text flavour as markdown.
+ */
+function handleMarkdownPaste(
+  getEditor: () => Editor | null
+): (view: import('@tiptap/pm/view').EditorView, event: ClipboardEvent) => boolean {
+  return (_view, event) => {
+    const clipboard = event.clipboardData
+    if (!clipboard || clipboard.types.includes('text/html')) return false
+
+    const pastedText = clipboard.getData('text/plain')
+    if (!looksLikeMarkdown(pastedText)) return false
+
+    const editor = getEditor()
+    if (!editor) return false
+
+    // Inside a code block or an inline code span the literal characters ARE the
+    // content, so converting them would destroy the very snippet being pasted.
+    if (editor.isActive('codeBlock') || editor.isActive('code')) return false
+
+    try {
+      editor.chain().focus().insertContent(pastedText, { contentType: 'markdown' }).run()
+    } catch (error) {
+      // Let the default plain-text paste stand rather than swallowing the text.
+      console.error('Failed to convert pasted markdown:', error)
+      return false
+    }
+
+    event.preventDefault()
+
+    // Detection is a heuristic, and plain Ctrl+Z is not a way out: it reverts
+    // the insert, and pasting again just converts again. So every conversion
+    // hands back an explicit escape.
+    void import('sonner').then(({ toast }) =>
+      toast('Pasted markdown was converted', {
+        action: {
+          label: 'Paste as plain text',
+          onClick: () =>
+            editor.chain().focus().undo().insertContent(buildPlainTextContent(pastedText)).run(),
+        },
+      })
+    )
+
+    return true
+  }
 }
 
 // ============================================================================

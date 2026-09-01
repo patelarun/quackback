@@ -13,7 +13,12 @@
 
 import { describe, it, expect, vi } from 'vitest'
 import type { EditorFeatures } from '../rich-text-editor'
-import { buildExtensions, generateContentHTML, hasActiveSuggestion } from '../rich-text-editor'
+import {
+  buildExtensions,
+  generateContentHTML,
+  hasActiveSuggestion,
+  looksLikeMarkdown,
+} from '../rich-text-editor'
 import { MarkdownManager } from '@tiptap/markdown'
 
 // Full widget feature set (worst-case for duplicates)
@@ -529,5 +534,61 @@ describe('markdown import', () => {
     // The flag gates UI only, so the guard is that it is genuinely optional and
     // absent from every other surface's feature set.
     expect(WIDGET_FEATURES.markdownImport).toBeUndefined()
+  })
+})
+
+/**
+ * Auto-conversion on paste is a heuristic, so these tests pin BOTH directions:
+ * what must convert (real articles) and — more importantly — what must not
+ * (code, diffs, logs), since a wrong conversion mangles the pasted content.
+ */
+describe('looksLikeMarkdown', () => {
+  it('accepts a document with a heading and a list', () => {
+    expect(looksLikeMarkdown('# Users\n\n- First item\n- Second item')).toBe(true)
+  })
+
+  it('accepts a document with a heading and bold text', () => {
+    expect(looksLikeMarkdown('## What is it?\n\nEvery **user** signs in here.')).toBe(true)
+  })
+
+  it('accepts a fenced code block on its own', () => {
+    expect(looksLikeMarkdown('```ts\nconst answer = 42\n```')).toBe(true)
+  })
+
+  it('accepts a pipe table on its own', () => {
+    expect(looksLikeMarkdown('| Field | Meaning |\n| --- | --- |\n| Role | Employee |')).toBe(true)
+  })
+
+  it('accepts a markdown link on its own', () => {
+    expect(
+      looksLikeMarkdown('See the guide.\n\n[Open settings](https://example.com/settings)')
+    ).toBe(true)
+  })
+
+  it('rejects a shell script whose only signal is # comments', () => {
+    expect(looksLikeMarkdown('# install deps\nnpm ci\n# run the build\nnpm run build')).toBe(false)
+  })
+
+  it('rejects a unified diff whose only signal is - and + lines', () => {
+    expect(looksLikeMarkdown('- const a = 1\n- const b = 2\n+ const a = 3')).toBe(false)
+  })
+
+  it('rejects an ordered plain-text list with no other markdown', () => {
+    expect(looksLikeMarkdown('1. open the app\n2. sign in\n3. done')).toBe(false)
+  })
+
+  it('rejects prose with no markdown constructs', () => {
+    expect(looksLikeMarkdown('Every person who signs in to your account.\nThey are a user.')).toBe(
+      false
+    )
+  })
+
+  it('rejects single-line input however markdown-ish', () => {
+    expect(looksLikeMarkdown('# Users')).toBe(false)
+    expect(looksLikeMarkdown('**bold** and `code` and [a](b)')).toBe(false)
+  })
+
+  it('rejects empty input', () => {
+    expect(looksLikeMarkdown('')).toBe(false)
   })
 })

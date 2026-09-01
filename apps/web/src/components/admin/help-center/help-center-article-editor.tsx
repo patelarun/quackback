@@ -433,6 +433,8 @@ export function HelpCenterArticleEditor({ articleId }: HelpCenterArticleEditorPr
                           slashMenu: true,
                           embeds: true,
                           quackbackEmbeds: true,
+                          markdownImport: true,
+                          markdownPaste: true,
                         }}
                         onImageUpload={uploadImage}
                       />

@@ -97,12 +97,17 @@ export function ArticleTranslationsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
+      {/* A whole translated article is the normal content here, so the dialog is capped at the
+          viewport and laid out as a column: header, locale picker and footer keep their height,
+          and only the content box flexes. Without the cap, DialogContent (which is `grid` with no
+          max-height, centred by a -50% translate) grows with its content and carries the
+          Save/Publish buttons off the bottom of the screen. Same fix as MarkdownImportDialog. */}
+      <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-2xl">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Translations</DialogTitle>
         </DialogHeader>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Select value={locale ?? undefined} onValueChange={setLocale}>
             <SelectTrigger className="w-48">
               <SelectValue placeholder="Choose a locale..." />
@@ -252,12 +257,12 @@ function TranslationForm({
   }
 
   return (
-    <div className="space-y-3">
-      <div className="space-y-1.5">
+    <div className="flex min-h-0 flex-1 flex-col space-y-3">
+      <div className="shrink-0 space-y-1.5">
         <Label htmlFor="translation-title">Title</Label>
         <Input id="translation-title" value={title} onChange={(e) => setTitle(e.target.value)} />
       </div>
-      <div className="space-y-1.5">
+      <div className="shrink-0 space-y-1.5">
         <Label htmlFor="translation-description">Description</Label>
         <Input
           id="translation-description"
@@ -265,17 +270,20 @@ function TranslationForm({
           onChange={(e) => setDescription(e.target.value)}
         />
       </div>
-      <div className="space-y-1.5">
+      <div className="flex min-h-0 flex-1 flex-col space-y-1.5">
         <Label htmlFor="translation-content">Content (Markdown)</Label>
+        {/* `field-sizing-fixed` cancels the Textarea primitive's default `field-sizing-content`,
+            which auto-grows the control to fit its value with no ceiling -- and silently overrides
+            `rows`. The translation has to scroll inside the box rather than stretch it. */}
         <Textarea
           id="translation-content"
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          rows={12}
+          className="field-sizing-fixed min-h-32 flex-1 resize-none overflow-y-auto font-mono text-xs"
         />
       </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
-      <DialogFooter className="!justify-between">
+      {error && <p className="shrink-0 text-xs text-destructive">{error}</p>}
+      <DialogFooter className="shrink-0 !justify-between">
         <Button
           type="button"
           variant="ghost"
