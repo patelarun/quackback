@@ -11,6 +11,7 @@ import type { OfficeHoursConfig } from '@/lib/shared/conversation/types'
 import type { WidgetTranslations } from '@/lib/shared/widget/translations'
 import type { ChangelogSettings } from '@/lib/shared/changelog-settings'
 import type { StatusSettings } from '@/lib/shared/status-settings'
+import { DEFAULT_WORKSPACE_LOCALE, type SupportedLocale } from '@/lib/shared/i18n'
 
 // =============================================================================
 // Auth Configuration (Team sign-in settings)
@@ -305,6 +306,16 @@ export interface PortalConfig {
   nav?: PortalNavConfig
   /** Support tab (conversations on the portal). Optional — absent = disabled. */
   support?: PortalSupportConfig
+  /**
+   * The language every customer-facing surface (portal, widget, help center
+   * chrome) is served in, regardless of the visitor's Accept-Language. A
+   * visitor's own pick in the language switcher still wins; see
+   * `resolveCustomerFacingLocale`. Absent = fall back to browser detection.
+   *
+   * This is the UI language only. The language help-center ARTICLES are
+   * written in is `helpCenterConfig.locales.default`, which is independent.
+   */
+  defaultLocale?: SupportedLocale
 }
 
 /**
@@ -333,6 +344,7 @@ export const DEFAULT_PORTAL_CONFIG: PortalConfig = {
   moderationDefault: { requireApproval: 'none' },
   access: { visibility: 'public', allowedDomains: [], widgetSignIn: false, allowedSegmentIds: [] },
   support: { enabled: false },
+  defaultLocale: DEFAULT_WORKSPACE_LOCALE,
 }
 
 /**
@@ -796,7 +808,13 @@ export const DEFAULT_HELP_CENTER_LOCALE_CHROME: HelpCenterLocaleChromeStrings = 
  * nothing to show on its own homepage.
  */
 export interface HelpCenterLocalesConfig {
-  /** Always the app's DEFAULT_LOCALE; not independently configurable in v1. */
+  /**
+   * The locale help-center content is AUTHORED in. Base rows on `kb_articles`
+   * / `kb_categories` hold this language, it owns the unprefixed `/hc/...`
+   * URLs, and it is the only locale with semantic (embedding) search.
+   * Changing it requires migrating content between the base tables and the
+   * translation tables -- it is not a display preference.
+   */
   default: string
   /** Enabled additional locale codes, each a SupportedLocale. */
   additional: string[]
@@ -805,7 +823,7 @@ export interface HelpCenterLocalesConfig {
 }
 
 export const DEFAULT_HELP_CENTER_LOCALES_CONFIG: HelpCenterLocalesConfig = {
-  default: 'en',
+  default: DEFAULT_WORKSPACE_LOCALE,
   additional: [],
   chrome: {},
 }
@@ -889,6 +907,8 @@ export interface UpdatePortalConfigInput {
   /** Replaced wholesale (items is an ordered array — never merged). */
   nav?: PortalNavConfig
   support?: Partial<PortalSupportConfig>
+  /** The language customer-facing surfaces are served in. */
+  defaultLocale?: SupportedLocale
 }
 
 // =============================================================================

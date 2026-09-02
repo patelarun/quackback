@@ -100,16 +100,22 @@ export function buildHelpCenterSitemapUrlsMultiLocale(
   const urls: SitemapUrl[] = []
 
   const landingByLocale = new Map(
-    perLocale.map(({ locale }) => [locale, `${baseUrl}${localizedHcPath(locale, '/hc')}`])
+    perLocale.map(({ locale }) => [
+      locale,
+      `${baseUrl}${localizedHcPath(locale, '/hc', defaultLocale)}`,
+    ])
   )
   for (const locale of landingByLocale.keys()) {
-    urls.push({ loc: landingByLocale.get(locale)!, alternates: buildAlternates(landingByLocale, defaultLocale) })
+    urls.push({
+      loc: landingByLocale.get(locale)!,
+      alternates: buildAlternates(landingByLocale, defaultLocale),
+    })
   }
 
   const categoryPathsById = new Map<string, Map<string, string>>()
   for (const { locale, categories } of perLocale) {
     for (const cat of categories) {
-      const path = `${baseUrl}${localizedHcPath(locale, `/hc/categories/${cat.slug}`)}`
+      const path = `${baseUrl}${localizedHcPath(locale, `/hc/categories/${cat.slug}`, defaultLocale)}`
       if (!categoryPathsById.has(cat.id)) categoryPathsById.set(cat.id, new Map())
       categoryPathsById.get(cat.id)!.set(locale, path)
     }
@@ -124,11 +130,13 @@ export function buildHelpCenterSitemapUrlsMultiLocale(
   const articlesById = new Map<string, Map<string, { path: string; lastmod: string }>>()
   for (const { locale, articles } of perLocale) {
     for (const article of articles) {
-      const path = `${baseUrl}${localizedHcPath(locale, `/hc/articles/${article.category.slug}/${article.slug}`)}`
+      const path = `${baseUrl}${localizedHcPath(
+        locale,
+        `/hc/articles/${article.category.slug}/${article.slug}`,
+        defaultLocale
+      )}`
       if (!articlesById.has(article.id)) articlesById.set(article.id, new Map())
-      articlesById
-        .get(article.id)!
-        .set(locale, { path, lastmod: article.updatedAt.split('T')[0] })
+      articlesById.get(article.id)!.set(locale, { path, lastmod: article.updatedAt.split('T')[0] })
     }
   }
   for (const byLocale of articlesById.values()) {

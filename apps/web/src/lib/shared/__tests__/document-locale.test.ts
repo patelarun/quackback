@@ -5,32 +5,95 @@ import { documentLocale, htmlLangDir } from '../document-locale'
 // useRouterState's `matches`.
 describe('documentLocale', () => {
   it('localizes any page under the portal layout', () => {
-    expect(documentLocale(['__root__', '/_portal', '/_portal/'], 'zh-cn')).toBe('zh-cn')
-    expect(documentLocale(['__root__', '/_portal', '/_portal/hc'], 'zh-cn')).toBe('zh-cn')
-    expect(documentLocale(['__root__', '/_portal', '/_portal/roadmap/'], 'zh-tw')).toBe('zh-tw')
+    expect(
+      documentLocale(['__root__', '/_portal', '/_portal/'], {
+        customerFacing: 'zh-cn',
+        internal: 'de',
+      })
+    ).toBe('zh-cn')
+    expect(
+      documentLocale(['__root__', '/_portal', '/_portal/hc'], {
+        customerFacing: 'zh-cn',
+        internal: 'de',
+      })
+    ).toBe('zh-cn')
+    expect(
+      documentLocale(['__root__', '/_portal', '/_portal/roadmap/'], {
+        customerFacing: 'zh-tw',
+        internal: 'de',
+      })
+    ).toBe('zh-tw')
   })
   it('localizes the standalone auth and widget routes', () => {
-    expect(documentLocale(['__root__', '/auth/reset-password'], 'zh-cn')).toBe('zh-cn')
-    expect(documentLocale(['__root__', '/widget'], 'ar')).toBe('ar')
+    expect(
+      documentLocale(['__root__', '/auth/reset-password'], {
+        customerFacing: 'zh-cn',
+        internal: 'de',
+      })
+    ).toBe('zh-cn')
+    expect(documentLocale(['__root__', '/widget'], { customerFacing: 'ar', internal: 'de' })).toBe(
+      'ar'
+    )
   })
-  it('keeps untranslated auth utility pages on the default locale', () => {
+  it('keeps untranslated auth utility pages on the fallback locale', () => {
     // These render hard-coded English with no IntlProvider — labeling them
     // `lang="ar" dir="rtl"` would misstate the language and flip the layout.
-    expect(documentLocale(['__root__', '/auth/login'], 'ar')).toBe('en')
-    expect(documentLocale(['__root__', '/auth/signup'], 'zh-cn')).toBe('en')
-    expect(documentLocale(['__root__', '/auth/two-factor'], 'ar')).toBe('en')
-    expect(documentLocale(['__root__', '/auth/auth-complete'], 'zh-cn')).toBe('en')
-    expect(documentLocale(['__root__', '/auth/widget-handoff'], 'zh-tw')).toBe('en')
+    expect(
+      documentLocale(['__root__', '/auth/login'], { customerFacing: 'ar', internal: 'de' })
+    ).toBe('en')
+    expect(
+      documentLocale(['__root__', '/auth/signup'], { customerFacing: 'zh-cn', internal: 'de' })
+    ).toBe('en')
+    expect(
+      documentLocale(['__root__', '/auth/two-factor'], { customerFacing: 'ar', internal: 'de' })
+    ).toBe('en')
+    expect(
+      documentLocale(['__root__', '/auth/auth-complete'], {
+        customerFacing: 'zh-cn',
+        internal: 'de',
+      })
+    ).toBe('en')
+    expect(
+      documentLocale(['__root__', '/auth/widget-handoff'], {
+        customerFacing: 'zh-tw',
+        internal: 'de',
+      })
+    ).toBe('en')
   })
-  it('keeps the admin app (incl. its English-first login) and system routes on the default', () => {
+  it('gives the admin automation pages the teammate locale, not the visitor one', () => {
+    // The workspace's customer-facing default language must not leak into
+    // staff tooling: automation follows the teammate's own browser.
+    expect(
+      documentLocale(['__root__', '/admin/automation', '/admin/automation/'], {
+        customerFacing: 'sv',
+        internal: 'de',
+      })
+    ).toBe('de')
+  })
+  it('keeps the admin app (incl. its English-first login) and system routes on the fallback', () => {
     // /admin/login renders an English heading + email stage on first paint, so
     // it stays English until that copy is localized.
-    expect(documentLocale(['__root__', '/admin/login'], 'ar')).toBe('en')
-    expect(documentLocale(['__root__', '/admin/posts'], 'zh-cn')).toBe('en')
-    expect(documentLocale(['__root__', '/onboarding'], 'ar')).toBe('en')
-    expect(documentLocale(['__root__', '/apps'], 'zh-cn')).toBe('en')
-    expect(documentLocale(['__root__', '/unsubscribe'], 'zh-cn')).toBe('en')
-    expect(documentLocale(['__root__', '/verify-magic-link'], 'zh-cn')).toBe('en')
+    expect(
+      documentLocale(['__root__', '/admin/login'], { customerFacing: 'ar', internal: 'de' })
+    ).toBe('en')
+    expect(
+      documentLocale(['__root__', '/admin/posts'], { customerFacing: 'zh-cn', internal: 'de' })
+    ).toBe('en')
+    expect(
+      documentLocale(['__root__', '/onboarding'], { customerFacing: 'ar', internal: 'de' })
+    ).toBe('en')
+    expect(documentLocale(['__root__', '/apps'], { customerFacing: 'zh-cn', internal: 'de' })).toBe(
+      'en'
+    )
+    expect(
+      documentLocale(['__root__', '/unsubscribe'], { customerFacing: 'zh-cn', internal: 'de' })
+    ).toBe('en')
+    expect(
+      documentLocale(['__root__', '/verify-magic-link'], {
+        customerFacing: 'zh-cn',
+        internal: 'de',
+      })
+    ).toBe('en')
   })
 })
 

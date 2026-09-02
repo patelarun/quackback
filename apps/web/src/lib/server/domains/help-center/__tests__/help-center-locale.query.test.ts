@@ -10,6 +10,13 @@ const mockGetCategoryTranslation = vi.fn()
 const mockCategoryTranslationFindMany = vi.fn()
 const mockArticleTranslationFindMany = vi.fn()
 const mockSelectFrom = vi.fn()
+const mockGetHelpCenterConfig = vi.fn()
+
+// The base content locale is workspace configuration, not a constant, so the
+// module reads it from settings on every locale comparison.
+vi.mock('@/lib/server/domains/settings/settings.service', () => ({
+  getHelpCenterConfig: (...args: unknown[]) => mockGetHelpCenterConfig(...args),
+}))
 
 vi.mock('../help-center.category.service', () => ({
   listPublicCategories: (...args: unknown[]) => mockListPublicCategories(...args),
@@ -25,7 +32,8 @@ vi.mock('../help-center.article.service', () => ({
 }))
 
 vi.mock('../help-center-translations.service', () => ({
-  getPublishedArticleTranslation: (...args: unknown[]) => mockGetPublishedArticleTranslation(...args),
+  getPublishedArticleTranslation: (...args: unknown[]) =>
+    mockGetPublishedArticleTranslation(...args),
   getCategoryTranslation: (...args: unknown[]) => mockGetCategoryTranslation(...args),
 }))
 
@@ -49,7 +57,12 @@ vi.mock('@/lib/server/db', () => ({
   isNull: (...args: unknown[]) => ({ op: 'isNull', args }),
   isNotNull: (...args: unknown[]) => ({ op: 'isNotNull', args }),
   count: () => ({ op: 'count' }),
-  helpCenterArticles: { categoryId: 'category_id', deletedAt: 'deleted_at', publishedAt: 'published_at', id: 'id' },
+  helpCenterArticles: {
+    categoryId: 'category_id',
+    deletedAt: 'deleted_at',
+    publishedAt: 'published_at',
+    id: 'id',
+  },
   helpCenterArticleTranslations: { articleId: 'article_id', locale: 'locale', status: 'status' },
   helpCenterCategoryTranslations: { categoryId: 'category_id', locale: 'locale' },
 }))
@@ -62,6 +75,12 @@ const {
 } = await import('../help-center-locale.query')
 
 beforeEach(() => {
+  mockGetHelpCenterConfig.mockReset()
+  // These tests were written against an English-authored help center; the
+  // locale they call "the default locale" is the base content locale.
+  mockGetHelpCenterConfig.mockResolvedValue({
+    locales: { default: 'en', additional: [], chrome: {} },
+  })
   mockListPublicCategories.mockReset()
   mockGetPublicCategoryBySlug.mockReset()
   mockListPublicArticlesForCategory.mockReset()
@@ -121,9 +140,7 @@ describe('listPublicCategoriesForLocale', () => {
     })
 
     const result = await listPublicCategoriesForLocale('de')
-    expect(result).toEqual([
-      { id: 'kb_category_1', name: 'Abrechnung', description: 'DE desc' },
-    ])
+    expect(result).toEqual([{ id: 'kb_category_1', name: 'Abrechnung', description: 'DE desc' }])
   })
 })
 

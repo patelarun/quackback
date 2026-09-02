@@ -123,9 +123,10 @@ export const listPublicCategoriesFn = createServerFn({ method: 'GET' })
   .handler(async ({ data }) => {
     const { listPublicCategoriesForLocale } =
       await import('@/lib/server/domains/help-center/help-center-locale.query')
-    const { DEFAULT_LOCALE } = await import('@/lib/shared/i18n')
+    const { getHelpCenterConfig } = await import('@/lib/server/domains/settings/settings.service')
+    const baseContentLocale = (await getHelpCenterConfig()).locales.default
     const categories = await listPublicCategoriesForLocale(
-      data.locale ?? DEFAULT_LOCALE,
+      data.locale ?? baseContentLocale,
       await publicViewer()
     )
     return categories.map(serializeCategory)
@@ -148,10 +149,11 @@ export const getPublicCategoryBySlugFn = createServerFn({ method: 'GET' })
     // help-center traffic.
     const { getPublicCategoryBySlugForLocale } =
       await import('@/lib/server/domains/help-center/help-center-locale.query')
-    const { DEFAULT_LOCALE } = await import('@/lib/shared/i18n')
+    const { getHelpCenterConfig } = await import('@/lib/server/domains/settings/settings.service')
+    const baseContentLocale = (await getHelpCenterConfig()).locales.default
     const category = await getPublicCategoryBySlugForLocale(
       data.slug,
-      data.locale ?? DEFAULT_LOCALE,
+      data.locale ?? baseContentLocale,
       await publicViewer()
     )
     return serializeCategory(category)
@@ -248,10 +250,11 @@ export const listPublicArticlesForCategoryFn = createServerFn({ method: 'GET' })
   .handler(async ({ data }) => {
     const { listPublicArticlesForCategoryLocale } =
       await import('@/lib/server/domains/help-center/help-center-locale.query')
-    const { DEFAULT_LOCALE } = await import('@/lib/shared/i18n')
+    const { getHelpCenterConfig } = await import('@/lib/server/domains/settings/settings.service')
+    const baseContentLocale = (await getHelpCenterConfig()).locales.default
     const articles = await listPublicArticlesForCategoryLocale(
       data.categoryId,
-      data.locale ?? DEFAULT_LOCALE,
+      data.locale ?? baseContentLocale,
       await publicViewer()
     )
     return articles.map((a) => ({
@@ -277,8 +280,9 @@ export const getPublicCategoryPageFn = createServerFn({ method: 'GET' })
       listPublicCategoriesForLocale,
       listPublicArticlesForCategoriesLocale,
     } = await import('@/lib/server/domains/help-center/help-center-locale.query')
-    const { DEFAULT_LOCALE } = await import('@/lib/shared/i18n')
-    const locale = data.locale ?? DEFAULT_LOCALE
+    const { getHelpCenterConfig } = await import('@/lib/server/domains/settings/settings.service')
+    const baseContentLocale = (await getHelpCenterConfig()).locales.default
+    const locale = data.locale ?? baseContentLocale
     const viewer = await publicViewer()
 
     const category = await getPublicCategoryBySlugForLocale(data.slug, locale, viewer)
@@ -334,10 +338,11 @@ export const getPublicArticleBySlugFn = createServerFn({ method: 'GET' })
   .handler(async ({ data }) => {
     const { getPublicArticleBySlugForLocale } =
       await import('@/lib/server/domains/help-center/help-center-locale.query')
-    const { DEFAULT_LOCALE } = await import('@/lib/shared/i18n')
+    const { getHelpCenterConfig } = await import('@/lib/server/domains/settings/settings.service')
+    const baseContentLocale = (await getHelpCenterConfig()).locales.default
     const article = await getPublicArticleBySlugForLocale(
       data.slug,
-      data.locale ?? DEFAULT_LOCALE,
+      data.locale ?? baseContentLocale,
       await publicViewer()
     )
     const { helpfulCount: _h, notHelpfulCount: _n, ...publicArticle } = serializeArticle(article)

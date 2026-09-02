@@ -113,8 +113,11 @@ const {
   disableHelpCenterLocale,
   updateHelpCenterLocaleChrome,
 } = await import('../settings.service')
-const { DEFAULT_HELP_CENTER_CONFIG, DEFAULT_HELP_CENTER_SEO_CONFIG } =
-  await import('../settings.types')
+const {
+  DEFAULT_HELP_CENTER_CONFIG,
+  DEFAULT_HELP_CENTER_SEO_CONFIG,
+  DEFAULT_HELP_CENTER_LOCALES_CONFIG,
+} = await import('../settings.types')
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -296,12 +299,15 @@ describe('enableHelpCenterLocale', () => {
     expect(mockUpdate).not.toHaveBeenCalled()
   })
 
-  it('rejects enabling the default locale', async () => {
+  it('rejects enabling the base content locale', async () => {
     mockFindFirst.mockResolvedValue(makeSettingsRow({ helpCenterConfig: null }))
 
     await expect(
       enableHelpCenterLocale({
-        locale: 'en',
+        // The base locale is always enabled, so re-adding it is rejected.
+        // Read from the shipped default rather than hardcoded, since which
+        // language that is is a product decision that can change.
+        locale: DEFAULT_HELP_CENTER_LOCALES_CONFIG.default,
         chrome: { homepageTitle: 'Hi', homepageDescription: '', searchPlaceholder: '' },
       })
     ).rejects.toThrow(/default/i)

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { IntlProvider } from 'react-intl'
-import { DEFAULT_LOCALE, type SupportedLocale } from '@/lib/shared/i18n'
+import { FALLBACK_UI_LOCALE, type SupportedLocale } from '@/lib/shared/i18n'
 import { useIntlSetup } from '@/lib/client/hooks/use-intl-setup'
 import { onIntlError } from '@/lib/client/intl-error'
 
@@ -22,7 +22,7 @@ export function PortalIntlProvider({
     <IntlProvider
       locale={locale}
       messages={messages}
-      defaultLocale={DEFAULT_LOCALE}
+      defaultLocale={FALLBACK_UI_LOCALE}
       onError={onIntlError}
     >
       {children}

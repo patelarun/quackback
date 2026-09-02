@@ -20,7 +20,7 @@ import {
   sql,
   regconfigForLocale,
 } from '@/lib/server/db'
-import { DEFAULT_LOCALE } from '@/lib/shared/i18n'
+import { getHelpCenterConfig } from '@/lib/server/domains/settings/settings.service'
 import { ANONYMOUS_ACTOR, type Actor } from '@/lib/server/policy/types'
 import { segmentGateFilter } from '@/lib/server/policy/segment-gate'
 import { generateKbQueryEmbedding } from './help-center-embedding.service'
@@ -497,8 +497,8 @@ async function keywordOnlyQueryForLocale(
 }
 
 /**
- * Locale-dispatching entry point for the public /hc search box. The default
- * locale keeps the full hybrid (keyword + semantic) search unchanged;
+ * Locale-dispatching entry point for the public /hc search box. The base
+ * content locale keeps the full hybrid (keyword + semantic) search unchanged;
  * additional locales get keyword-only search against their translations.
  *
  * Every call is a visitor search, so the query + result count are logged
@@ -510,8 +510,12 @@ export async function hybridSearchForLocale(
   limit = 10,
   viewer: Actor = ANONYMOUS_ACTOR
 ): Promise<HybridSearchResult[]> {
+  // Only the base content locale lives on kb_articles (with embeddings), so it
+  // is the only one that can run the hybrid keyword + semantic search; every
+  // other locale is keyword-only against its translation rows.
+  const baseContentLocale = (await getHelpCenterConfig()).locales.default
   const results =
-    locale === DEFAULT_LOCALE
+    locale === baseContentLocale
       ? await hybridSearch(query, limit, viewer)
       : await keywordOnlyQueryForLocale(query, locale, limit, viewer)
   logSearchQuery({ query, locale, resultsCount: results.length })

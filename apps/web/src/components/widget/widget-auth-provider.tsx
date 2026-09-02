@@ -23,7 +23,7 @@ import { widgetQueryKeys } from '@/lib/client/hooks/use-widget-vote'
 import { authClient } from '@/lib/client/auth-client'
 import { resolveIdentifyAction, type SessionSource } from './identify-precedence'
 import type { WidgetMetadata, WidgetEventName, WidgetEventMap } from '@/lib/shared/widget/types'
-import { normalizeLocale, DEFAULT_LOCALE, type SupportedLocale } from '@/lib/shared/i18n'
+import { normalizeLocale, FALLBACK_UI_LOCALE, type SupportedLocale } from '@/lib/shared/i18n'
 import { htmlLangDir } from '@/lib/shared/document-locale'
 import { useIntlSetup } from '@/lib/client/hooks/use-intl-setup'
 import { onIntlError } from '@/lib/client/intl-error'
@@ -119,7 +119,7 @@ export function WidgetAuthProvider({
 
   // i18n locale state — seeded from the SSR-resolved prop only, so the
   // first client render matches the server (see issue #133).
-  const [locale, setLocale] = useState<SupportedLocale>(initialLocale ?? DEFAULT_LOCALE)
+  const [locale, setLocale] = useState<SupportedLocale>(initialLocale ?? FALLBACK_UI_LOCALE)
   const messages = useIntlSetup(locale, initialMessages)
 
   // The widget is its own iframe document, and its locale can change at runtime
@@ -442,7 +442,7 @@ export function WidgetAuthProvider({
     <IntlProvider
       locale={locale}
       messages={messages}
-      defaultLocale={DEFAULT_LOCALE}
+      defaultLocale={FALLBACK_UI_LOCALE}
       onError={onIntlError}
     >
       <WidgetAuthContext.Provider value={contextValue}>{children}</WidgetAuthContext.Provider>

@@ -12,7 +12,7 @@ import {
   type AskAiSourceMeta,
 } from '@/components/help-center/ask-ai'
 import { useKbSearch, type KbSearchArticle } from '@/components/help-center/use-kb-search'
-import { localizedHcPath } from '@/lib/shared/help-center-url'
+import { prefixHcPath } from '@/lib/shared/help-center-url'
 
 // ============================================================================
 // Hero Search (landing page)
@@ -64,13 +64,13 @@ export function HelpCenterHeroSearch({ askAiEnabled = false, locale }: HelpCente
     setShowResults(false)
     setQuery('')
     const path = `/hc/articles/${result.category.slug}/${result.slug}`
-    window.location.href = locale ? localizedHcPath(locale, path) : path
+    window.location.href = locale ? prefixHcPath(locale, path) : path
   }
 
   const handleSourceClick = useCallback(
     (source: AskAiSourceMeta) => {
       const path = `/hc/articles/${source.categorySlug}/${source.slug}`
-      window.location.href = locale ? localizedHcPath(locale, path) : path
+      window.location.href = locale ? prefixHcPath(locale, path) : path
     },
     [locale]
   )

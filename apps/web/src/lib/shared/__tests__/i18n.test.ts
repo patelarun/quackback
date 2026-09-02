@@ -4,7 +4,9 @@ import {
   resolveLocale,
   isRtlLocale,
   SUPPORTED_LOCALES,
-  DEFAULT_LOCALE,
+  FALLBACK_UI_LOCALE,
+  resolveCustomerFacingLocale,
+  readVisitorLocaleCookie,
 } from '../i18n'
 
 describe('normalizeLocale', () => {
@@ -130,7 +132,72 @@ describe('SUPPORTED_LOCALES', () => {
     expect(SUPPORTED_LOCALES).toContain('zh-cn')
     expect(SUPPORTED_LOCALES).toContain('zh-tw')
   })
-  it('DEFAULT_LOCALE is en', () => {
-    expect(DEFAULT_LOCALE).toBe('en')
+  it('FALLBACK_UI_LOCALE is en', () => {
+    expect(FALLBACK_UI_LOCALE).toBe('en')
+  })
+})
+
+describe('resolveCustomerFacingLocale', () => {
+  it('serves the workspace default over the browser language', () => {
+    // The point of a default language: an en-US browser still gets Swedish.
+    expect(
+      resolveCustomerFacingLocale({
+        workspaceDefault: 'sv',
+        acceptLanguage: 'en-US,en;q=0.9',
+      })
+    ).toBe('sv')
+  })
+
+  it("lets the visitor's own choice win over the workspace default", () => {
+    expect(
+      resolveCustomerFacingLocale({
+        visitorChoice: 'de',
+        workspaceDefault: 'sv',
+        acceptLanguage: 'en-US',
+      })
+    ).toBe('de')
+  })
+
+  it('falls back to the browser when the workspace configured no default', () => {
+    expect(
+      resolveCustomerFacingLocale({ workspaceDefault: null, acceptLanguage: 'fr-FR,fr;q=0.9' })
+    ).toBe('fr')
+  })
+
+  it('ignores an unsupported visitor choice instead of erroring', () => {
+    // A stale cookie or a typo'd widget init option must degrade, not break.
+    expect(
+      resolveCustomerFacingLocale({
+        visitorChoice: 'kl',
+        workspaceDefault: 'sv',
+        acceptLanguage: 'en-US',
+      })
+    ).toBe('sv')
+  })
+
+  it('ignores an unsupported workspace default', () => {
+    expect(resolveCustomerFacingLocale({ workspaceDefault: 'kl', acceptLanguage: 'de-DE' })).toBe(
+      'de'
+    )
+  })
+
+  it('ends at the fallback when nothing resolves', () => {
+    expect(resolveCustomerFacingLocale({})).toBe('en')
+  })
+})
+
+describe('readVisitorLocaleCookie', () => {
+  it('reads the locale out of a cookie header', () => {
+    expect(readVisitorLocaleCookie('theme=dark; qb_locale=sv; other=1')).toBe('sv')
+  })
+
+  it('returns null when absent', () => {
+    expect(readVisitorLocaleCookie('theme=dark')).toBeNull()
+    expect(readVisitorLocaleCookie(null)).toBeNull()
+    expect(readVisitorLocaleCookie('')).toBeNull()
+  })
+
+  it('does not match a cookie whose name merely ends with the same text', () => {
+    expect(readVisitorLocaleCookie('other_qb_locale=de')).toBeNull()
   })
 })

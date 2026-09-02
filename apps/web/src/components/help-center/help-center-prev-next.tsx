@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router'
-import { localizedHcPath } from '@/lib/shared/help-center-url'
+import { prefixHcPath } from '@/lib/shared/help-center-url'
 
 interface ArticleLink {
   slug: string
@@ -19,7 +19,7 @@ export function HelpCenterPrevNext({ categorySlug, prev, next, locale }: HelpCen
 
   const hrefFor = (slug: string) => {
     const path = `/hc/articles/${categorySlug}/${slug}`
-    return (locale ? localizedHcPath(locale, path) : path) as '/hc'
+    return (locale ? prefixHcPath(locale, path) : path) as '/hc'
   }
 
   return (

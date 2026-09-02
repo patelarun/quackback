@@ -1,7 +1,7 @@
 import { createFileRoute, getRouteApi, Link } from '@tanstack/react-router'
 import { DocumentTextIcon, ChevronRightIcon } from '@heroicons/react/24/outline'
 import { CategoryIcon } from '@/components/help-center/category-icon'
-import { localizedHcPath } from '@/lib/shared/help-center-url'
+import { prefixHcPath } from '@/lib/shared/help-center-url'
 
 const categoryApi = getRouteApi('/_portal/hc/$locale/categories/$categorySlug')
 
@@ -33,12 +33,7 @@ function LocaleCategoryIndexPage() {
             {articles.map((article) => (
               <Link
                 key={article.id}
-                to={
-                  localizedHcPath(
-                    locale,
-                    `/hc/articles/${category.slug}/${article.slug}`
-                  ) as '/hc'
-                }
+                to={prefixHcPath(locale, `/hc/articles/${category.slug}/${article.slug}`) as '/hc'}
                 className="group flex items-start gap-3 px-5 py-3.5 hover:bg-accent/40 transition-colors"
               >
                 <DocumentTextIcon className="h-4 w-4 shrink-0 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors mt-0.5" />

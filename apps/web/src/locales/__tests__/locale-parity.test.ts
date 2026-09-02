@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { SUPPORTED_LOCALES, DEFAULT_LOCALE } from '@/lib/shared/i18n'
+import { SUPPORTED_LOCALES, FALLBACK_UI_LOCALE } from '@/lib/shared/i18n'
 
 // Derive the catalog registry from the JSON files on disk rather than a
 // hand-maintained import list — adding a locale is then just dropping its
@@ -15,10 +15,10 @@ const catalogs: Record<string, Record<string, string>> = Object.fromEntries(
   ])
 )
 
-const en = catalogs[DEFAULT_LOCALE]
+const en = catalogs[FALLBACK_UI_LOCALE]
 const enKeys = Object.keys(en)
 const enKeySet = new Set(enKeys)
-const localesToCheck = SUPPORTED_LOCALES.filter((l) => l !== DEFAULT_LOCALE)
+const localesToCheck = SUPPORTED_LOCALES.filter((l) => l !== FALLBACK_UI_LOCALE)
 
 // Collect the top-level ICU argument names in a message: `{name}` -> "name",
 // `{count, plural, ...}` -> "count". Branch keywords (plural/one/other) and the

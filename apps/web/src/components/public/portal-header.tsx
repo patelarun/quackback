@@ -6,6 +6,8 @@ import { usePreviewDraft } from './preview-draft-context'
 import { isProductEnabled } from '@/lib/shared/types/settings'
 import { useIntl, FormattedMessage } from 'react-intl'
 import { cn } from '@/lib/shared/utils'
+import { PortalLanguageMenu } from '@/components/public/portal-language-menu'
+import type { SupportedLocale } from '@/lib/shared/i18n'
 import { isTeamMember, Role } from '@/lib/shared/roles'
 import { Button } from '@/components/ui/button'
 import { signOut, authClient } from '@/lib/client/auth-client'
@@ -328,6 +330,9 @@ export function PortalHeader({
   // Auth/admin buttons component (reused in both layouts)
   const AuthButtons = () => (
     <div className="flex items-center">
+      {/* Language override for the workspace's default language */}
+      <PortalLanguageMenu currentLocale={intl.locale as SupportedLocale} />
+
       {/* Theme Toggle (when admin allows user choice) */}
       <ThemeToggle />
 

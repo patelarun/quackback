@@ -2,7 +2,7 @@ import { Suspense } from 'react'
 import { createFileRoute, Outlet, useRouterState, useRouteContext } from '@tanstack/react-router'
 import { IntlProvider } from 'react-intl'
 import { useAdminPresence } from '@/lib/client/hooks/use-admin-presence'
-import { DEFAULT_LOCALE, loadMessages } from '@/lib/shared/i18n'
+import { FALLBACK_UI_LOCALE, loadMessages } from '@/lib/shared/i18n'
 import { fetchUserAvatar } from '@/lib/server/functions/portal'
 import { getLatestVersion, isNewerVersion } from '@/lib/server/functions/version'
 import { AdminSidebar } from '@/components/admin/admin-sidebar'
@@ -46,8 +46,8 @@ export const Route = createFileRoute('/admin')({
         updateBannerDismissedVersion: null,
         currentUser: null,
         planNotice: null,
-        locale: DEFAULT_LOCALE,
-        messages: await loadMessages(DEFAULT_LOCALE),
+        locale: FALLBACK_UI_LOCALE,
+        messages: await loadMessages(FALLBACK_UI_LOCALE),
       }
     }
 
@@ -57,7 +57,7 @@ export const Route = createFileRoute('/admin')({
       principal: NonNullable<typeof context.principal>
     }
 
-    const locale = context.acceptLanguageLocale ?? DEFAULT_LOCALE
+    const locale = context.acceptLanguageLocale ?? FALLBACK_UI_LOCALE
     const [avatarData, latestRelease, planNotice, messages] = await Promise.all([
       fetchUserAvatar({
         data: { userId: user.id, fallbackImageUrl: user.image },
@@ -135,7 +135,7 @@ function AdminLayout() {
   }
 
   return (
-    <IntlProvider locale={locale} defaultLocale={DEFAULT_LOCALE} messages={messages}>
+    <IntlProvider locale={locale} defaultLocale={FALLBACK_UI_LOCALE} messages={messages}>
       <TooltipProvider delayDuration={0}>
         <div className="flex h-screen bg-background">
           <AdminSidebar initialUserData={initialUserData} latestVersion={latestVersion} />

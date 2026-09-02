@@ -102,8 +102,8 @@ function renderHeader({
 
   return render(
     <IntlProvider locale="en" defaultLocale="en">
-      {/* showThemeToggle=false removes the theme dropdown trigger so the only
-          remaining button is the avatar / user-dropdown trigger */}
+      {/* showThemeToggle=false removes the theme dropdown trigger; the
+          language menu and the avatar trigger are addressed by name below */}
       <PortalHeader orgName="Acme" userRole={userRole} showThemeToggle={false} />
     </IntlProvider>
   )
@@ -114,9 +114,7 @@ describe('PortalHeader — Admin dropdown item', () => {
 
   it('shows an Admin item in the user dropdown for team members', async () => {
     renderHeader({ userRole: 'admin', isLoggedIn: true })
-    // The avatar button is the only button in the header (theme toggle off,
-    // NotificationBell mocked away, standalone Admin renders as a link).
-    const trigger = screen.getByRole('button')
+    const trigger = screen.getByRole('button', { name: /open account menu/i })
     // Radix DropdownMenuTrigger opens on pointerDown (not click).
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false })
     expect(await screen.findByRole('menuitem', { name: /admin/i })).toBeInTheDocument()
@@ -124,7 +122,7 @@ describe('PortalHeader — Admin dropdown item', () => {
 
   it('hides the Admin item for portal users', async () => {
     renderHeader({ userRole: 'user', isLoggedIn: true })
-    const trigger = screen.getByRole('button')
+    const trigger = screen.getByRole('button', { name: /open account menu/i })
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false })
     // Wait for the dropdown to open (Settings will appear), then confirm
     // no Admin menuitem is present.

@@ -37,6 +37,11 @@ import { cn } from '@/lib/shared/utils'
 import { BackLink } from '@/components/ui/back-link'
 import { PageHeader } from '@/components/shared/page-header'
 import { SettingsCard } from '@/components/admin/settings/settings-card'
+import {
+  DEFAULT_WORKSPACE_LOCALE,
+  SUPPORTED_LOCALES,
+  type SupportedLocale,
+} from '@/lib/shared/i18n'
 import { PreviewToggleButton } from '@/components/admin/settings/preview-toggle'
 import { PortalPreview } from '@/components/admin/settings/branding/portal-preview'
 import {
@@ -120,6 +125,20 @@ export const Route = createFileRoute('/admin/settings/branding')({
   },
   component: BrandingPage,
 })
+
+/** Language names for the admin picker, in English -- this list is admin UI. */
+const PORTAL_LANGUAGE_NAMES: Record<SupportedLocale, string> = {
+  en: 'English',
+  de: 'German',
+  fr: 'French',
+  es: 'Spanish',
+  sv: 'Swedish',
+  ar: 'Arabic',
+  ru: 'Russian',
+  'pt-br': 'Portuguese (Brazil)',
+  'zh-cn': 'Chinese (Simplified)',
+  'zh-tw': 'Chinese (Traditional)',
+}
 
 function BrandingPage() {
   const router = useRouter()
@@ -328,6 +347,36 @@ function BrandingPage() {
             description="Shown when your portal link is shared on social media or in chat apps. Falls back to your logo. Recommended 1200×630"
           >
             <OgImageUploader />
+          </SettingsCard>
+
+          <SettingsCard
+            title="Language"
+            description="The language visitors see on the portal, widget and help center, whatever their browser is set to. Visitors can still pick another from the header."
+          >
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Default language</Label>
+              <Select
+                value={config.defaultLocale ?? DEFAULT_WORKSPACE_LOCALE}
+                onValueChange={(next) =>
+                  updatePortalConfig.mutate({ defaultLocale: next as SupportedLocale })
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SUPPORTED_LOCALES.map((locale) => (
+                    <SelectItem key={locale} value={locale}>
+                      {PORTAL_LANGUAGE_NAMES[locale]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                This is the interface language. The language help center articles are written in is
+                set under Help center &rarr; Domains &amp; languages.
+              </p>
+            </div>
           </SettingsCard>
 
           <SettingsCard title="Appearance" description="Theme mode, color palette, and typography">

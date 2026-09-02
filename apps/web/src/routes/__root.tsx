@@ -22,7 +22,7 @@ import { DefaultErrorPage } from '@/components/shared/error-page'
 import { OttHandler } from '@/components/shared/ott-handler'
 import { VisitorBeacon } from '@/components/shared/visitor-beacon'
 import { documentLocale, htmlLangDir } from '@/lib/shared/document-locale'
-import { normalizeLocale, DEFAULT_LOCALE, type SupportedLocale } from '@/lib/shared/i18n'
+import { normalizeLocale, FALLBACK_UI_LOCALE, type SupportedLocale } from '@/lib/shared/i18n'
 
 export interface RouterContext {
   queryClient: QueryClient
@@ -35,6 +35,7 @@ export interface RouterContext {
   managedFieldPaths?: string[]
   registeredAuthProviders?: string[]
   acceptLanguageLocale?: SupportedLocale
+  visitorLocale?: SupportedLocale
   updateBannerDismissedVersion?: BootstrapData['updateBannerDismissedVersion']
 }
 
@@ -67,6 +68,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       managedFieldPaths,
       registeredAuthProviders,
       acceptLanguageLocale,
+      visitorLocale,
       updateBannerDismissedVersion,
     } = await getBootstrapData()
 
@@ -114,6 +116,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       managedFieldPaths,
       registeredAuthProviders,
       acceptLanguageLocale,
+      visitorLocale,
       updateBannerDismissedVersion,
     }
   },
@@ -230,7 +233,7 @@ class SafeRootDocument extends Component<{ children: ReactNode }, { hasError: bo
 const NON_PORTAL_PREFIXES = ['/admin', '/onboarding', '/api', '/complete-signup']
 
 function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
-  const { settings, themeCookie, prefersColorScheme, acceptLanguageLocale } =
+  const { settings, themeCookie, prefersColorScheme, acceptLanguageLocale, visitorLocale } =
     Route.useRouteContext()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   // structuralSharing keeps the array reference stable across store updates that
@@ -285,8 +288,12 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
   // valid `?locale=` override wins, matching what the widget itself renders.
   const widgetOverride =
     routeIds.includes('/widget') && widgetLocaleParam ? normalizeLocale(widgetLocaleParam) : null
-  const resolvedLocale = widgetOverride ?? acceptLanguageLocale ?? DEFAULT_LOCALE
-  const { lang, dir } = htmlLangDir(documentLocale(routeIds, resolvedLocale))
+  const { lang, dir } = htmlLangDir(
+    documentLocale(routeIds, {
+      customerFacing: widgetOverride ?? visitorLocale ?? FALLBACK_UI_LOCALE,
+      internal: acceptLanguageLocale ?? FALLBACK_UI_LOCALE,
+    })
+  )
 
   // suppressHydrationWarning stays: next-themes' inline script sets the theme
   // class on <html> before React hydrates, and for `system` without the client

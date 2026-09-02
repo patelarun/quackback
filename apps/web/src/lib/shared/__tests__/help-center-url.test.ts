@@ -13,20 +13,27 @@ describe('getHelpCenterBaseUrl', () => {
 })
 
 describe('localizedHcPath', () => {
-  it('leaves the default locale unprefixed', () => {
-    expect(localizedHcPath('en', '/hc/categories/billing')).toBe('/hc/categories/billing')
+  it('leaves the base content locale unprefixed', () => {
+    expect(localizedHcPath('en', '/hc/categories/billing', 'en')).toBe('/hc/categories/billing')
   })
 
   it('prefixes an additional locale', () => {
-    expect(localizedHcPath('de', '/hc/categories/billing')).toBe('/hc/de/categories/billing')
+    expect(localizedHcPath('de', '/hc/categories/billing', 'en')).toBe('/hc/de/categories/billing')
   })
 
   it('prefixes the bare homepage path', () => {
-    expect(localizedHcPath('de', '/hc')).toBe('/hc/de')
+    expect(localizedHcPath('de', '/hc', 'en')).toBe('/hc/de')
+  })
+
+  it('follows a non-English base locale', () => {
+    // A Swedish-authored help center serves Swedish on the unprefixed paths
+    // and pushes English into the /hc/en subtree.
+    expect(localizedHcPath('sv', '/hc/categories/billing', 'sv')).toBe('/hc/categories/billing')
+    expect(localizedHcPath('en', '/hc/categories/billing', 'sv')).toBe('/hc/en/categories/billing')
   })
 
   it('prefixes an article path', () => {
-    expect(localizedHcPath('fr', '/hc/articles/billing/invoices')).toBe(
+    expect(localizedHcPath('fr', '/hc/articles/billing/invoices', 'en')).toBe(
       '/hc/fr/articles/billing/invoices'
     )
   })
@@ -35,40 +42,51 @@ describe('localizedHcPath', () => {
 describe('parseHcLocalePath', () => {
   const enabledLocales = ['de', 'fr']
 
-  it('treats an unprefixed path as the default locale', () => {
-    expect(parseHcLocalePath('/hc/categories/billing', enabledLocales)).toEqual({
+  it('reports the workspace base locale, not a hardcoded English', () => {
+    expect(parseHcLocalePath('/hc/categories/billing', ['en'], 'sv')).toEqual({
+      locale: 'sv',
+      canonicalPath: '/hc/categories/billing',
+    })
+    expect(parseHcLocalePath('/hc/en/categories/billing', ['en'], 'sv')).toEqual({
+      locale: 'en',
+      canonicalPath: '/hc/categories/billing',
+    })
+  })
+
+  it('treats an unprefixed path as the base content locale', () => {
+    expect(parseHcLocalePath('/hc/categories/billing', enabledLocales, 'en')).toEqual({
       locale: 'en',
       canonicalPath: '/hc/categories/billing',
     })
   })
 
   it('recovers the locale and canonical path from a prefixed URL', () => {
-    expect(parseHcLocalePath('/hc/de/categories/billing', enabledLocales)).toEqual({
+    expect(parseHcLocalePath('/hc/de/categories/billing', enabledLocales, 'en')).toEqual({
       locale: 'de',
       canonicalPath: '/hc/categories/billing',
     })
   })
 
   it('recovers the bare locale homepage', () => {
-    expect(parseHcLocalePath('/hc/de', enabledLocales)).toEqual({
+    expect(parseHcLocalePath('/hc/de', enabledLocales, 'en')).toEqual({
       locale: 'de',
       canonicalPath: '/hc',
     })
   })
 
   it('does not mistake the static "categories"/"articles" segments for a locale, since callers only ever pass real SupportedLocale codes as enabledLocales', () => {
-    expect(parseHcLocalePath('/hc/categories/billing', enabledLocales)).toEqual({
+    expect(parseHcLocalePath('/hc/categories/billing', enabledLocales, 'en')).toEqual({
       locale: 'en',
       canonicalPath: '/hc/categories/billing',
     })
-    expect(parseHcLocalePath('/hc/articles/billing/invoices', enabledLocales)).toEqual({
+    expect(parseHcLocalePath('/hc/articles/billing/invoices', enabledLocales, 'en')).toEqual({
       locale: 'en',
       canonicalPath: '/hc/articles/billing/invoices',
     })
   })
 
-  it('falls back to default locale when the first segment is not enabled', () => {
-    expect(parseHcLocalePath('/hc/zz/categories/billing', enabledLocales)).toEqual({
+  it('falls back to the base content locale when the first segment is not enabled', () => {
+    expect(parseHcLocalePath('/hc/zz/categories/billing', enabledLocales, 'en')).toEqual({
       locale: 'en',
       canonicalPath: '/hc/zz/categories/billing',
     })
@@ -90,15 +108,11 @@ describe('resolveHcLandingLocale', () => {
   })
 
   it('a manual cookie choice wins over Accept-Language', () => {
-    expect(
-      resolveHcLandingLocale({ ...base, cookieLocale: 'fr', acceptLanguage: 'de' })
-    ).toBe('fr')
+    expect(resolveHcLandingLocale({ ...base, cookieLocale: 'fr', acceptLanguage: 'de' })).toBe('fr')
   })
 
   it('an explicit cookie choice of the default locale is honored (no redirect)', () => {
-    expect(
-      resolveHcLandingLocale({ ...base, cookieLocale: 'en', acceptLanguage: 'de' })
-    ).toBeNull()
+    expect(resolveHcLandingLocale({ ...base, cookieLocale: 'en', acceptLanguage: 'de' })).toBeNull()
   })
 
   it('ignores a stale cookie referencing a since-disabled locale', () => {
@@ -114,9 +128,7 @@ describe('resolveHcLandingLocale', () => {
   })
 
   it('stays on default when Accept-Language does not match an enabled locale', () => {
-    expect(
-      resolveHcLandingLocale({ ...base, cookieLocale: null, acceptLanguage: 'ja' })
-    ).toBeNull()
+    expect(resolveHcLandingLocale({ ...base, cookieLocale: null, acceptLanguage: 'ja' })).toBeNull()
   })
 
   it('stays on default when Accept-Language resolves to the default locale itself', () => {

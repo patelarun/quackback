@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const mockGenerateKbQueryEmbedding = vi.fn()
+// Which locale gets hybrid vs keyword-only search follows the workspace's
+// configured base content locale, so the settings read is mocked here.
+vi.mock('@/lib/server/domains/settings/settings.service', () => ({
+  getHelpCenterConfig: vi.fn(async () => ({
+    locales: { default: 'en', additional: [], chrome: {} },
+  })),
+}))
+
 vi.mock('../help-center-embedding.service', () => ({
   generateKbQueryEmbedding: (...args: unknown[]) => mockGenerateKbQueryEmbedding(...args),
 }))
@@ -19,7 +27,13 @@ function makeChain() {
 
 vi.mock('@/lib/server/db', () => ({
   db: { select: vi.fn(() => makeChain()) },
-  helpCenterCategories: { id: 'id', slug: 'slug', name: 'name', isPublic: 'is_public', deletedAt: 'cat_deleted' },
+  helpCenterCategories: {
+    id: 'id',
+    slug: 'slug',
+    name: 'name',
+    isPublic: 'is_public',
+    deletedAt: 'cat_deleted',
+  },
   helpCenterArticles: {
     id: 'id',
     slug: 'slug',
@@ -56,9 +70,8 @@ vi.mock('@/lib/server/db', () => ({
   ),
 }))
 
-const { orTermsTsQueryForLocale, hybridSearchForLocale } = await import(
-  '../help-center-search.service'
-)
+const { orTermsTsQueryForLocale, hybridSearchForLocale } =
+  await import('../help-center-search.service')
 
 beforeEach(() => {
   mockGenerateKbQueryEmbedding.mockReset()

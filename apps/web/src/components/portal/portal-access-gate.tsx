@@ -38,7 +38,7 @@ import { signOut } from '@/lib/client/auth-client'
 import { isSafeCallbackUrl } from '@/lib/shared/routing'
 import { navigateAfterAuth } from '@/lib/client/post-auth-navigation'
 import { PortalIntlProvider } from '@/components/portal-intl-provider'
-import { DEFAULT_LOCALE } from '@/lib/shared/i18n'
+import { FALLBACK_UI_LOCALE } from '@/lib/shared/i18n'
 import type { PortalAccessGateError } from '@/lib/shared/types/portal-gate-error'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -544,7 +544,7 @@ export function PortalAccessGate({
     // provider — without it <FormattedMessage> has no context and crashes.
     // No SSR catalog here (the error path has no loader data); useIntlSetup
     // fetches it client-side, which lands well before the form needs it.
-    <PortalIntlProvider locale={locale ?? DEFAULT_LOCALE}>
+    <PortalIntlProvider locale={locale ?? FALLBACK_UI_LOCALE}>
       <div className="relative min-h-screen">
         {/* Theme/custom CSS injected here too so the backdrop looks branded */}
         {themeStyles && (

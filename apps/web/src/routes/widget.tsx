@@ -3,7 +3,11 @@ import { createServerFn } from '@tanstack/react-start'
 import { getRequestHeaders, setResponseHeader } from '@tanstack/react-start/server'
 import { z } from 'zod'
 import { generateThemeCSS, readFontSans } from '@/lib/shared/theme'
-import { resolveLocale, loadWidgetMessages } from '@/lib/shared/i18n'
+import {
+  loadWidgetMessages,
+  readVisitorLocaleCookie,
+  resolveCustomerFacingLocale,
+} from '@/lib/shared/i18n'
 import { WidgetAuthProvider } from '@/components/widget/widget-auth-provider'
 import { extractSessionTokenFromCookie } from '@/lib/server/functions/portal-session-token'
 import { redactSettingsForClient } from '@/lib/shared/redact-portal-config'
@@ -18,15 +22,29 @@ const setIframeHeaders = createServerFn({ method: 'GET' }).handler(async () => {
 
 /**
  * Resolve the widget locale on the server so SSR and hydration agree.
- * The `?locale=` search param wins over the Accept-Language header; both
- * are read server-side because navigator/URL access during render would
- * diverge from SSR and trigger React hydration error #418 (issue #133).
+ *
+ * Precedence matches the rest of the customer-facing surfaces: the host page's
+ * `?locale=` init option or the visitor's own switcher choice first, then the
+ * workspace's configured default language, then Accept-Language. All of it is
+ * read server-side because navigator/URL access during render would diverge
+ * from SSR and trigger React hydration error #418 (issue #133).
  */
 const getWidgetLocale = createServerFn({ method: 'GET' })
   .validator(z.object({ explicitLocale: z.string().optional() }))
   .handler(async ({ data }) => {
-    const acceptLanguage = getRequestHeaders().get('accept-language')
-    return resolveLocale(acceptLanguage, data.explicitLocale)
+    const { getPortalConfig } = await import('@/lib/server/domains/settings/settings.service')
+    const headers = getRequestHeaders()
+    const workspaceDefault = await getPortalConfig()
+      .then((config) => config.defaultLocale ?? null)
+      .catch(() => null)
+
+    return resolveCustomerFacingLocale({
+      // The host page's explicit option outranks the visitor cookie: an
+      // embedder that pins a language means it for that embed.
+      visitorChoice: data.explicitLocale ?? readVisitorLocaleCookie(headers.get('cookie')),
+      workspaceDefault,
+      acceptLanguage: headers.get('accept-language'),
+    })
   })
 
 /** Extract the signed session cookie for direct widget session reuse (same-origin only). */

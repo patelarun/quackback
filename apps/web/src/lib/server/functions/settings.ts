@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { createServerFn } from '@tanstack/react-start'
 import { tiptapContentSchema } from '@/lib/shared/schemas/posts'
+import { SUPPORTED_LOCALES } from '@/lib/shared/i18n'
 // Import types from barrel export (client-safe)
 import {
   DEFAULT_PORTAL_CONFIG,
@@ -337,6 +338,10 @@ const updatePortalConfigSchema = z.object({
       enabled: z.boolean().optional(),
     })
     .optional(),
+  // The language every customer-facing surface is served in. Constrained to
+  // the catalogs we actually ship, so an unsupported code can't be persisted
+  // and silently fall through to browser detection at render time.
+  defaultLocale: z.enum(SUPPORTED_LOCALES).optional(),
   nav: z
     .object({
       items: z

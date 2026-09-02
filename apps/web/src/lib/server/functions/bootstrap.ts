@@ -2,7 +2,12 @@ import { createServerFn, createServerOnlyFn } from '@tanstack/react-start'
 import type { Role } from '@/lib/shared/roles'
 import { getThemeCookie, parsePrefersColorScheme, type Theme } from '@/lib/shared/theme'
 import { getUpdateBannerDismissedVersionCookie } from '@/lib/shared/update-banner-cookie'
-import { resolveLocale, type SupportedLocale } from '@/lib/shared/i18n'
+import {
+  readVisitorLocaleCookie,
+  resolveCustomerFacingLocale,
+  resolveLocale,
+  type SupportedLocale,
+} from '@/lib/shared/i18n'
 import type { Session, PrincipalType } from '@/lib/server/auth/session'
 import type { TenantSettings } from '@/lib/server/domains/settings'
 import type { SessionId, UserId } from '@quackback/ids'
@@ -31,10 +36,17 @@ export interface BootstrapData {
    *  `auth_sso` row in `platform_credentials` will NOT include 'sso'
    *  here, so the UI never renders an SSO button that would 404. */
   registeredAuthProviders: string[]
-  /** Locale resolved from the request's Accept-Language header, used by the
-   *  root document to set `<html lang>`/`dir` during SSR. Resolved here so it
-   *  rides the bootstrap request without a separate round-trip. */
+  /** Locale resolved from the request's Accept-Language header alone. Used by
+   *  the internal surfaces (the admin app's automation pages), which follow
+   *  the teammate's browser rather than the workspace's customer-facing
+   *  default language. Resolved here so it rides the bootstrap request
+   *  without a separate round-trip. */
   acceptLanguageLocale: SupportedLocale
+  /** Locale every CUSTOMER-FACING surface renders in: the visitor's own
+   *  switcher choice, else the workspace's configured default language, else
+   *  Accept-Language. Used by the root document for `<html lang>`/`dir` on
+   *  portal, widget and auth routes. */
+  visitorLocale: SupportedLocale
   /** Version string the admin update banner was dismissed for, read from the
    *  `update_banner_dismissed_version` cookie, or null if never dismissed.
    *  Threaded into the admin route the same way `themeCookie` is, so the
@@ -168,6 +180,14 @@ const getBootstrapDataInternal = createServerOnlyFn(async (): Promise<BootstrapD
     headers.get('cookie') ?? null
   )
   const acceptLanguageLocale = resolveLocale(headers.get('accept-language'))
+  // The workspace default outranks Accept-Language on customer-facing
+  // surfaces, so this is resolved separately from the header-only locale
+  // above. `settings` is already loaded here, so it costs no extra query.
+  const visitorLocale = resolveCustomerFacingLocale({
+    visitorChoice: readVisitorLocaleCookie(headers.get('cookie')),
+    workspaceDefault: settings?.portalConfig?.defaultLocale ?? null,
+    acceptLanguage: headers.get('accept-language'),
+  })
 
   // Advertise the prefers-color-scheme client hint so the browser tells us the
   // OS preference. Critical-CH makes Chromium retry the very first navigation
@@ -206,6 +226,7 @@ const getBootstrapDataInternal = createServerOnlyFn(async (): Promise<BootstrapD
     managedFieldPaths: settings?.managedFieldPaths ?? [],
     registeredAuthProviders,
     acceptLanguageLocale,
+    visitorLocale,
     updateBannerDismissedVersion,
   }
 })

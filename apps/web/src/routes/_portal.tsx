@@ -22,7 +22,7 @@ import { DEFAULT_AUTH_CONFIG } from '@/lib/shared/types/settings'
 import { generateThemeCSS, readFontSans } from '@/lib/shared/theme'
 import { PortalIntlProvider } from '@/components/portal-intl-provider'
 import { getPortalLocaleFn, loadPortalIntl } from '@/lib/server/functions/locale'
-import { DEFAULT_LOCALE } from '@/lib/shared/i18n'
+import { FALLBACK_UI_LOCALE } from '@/lib/shared/i18n'
 import {
   evaluateMyPortalAccessFn,
   recordPortalAccessDeniedFn,
@@ -147,7 +147,7 @@ export const Route = createFileRoute('/_portal')({
       const brandingConfig = settings?.brandingConfig ?? {}
       const hasThemeConfig = brandingConfig.light || brandingConfig.dark
       // Locale so the gate's auth dialog renders under PortalIntlProvider.
-      const locale = await getPortalLocaleFn().catch(() => DEFAULT_LOCALE)
+      const locale = await getPortalLocaleFn().catch(() => FALLBACK_UI_LOCALE)
       // Instant-SSO: when the workspace's only sign-in method is a single OIDC
       // provider, redirect anonymous visitors straight to the IdP. Skipped for
       // 'unauthorized' (signed-in non-member) — they already have a session and

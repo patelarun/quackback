@@ -7,8 +7,11 @@ import { HelpCenterBreadcrumbs } from '@/components/help-center/help-center-brea
 import { HelpCenterPrevNext } from '@/components/help-center/help-center-prev-next'
 import { HelpCenterArticleFeedback } from '@/components/help-center/help-center-article-feedback'
 import { HelpCenterToc } from '@/components/help-center/help-center-toc'
-import { extractHeadings, computePrevNext } from '@/components/help-center/help-center-article-utils'
-import { localizedHcPath } from '@/lib/shared/help-center-url'
+import {
+  extractHeadings,
+  computePrevNext,
+} from '@/components/help-center/help-center-article-utils'
+import { prefixHcPath } from '@/lib/shared/help-center-url'
 import type { JSONContent } from '@tiptap/react'
 
 const categoryApi = getRouteApi('/_portal/hc/$locale/articles/$categorySlug')
@@ -27,7 +30,9 @@ export const Route = createFileRoute('/_portal/hc/$locale/articles/$categorySlug
   head: ({ loaderData }) => {
     if (!loaderData) return {}
     const { article } = loaderData
-    return { meta: [{ title: article.title }, { name: 'description', content: article.description ?? '' }] }
+    return {
+      meta: [{ title: article.title }, { name: 'description', content: article.description ?? '' }],
+    }
   },
   component: LocaleArticleDetailPage,
 })
@@ -38,8 +43,8 @@ function LocaleArticleDetailPage() {
   const { category, articles } = categoryApi.useLoaderData()
 
   const breadcrumbs = [
-    { label: 'Help Center', href: localizedHcPath(locale, '/hc') },
-    { label: category.name, href: localizedHcPath(locale, `/hc/categories/${category.slug}`) },
+    { label: 'Help Center', href: prefixHcPath(locale, '/hc') },
+    { label: category.name, href: prefixHcPath(locale, `/hc/categories/${category.slug}`) },
     { label: article.title },
   ]
 

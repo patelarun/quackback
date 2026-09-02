@@ -1,4 +1,12 @@
-export const DEFAULT_LOCALE = 'en' as const
+/**
+ * Last-resort UI locale. Used only when no visitor override, no workspace
+ * default and no Accept-Language match produced a locale -- e.g. a request
+ * with no Accept-Language header at all, or a surface that renders before
+ * workspace settings are available. It is NOT "the language the product is
+ * in": that is the workspace's `portalConfig.defaultLocale`, resolved by
+ * {@link resolveCustomerFacingLocale}.
+ */
+export const FALLBACK_UI_LOCALE = 'en' as const
 
 export const SUPPORTED_LOCALES = [
   'en',
@@ -14,6 +22,15 @@ export const SUPPORTED_LOCALES = [
 ] as const
 
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number]
+
+/**
+ * The locale a workspace serves to visitors when it has no explicit
+ * `portalConfig.defaultLocale` -- the shipped default for a fresh install.
+ * Distinct from {@link FALLBACK_UI_LOCALE} (a last-resort for when resolution
+ * produced nothing) and from the help center's base CONTENT locale
+ * (`helpCenter.locales.default`, the language articles are authored in).
+ */
+export const DEFAULT_WORKSPACE_LOCALE: SupportedLocale = 'sv'
 
 const RTL_LOCALES = new Set(['ar', 'he', 'fa', 'ur'])
 
@@ -65,7 +82,7 @@ export function normalizeLocale(locale: string): SupportedLocale | null {
 /**
  * Parses an Accept-Language header and returns the best matching supported
  * locale. An explicit locale override takes precedence when supported.
- * Falls back to DEFAULT_LOCALE if nothing matches.
+ * Falls back to FALLBACK_UI_LOCALE if nothing matches.
  */
 export function resolveLocale(
   acceptLanguage: string | null | undefined,
@@ -78,7 +95,7 @@ export function resolveLocale(
   }
 
   // Parse Accept-Language header
-  if (!acceptLanguage) return DEFAULT_LOCALE
+  if (!acceptLanguage) return FALLBACK_UI_LOCALE
 
   const entries = acceptLanguage
     .split(',')
@@ -96,7 +113,75 @@ export function resolveLocale(
     if (normalized !== null) return normalized
   }
 
-  return DEFAULT_LOCALE
+  return FALLBACK_UI_LOCALE
+}
+
+/**
+ * Name of the cookie holding a visitor's explicit language choice, set by the
+ * portal language switcher. Read on every customer-facing request, so it is
+ * scoped to the whole site (not just `/hc`) and outlives the session.
+ */
+export const VISITOR_LOCALE_COOKIE = 'qb_locale'
+
+/**
+ * Read the visitor's explicit language choice out of a raw Cookie header.
+ * Returns null when absent or unsupported, so callers fall through to the
+ * workspace default.
+ */
+export function readVisitorLocaleCookie(cookieHeader: string | null | undefined): string | null {
+  if (!cookieHeader) return null
+  for (const cookie of cookieHeader.split(';')) {
+    const [key, ...rest] = cookie.trim().split('=')
+    if (key === VISITOR_LOCALE_COOKIE) return decodeURIComponent(rest.join('=')) || null
+  }
+  return null
+}
+
+/**
+ * Persist the visitor's language choice from the browser. Site-wide path and
+ * a one-year age: the pick should survive navigation out of the help center
+ * and the end of the session.
+ */
+export function setVisitorLocaleCookie(locale: SupportedLocale): void {
+  document.cookie = `${VISITOR_LOCALE_COOKIE}=${locale};path=/;max-age=31536000;samesite=lax`
+}
+
+/**
+ * Resolve the locale for a CUSTOMER-FACING surface (portal, widget, help
+ * center), in strict precedence order:
+ *
+ * 1. `visitorChoice` -- an explicit pick from the language switcher (cookie)
+ *    or, on the widget, the `locale` init option the host page passed. A
+ *    person who chose a language always keeps it.
+ * 2. `workspaceDefault` -- the language this workspace serves. It deliberately
+ *    OUTRANKS Accept-Language: a workspace that serves Swedish serves Swedish
+ *    to an en-US browser too, which is the whole point of a default language.
+ * 3. `acceptLanguage` -- browser preference, honored only by a workspace that
+ *    configured no default of its own.
+ * 4. {@link FALLBACK_UI_LOCALE}.
+ *
+ * Unsupported values at any step fall through to the next rather than
+ * erroring, so a stale cookie or a typo'd init option degrades instead of
+ * breaking the page.
+ */
+export function resolveCustomerFacingLocale(params: {
+  visitorChoice?: string | null
+  workspaceDefault?: string | null
+  acceptLanguage?: string | null
+}): SupportedLocale {
+  const { visitorChoice, workspaceDefault, acceptLanguage } = params
+
+  if (visitorChoice) {
+    const chosen = normalizeLocale(visitorChoice)
+    if (chosen !== null) return chosen
+  }
+
+  if (workspaceDefault) {
+    const configured = normalizeLocale(workspaceDefault)
+    if (configured !== null) return configured
+  }
+
+  return resolveLocale(acceptLanguage)
 }
 
 /**

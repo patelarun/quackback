@@ -68,7 +68,7 @@ function HelpCenterLayoutRoute() {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const additionalLocales = helpCenterConfig?.locales?.additional ?? []
   const defaultLocale = helpCenterConfig?.locales?.default ?? 'en'
-  const { locale, canonicalPath } = parseHcLocalePath(pathname, additionalLocales)
+  const { locale, canonicalPath } = parseHcLocalePath(pathname, additionalLocales, defaultLocale)
 
   return (
     <div className="flex flex-1 min-h-0 flex-col" dir={isRtlLocale(locale) ? 'rtl' : 'ltr'}>

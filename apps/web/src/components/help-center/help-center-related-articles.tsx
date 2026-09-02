@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { ChevronRightIcon } from '@heroicons/react/24/outline'
-import { localizedHcPath } from '@/lib/shared/help-center-url'
+import { prefixHcPath } from '@/lib/shared/help-center-url'
 
 export interface RelatedArticleLink {
   id: string
@@ -21,7 +21,7 @@ export function HelpCenterRelatedArticles({ articles, locale }: HelpCenterRelate
 
   const hrefFor = (article: RelatedArticleLink) => {
     const path = `/hc/articles/${article.categorySlug}/${article.slug}`
-    return (locale ? localizedHcPath(locale, path) : path) as '/hc'
+    return (locale ? prefixHcPath(locale, path) : path) as '/hc'
   }
 
   return (

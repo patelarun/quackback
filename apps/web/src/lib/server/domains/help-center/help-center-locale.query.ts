@@ -28,7 +28,7 @@ import {
 import type { KbArticleId, KbCategoryId } from '@quackback/ids'
 import { ANONYMOUS_ACTOR, type Actor } from '@/lib/server/policy/types'
 import { NotFoundError } from '@/lib/shared/errors'
-import { DEFAULT_LOCALE } from '@/lib/shared/i18n'
+import { getHelpCenterConfig } from '@/lib/server/domains/settings/settings.service'
 import { listPublicCategories, getPublicCategoryBySlug } from './help-center.category.service'
 import {
   listPublicArticlesForCategory,
@@ -45,12 +45,24 @@ import type {
   HelpCenterArticleWithCategory,
 } from './help-center.types'
 
+/**
+ * The locale help-center content is AUTHORED in. Base rows on `kb_articles` /
+ * `kb_categories` hold this language; every other locale lives in the
+ * translation tables. Configured per workspace, so it is read here rather than
+ * taken from a constant -- a workspace that authors in Swedish has no English
+ * base rows to fall back to.
+ */
+async function getBaseContentLocale(): Promise<string> {
+  const config = await getHelpCenterConfig()
+  return config.locales.default
+}
+
 export async function listPublicCategoriesForLocale(
   locale: string,
   viewer: Actor = ANONYMOUS_ACTOR
 ): Promise<HelpCenterCategoryWithCount[]> {
   const categories = await listPublicCategories(viewer)
-  if (locale === DEFAULT_LOCALE || categories.length === 0) return categories
+  if (locale === (await getBaseContentLocale()) || categories.length === 0) return categories
 
   const categoryIds = categories.map((c) => c.id)
   const [translations, articleCounts] = await Promise.all([
@@ -102,7 +114,7 @@ export async function getPublicCategoryBySlugForLocale(
   viewer: Actor = ANONYMOUS_ACTOR
 ): ReturnType<typeof getPublicCategoryBySlug> {
   const category = await getPublicCategoryBySlug(slug, viewer)
-  if (locale === DEFAULT_LOCALE) return category
+  if (locale === (await getBaseContentLocale())) return category
 
   const translation = await getCategoryTranslation(category.id as KbCategoryId, locale)
   if (!translation || !translation.name.trim()) {
@@ -120,7 +132,7 @@ export async function listPublicArticlesForCategoryLocale(
   viewer: Actor = ANONYMOUS_ACTOR
 ) {
   const articles = await listPublicArticlesForCategory(categoryId, viewer)
-  if (locale === DEFAULT_LOCALE || articles.length === 0) return articles
+  if (locale === (await getBaseContentLocale()) || articles.length === 0) return articles
 
   const translations = await db.query.helpCenterArticleTranslations.findMany({
     where: and(
@@ -156,7 +168,7 @@ export async function listPublicArticlesForCategoriesLocale(
   viewer: Actor = ANONYMOUS_ACTOR
 ): Promise<Map<string, PublicCategoryArticle[]>> {
   const grouped = await listPublicArticlesForCategories(categoryIds, viewer)
-  if (locale === DEFAULT_LOCALE || grouped.size === 0) return grouped
+  if (locale === (await getBaseContentLocale()) || grouped.size === 0) return grouped
 
   const allArticleIds: string[] = []
   for (const list of grouped.values()) for (const a of list) allArticleIds.push(a.id)
@@ -192,7 +204,7 @@ export async function getPublicArticleBySlugForLocale(
   viewer: Actor = ANONYMOUS_ACTOR
 ): Promise<HelpCenterArticleWithCategory> {
   const article = await getPublicArticleBySlug(slug, viewer)
-  if (locale === DEFAULT_LOCALE) return article
+  if (locale === (await getBaseContentLocale())) return article
 
   const translation = await getPublishedArticleTranslation(article.id as KbArticleId, locale)
   if (!translation) {

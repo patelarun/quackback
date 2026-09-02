@@ -121,6 +121,13 @@ export const helpCenterArticles = pgTable(
       .notNull()
       .references(() => helpCenterCategories.id, { onDelete: 'cascade' }),
     slug: text('slug').notNull(),
+    /**
+     * The locale this article is AUTHORED in -- the workspace's help-center
+     * base locale at the time it was written. Drives which Postgres
+     * text-search config stems it (see LOCALE_TO_REGCONFIG); every other
+     * locale lives in kb_article_translations.
+     */
+    locale: text('locale').notNull().default('en'),
     title: text('title').notNull(),
     description: text('description'),
     position: integer('position'),
@@ -137,7 +144,7 @@ export const helpCenterArticles = pgTable(
     helpfulCount: integer('helpful_count').default(0).notNull(),
     notHelpfulCount: integer('not_helpful_count').default(0).notNull(),
     searchVector: tsvector('search_vector').generatedAlwaysAs(
-      sql`setweight(to_tsvector('english', coalesce(title, '')), 'A') || setweight(to_tsvector('english', coalesce(content, '')), 'B')`
+      sql`setweight(to_tsvector(${sql.raw(localeRegconfigCaseSql('locale'))}, coalesce(title, '')), 'A') || setweight(to_tsvector(${sql.raw(localeRegconfigCaseSql('locale'))}, coalesce(content, '')), 'B')`
     ),
     embedding: vector('embedding'),
     embeddingModel: text('embedding_model'),

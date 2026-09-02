@@ -38,8 +38,11 @@ vi.mock('@/lib/shared/i18n', () => ({
   resolveLocale: vi.fn(async () => 'en'),
   loadMessages: vi.fn(async () => ({})),
   loadPortalMessages: vi.fn(async () => ({})),
-  DEFAULT_LOCALE: 'en',
-  SUPPORTED_LOCALES: ['en', 'de', 'fr', 'es', 'ar', 'ru', 'pt-br', 'zh-cn', 'zh-tw'],
+  FALLBACK_UI_LOCALE: 'en',
+  DEFAULT_WORKSPACE_LOCALE: 'sv',
+  resolveCustomerFacingLocale: vi.fn(async () => 'en'),
+  readVisitorLocaleCookie: vi.fn(() => null),
+  SUPPORTED_LOCALES: ['en', 'de', 'fr', 'es', 'sv', 'ar', 'ru', 'pt-br', 'zh-cn', 'zh-tw'],
 }))
 vi.mock('@/lib/shared/types/settings', () => ({
   DEFAULT_PORTAL_CONFIG: { oauth: {}, access: {} },

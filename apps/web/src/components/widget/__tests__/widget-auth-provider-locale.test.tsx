@@ -4,7 +4,7 @@
  *
  * WidgetAuthProvider derived its initial locale from `navigator.language`
  * inside the useState initializer. The server has no `navigator`, so SSR
- * rendered the widget in DEFAULT_LOCALE while the client hydrated in the
+ * rendered the widget in FALLBACK_UI_LOCALE while the client hydrated in the
  * visitor's browser language — a hydration mismatch for every non-English
  * visitor. The locale must come solely from the SSR-resolved prop.
  */
@@ -57,7 +57,7 @@ describe('WidgetAuthProvider locale (hydration safety #133)', () => {
     expect(renderWidget('de').getByTestId('locale').textContent).toBe('de')
   })
 
-  it('falls back to DEFAULT_LOCALE, never navigator.language, when no locale is provided', () => {
+  it('falls back to FALLBACK_UI_LOCALE, never navigator.language, when no locale is provided', () => {
     // Pre-fix this fell through to navigator.language ('fr'), so a French
     // browser hydrated a French tree over an English SSR tree → React #418.
     expect(renderWidget().getByTestId('locale').textContent).toBe('en')

@@ -1,4 +1,3 @@
-import { useNavigate } from '@tanstack/react-router'
 import { GlobeAltIcon } from '@heroicons/react/24/outline'
 import {
   Select,
@@ -8,6 +7,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { localizedHcPath } from '@/lib/shared/help-center-url'
+import { setVisitorLocaleCookie, type SupportedLocale } from '@/lib/shared/i18n'
 
 /** Sticky manual override so browser-detect doesn't fight an explicit choice. */
 export const HC_LOCALE_COOKIE = 'hc_locale'
@@ -44,7 +44,6 @@ export function HelpCenterLocaleSwitcher({
   additionalLocales,
   canonicalPath,
 }: HelpCenterLocaleSwitcherProps) {
-  const navigate = useNavigate()
   if (additionalLocales.length === 0) return null
 
   const locales = [defaultLocale, ...additionalLocales]
@@ -53,9 +52,16 @@ export function HelpCenterLocaleSwitcher({
     if (typeof document !== 'undefined') {
       // 1 year, readable by the server for the browser-detect redirect on /hc.
       document.cookie = `${HC_LOCALE_COOKIE}=${next}; path=/hc; max-age=31536000; samesite=lax`
+      // Picking an article language picks the page language too -- without
+      // this the visitor reads Swedish articles under English chrome, since
+      // the portal resolves its own locale independently of the /hc path.
+      setVisitorLocaleCookie(next as SupportedLocale)
     }
-    const target = localizedHcPath(next, canonicalPath)
-    void navigate({ to: target as string as '/', replace: true })
+    const target = localizedHcPath(next, canonicalPath, defaultLocale)
+    // A full navigation, not a client-side one: the chrome locale is resolved
+    // in the portal layout loader during SSR, which a child navigation would
+    // not re-run, leaving the new language only half-applied.
+    if (typeof window !== 'undefined') window.location.href = target
   }
 
   return (
