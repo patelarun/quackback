@@ -30,7 +30,6 @@
   "widget.shell.aria.collapse": "Minimera widgeten",
   "widget.shell.aria.userMenu": "Användarmeny",
   "widget.shell.aria.goToPortal": "Gå till portalen",
-  "widget.shell.poweredBy": "Drivs av {brand}",
   "widget.shell.goToPortal": "Portal",
   "widget.shell.goToPortal.error": "Kunde inte skapa inloggningslänk, försök igen",
   "widget.home.input.placeholder": "Vad har du för idé?",

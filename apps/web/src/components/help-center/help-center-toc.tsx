@@ -35,11 +35,11 @@ export function HelpCenterToc({ headings }: HelpCenterTocProps) {
   if (headings.length === 0) return null
 
   return (
-    <aside className="sticky top-14 h-[calc(100vh-3.5rem)] hidden flex-col py-8 pl-6 pr-6 xl:flex">
-      <p className="mb-3 shrink-0 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+    <aside className="sticky top-14 hidden flex-col py-8 pl-6 pr-6 xl:flex">
+      <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         On this page
       </p>
-      <nav className="min-h-0 flex-1 overflow-y-auto">
+      <nav>
         <ul className="border-l border-border space-y-0.5">
           {headings.map((heading) => (
             <li key={heading.id} style={{ paddingLeft: heading.level === 3 ? '20px' : '0px' }}>
