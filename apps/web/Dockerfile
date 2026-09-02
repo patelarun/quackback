@@ -71,7 +71,11 @@ RUN bun build packages/db/src/migrate.ts \
     bun build packages/db/src/seed.ts \
     --target=bun \
     --bundle \
-    --outfile=/tmp/seed.mjs
+    --outfile=/tmp/seed.mjs && \
+    bun build apps/web/scripts/switch-help-center-base-locale.ts \
+    --target=bun \
+    --bundle \
+    --outfile=/tmp/switch-help-center-base-locale.mjs
 
 # ============================================================================
 # Production runner
@@ -94,6 +98,11 @@ COPY --from=builder --chown=quackback:nodejs /app/apps/web/.output ./.output
 # read at runtime by drizzle's migrator.
 COPY --from=builder --chown=quackback:nodejs /tmp/migrate.mjs ./migrate.mjs
 COPY --from=builder --chown=quackback:nodejs /tmp/seed.mjs ./seed.mjs
+# One-off operator script, bundled for the same reason as the two above: the
+# runner has no node_modules. Never run by the entrypoint -- it changes which
+# language the help center is authored in, so an operator invokes it by hand
+# (`docker compose exec app bun /app/switch-help-center-base-locale.mjs`).
+COPY --from=builder --chown=quackback:nodejs /tmp/switch-help-center-base-locale.mjs ./switch-help-center-base-locale.mjs
 COPY --from=builder --chown=quackback:nodejs /app/packages/db/drizzle ./drizzle
 
 # Copy entrypoint script
