@@ -20,7 +20,10 @@ import {
 
 const fixture = await createDbTestFixture({
   probe: async (db) => {
-    await db.select({ id: companyAttributeDefinitions.id }).from(companyAttributeDefinitions).limit(0)
+    await db
+      .select({ id: companyAttributeDefinitions.id })
+      .from(companyAttributeDefinitions)
+      .limit(0)
   },
 })
 

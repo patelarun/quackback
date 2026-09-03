@@ -1,4 +1,10 @@
-import { createFileRoute, Navigate, useNavigate, useRouteContext } from '@tanstack/react-router'
+import {
+  createFileRoute,
+  Navigate,
+  useNavigate,
+  useRouteContext,
+  useLoaderData,
+} from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { FormattedMessage, useIntl } from 'react-intl'
@@ -19,6 +25,7 @@ import {
   PORTAL_CONVERSATION_PRESENCE_QUERY_KEY,
   PORTAL_MY_CONVERSATIONS_QUERY_KEY,
 } from '@/lib/client/queries/portal-support'
+import { isPortalSupportSurfaceEnabled } from '@/lib/shared/support-surfaces'
 
 export const Route = createFileRoute('/_portal/support/$conversationId')({
   component: SupportThreadPage,
@@ -36,15 +43,21 @@ function SupportThreadPage() {
   const queryClient = useQueryClient()
   const { conversationId } = Route.useParams()
   const { session, settings } = useRouteContext({ from: '__root__' })
+  const portalLoader = useLoaderData({ from: '/_portal' })
+  const portalAvatar =
+    portalLoader && 'initialUserData' in portalLoader
+      ? (portalLoader.initialUserData?.avatarUrl ?? null)
+      : null
   const authPopover = useAuthPopoverSafe()
   const { upload } = usePortalImageUpload()
 
   // Converged Messages: ticket pairs open here too, so a tickets-enabled
   // workspace keeps this route alive even with the messenger/portal-support
   // toggle off (email-first workspaces reply to their ticket threads here).
-  const messengerEnabled =
-    !!settings?.featureFlags?.supportInbox && !!settings?.portalConfig?.support?.enabled
-  const supportEnabled = messengerEnabled || !!settings?.featureFlags?.supportTickets
+  const supportEnabled = isPortalSupportSurfaceEnabled(
+    settings?.featureFlags,
+    settings?.portalConfig
+  )
 
   const user = session?.user
   const isLoggedIn = !!user && user.principalType !== 'anonymous'
@@ -115,7 +128,7 @@ function SupportThreadPage() {
               conversationId === 'new' ? 'new' : (conversationId as ConversationId)
             }
             linkPreviews={!!settings?.featureFlags?.supportInbox}
-            currentUser={user ? { name: user.name, avatarUrl: user.image } : null}
+            currentUser={user ? { name: user.name, avatarUrl: portalAvatar ?? user.image } : null}
             uploadImage={upload}
             presence={presenceQuery.data ?? OFFLINE}
             embedOpenMode="navigate"

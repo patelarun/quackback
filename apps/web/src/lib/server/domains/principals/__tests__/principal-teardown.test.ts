@@ -20,7 +20,7 @@ vi.mock('@/lib/server/db', () => ({
   and: vi.fn((...args: unknown[]) => ({ _type: 'and', args })),
 }))
 
-vi.mock('@/lib/server/redis', () => ({
+vi.mock('@/lib/server/cache', () => ({
   cacheDel: vi.fn(),
   CACHE_KEYS: { PRINCIPAL_BY_USER: (id: string) => `principal:user:${id}` },
 }))
@@ -30,7 +30,7 @@ import { deleteAnonymousIdentity } from '../principal.factory'
 const PRINCIPAL_ID = 'principal_anon' as PrincipalId
 const USER_ID = 'user_anon' as UserId
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// oxlint-disable-next-line @typescript-eslint/no-explicit-any
 const exec = mockExec as any
 
 describe('deleteAnonymousIdentity', () => {

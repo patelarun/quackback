@@ -22,6 +22,7 @@ import TableHeader from '@tiptap/extension-table-header'
 import Youtube from '@tiptap/extension-youtube'
 import { Emoji } from '@tiptap/extension-emoji'
 import { MentionExtension } from './mention-extension'
+import { createSuggestionPopup } from './suggestion-popup'
 import { QuackbackEmbed } from './quackback-embed-extension'
 import { ConversationImage } from './conversation-image-node'
 import { Markdown } from '@tiptap/markdown'
@@ -936,10 +937,7 @@ function createSlashCommands(
                 })
 
                 // Create container element
-                floatingEl = document.createElement('div')
-                floatingEl.style.position = 'fixed'
-                floatingEl.style.zIndex = '50'
-                floatingEl.style.pointerEvents = 'auto'
+                floatingEl = createSuggestionPopup()
                 floatingEl.appendChild(component.element)
                 document.body.appendChild(floatingEl)
 
@@ -1154,10 +1152,7 @@ export function createEmojiExtension() {
               },
               editor: props.editor,
             })
-            floatingEl = document.createElement('div')
-            floatingEl.style.position = 'fixed'
-            floatingEl.style.zIndex = '50'
-            floatingEl.style.pointerEvents = 'auto'
+            floatingEl = createSuggestionPopup()
             floatingEl.appendChild(component.element)
             document.body.appendChild(floatingEl)
             updatePosition(props.clientRect ?? null)
@@ -1182,10 +1177,7 @@ export function createEmojiExtension() {
                 },
                 editor: props.editor,
               })
-              floatingEl = document.createElement('div')
-              floatingEl.style.position = 'fixed'
-              floatingEl.style.zIndex = '50'
-              floatingEl.style.pointerEvents = 'auto'
+              floatingEl = createSuggestionPopup()
               floatingEl.appendChild(component.element)
               document.body.appendChild(floatingEl)
             } else {

@@ -11,17 +11,36 @@ function groupKids(
   sections: ReturnType<typeof buildNavSections>,
   section: string,
   group: string
-): { label: string; to: string }[] {
+): { label: string; to?: string }[] {
   const s = sections.find((x) => x.label === section)!
   const g = s.items.find((i) => i.label === group)
   if (!g || !isNavGroup(g)) return []
-  return g.kids.map((k) => ({ label: k.label, to: k.to }))
+  return g.kids.map((k) => ({ label: k.label, to: 'to' in k ? k.to : undefined }))
+}
+
+function nestedGroupKids(
+  sections: ReturnType<typeof buildNavSections>,
+  section: string,
+  group: string,
+  nested: string
+): { label: string; to?: string }[] {
+  const s = sections.find((x) => x.label === section)!
+  const g = s.items.find((i) => i.label === group)
+  if (!g || !isNavGroup(g)) return []
+  const child = g.kids.find((i) => i.label === nested)
+  if (!child || !isNavGroup(child)) return []
+  return child.kids.map((k) => ({ label: k.label, to: 'to' in k ? k.to : undefined }))
+}
+
+function entryLabels(
+  entry: ReturnType<typeof buildNavSections>[number]['items'][number]
+): string[] {
+  if (!isNavGroup(entry)) return [entry.label]
+  return [entry.label, ...entry.kids.flatMap(entryLabels)]
 }
 
 function allLabels(sections: ReturnType<typeof buildNavSections>): string[] {
-  return sections.flatMap((s) =>
-    s.items.flatMap((i) => (isNavGroup(i) ? [i.label, ...i.kids.map((k) => k.label)] : [i.label]))
-  )
+  return sections.flatMap((s) => s.items.flatMap(entryLabels))
 }
 
 describe('buildNavSections', () => {
@@ -49,7 +68,7 @@ describe('buildNavSections', () => {
     expect(allLabels(sections)).not.toContain('Sandbox')
   })
 
-  it('Products contains the Feedback & Roadmaps accordion with its four pages when enabled', () => {
+  it('Products always contains the Feedback & Roadmaps accordion with its four pages', () => {
     const sections = buildNavSections()
     expect(itemLabels(sections, 'Products')).toContain('Feedback & Roadmaps')
     expect(groupKids(sections, 'Products', 'Feedback & Roadmaps').map((k) => k.label)).toEqual([
@@ -58,7 +77,7 @@ describe('buildNavSections', () => {
       'Tags',
       'Moderation',
     ])
-    expect(itemLabels(buildNavSections({ feedback: false }), 'Products')).not.toContain(
+    expect(itemLabels(buildNavSections({ feedback: false }), 'Products')).toContain(
       'Feedback & Roadmaps'
     )
   })
@@ -68,20 +87,23 @@ describe('buildNavSections', () => {
     expect(itemLabels(sections, 'Products')).not.toContain('Support')
   })
 
-  it('Support shows Messenger, Macros, Office Hours and SLA policies under supportInbox', () => {
+  it('Support shows Channels as the parent of channel pages, then Macros, Office Hours and SLA policies', () => {
     const sections = buildNavSections({ supportInbox: true })
     expect(groupKids(sections, 'Products', 'Support').map((k) => k.label)).toEqual([
-      'Messenger',
+      'Channels',
       'Macros',
       'Office Hours',
       'SLA policies',
     ])
+    expect(
+      nestedGroupKids(sections, 'Products', 'Support', 'Channels').map((k) => k.label)
+    ).toEqual(['Messenger', 'Email', 'GitHub'])
   })
 
   it('Support shows ticket pages under supportTickets, after the inbox pages', () => {
     const sections = buildNavSections({ supportInbox: true, supportTickets: true })
     expect(groupKids(sections, 'Products', 'Support').map((k) => k.label)).toEqual([
-      'Messenger',
+      'Channels',
       'Macros',
       'Office Hours',
       'SLA policies',
@@ -90,39 +112,73 @@ describe('buildNavSections', () => {
     ])
   })
 
-  it('Support shows only ticket pages when just supportTickets is on', () => {
+  it('Support shows Email, GitHub, SLA, Office Hours, Macros, and ticket pages when just supportTickets is on', () => {
     const sections = buildNavSections({ supportTickets: true })
     expect(groupKids(sections, 'Products', 'Support').map((k) => k.label)).toEqual([
+      'Email',
+      'GitHub',
+      'Macros',
+      'Office Hours',
+      'SLA policies',
       'Ticket types',
       'Ticket statuses & stages',
     ])
+    expect(groupKids(sections, 'Products', 'Support').map((k) => k.label)).not.toContain('Channels')
+    expect(groupKids(sections, 'Products', 'Support').map((k) => k.label)).not.toContain(
+      'Messenger'
+    )
   })
 
-  it('Messenger points at the conversations URL (relabel, URL kept)', () => {
+  it('Channels and its pages live under Support, not Workspace', () => {
     const sections = buildNavSections({ supportInbox: true })
-    const messenger = groupKids(sections, 'Products', 'Support').find(
-      (k) => k.label === 'Messenger'
-    )!
-    expect(messenger.to).toBe('/admin/settings/conversations')
+    const kids = groupKids(sections, 'Products', 'Support')
+    expect(kids.find((k) => k.label === 'Channels')!.to).toBe('/admin/settings/channels')
+    const channelPages = nestedGroupKids(sections, 'Products', 'Support', 'Channels')
+    expect(channelPages.find((k) => k.label === 'Messenger')!.to).toBe(
+      '/admin/settings/channels/messenger'
+    )
+    expect(channelPages.find((k) => k.label === 'Email')!.to).toBe('/admin/settings/channels/email')
+    expect(channelPages.find((k) => k.label === 'GitHub')!.to).toBe(
+      '/admin/settings/channels/github'
+    )
+    expect(itemLabels(sections, 'Workspace')).not.toContain('Emails')
+    expect(kids.map((k) => k.label)).not.toContain('Messenger')
+    expect(kids.map((k) => k.label)).not.toContain('Email')
+    expect(kids.map((k) => k.label)).not.toContain('GitHub')
   })
 
-  it('Help Center accordion appears only with the helpCenter flag', () => {
+  it('Help Center is a flat link that appears only with the helpCenter flag', () => {
     expect(itemLabels(buildNavSections({ helpCenter: false }), 'Products')).not.toContain(
       'Help Center'
     )
     const sections = buildNavSections({ helpCenter: true })
-    expect(groupKids(sections, 'Products', 'Help Center')).toEqual([
-      { label: 'Settings', to: '/admin/settings/help-center' },
-    ])
+    expect(groupKids(sections, 'Products', 'Help Center')).toEqual([])
+    const item = sections
+      .find((s) => s.label === 'Products')!
+      .items.find((i) => i.label === 'Help Center')!
+    expect(!isNavGroup(item) && item.to).toBe('/admin/settings/help-center')
   })
 
-  it('Changelog accordion appears only when the product is enabled', () => {
+  it('Changelog is a flat link that appears only when the product is enabled', () => {
     expect(itemLabels(buildNavSections({ changelog: false }), 'Products')).not.toContain(
       'Changelog'
     )
-    expect(groupKids(buildNavSections(), 'Products', 'Changelog')).toEqual([
-      { label: 'Settings', to: '/admin/settings/changelog' },
-    ])
+    const sections = buildNavSections()
+    expect(groupKids(sections, 'Products', 'Changelog')).toEqual([])
+    const item = sections
+      .find((s) => s.label === 'Products')!
+      .items.find((i) => i.label === 'Changelog')!
+    expect(!isNavGroup(item) && item.to).toBe('/admin/settings/changelog')
+  })
+
+  it('Status is a flat link that appears only with the status flag', () => {
+    expect(itemLabels(buildNavSections(), 'Products')).not.toContain('Status')
+    const sections = buildNavSections({ statusPage: true })
+    expect(groupKids(sections, 'Products', 'Status')).toEqual([])
+    const item = sections
+      .find((s) => s.label === 'Products')!
+      .items.find((i) => i.label === 'Status')!
+    expect(!isNavGroup(item) && item.to).toBe('/admin/settings/status')
   })
 
   it('SLA policies points at the sla URL', () => {
@@ -136,13 +192,12 @@ describe('buildNavSections', () => {
     expect(itemLabels(sections, 'Workspace')).toEqual([
       'General',
       'Notifications',
-      'Branding',
+      'Portal',
       'Widget',
       'Members & Teams',
       'Access & Security',
       'Developers',
       'Integrations',
-      'Labs',
     ])
   })
 
@@ -153,20 +208,21 @@ describe('buildNavSections', () => {
     expect(!isNavGroup(general) && general.to).toBe('/admin/settings/general')
   })
 
+  it('Portal points at the portal URL', () => {
+    const sections = buildNavSections()
+    const s = sections.find((x) => x.label === 'Workspace')!
+    const portal = s.items.find((i) => i.label === 'Portal')!
+    expect(!isNavGroup(portal) && portal.to).toBe('/admin/settings/portal')
+  })
+
   it('has no standalone Audit log item (merged into Access & Security)', () => {
     const sections = buildNavSections({ helpCenter: true, supportInbox: true })
     expect(allLabels(sections)).not.toContain('Audit log')
   })
 
-  it('Workspace gains Emails (the email channel page) under supportInbox', () => {
+  it('Workspace does not list Emails once Channels owns that page', () => {
     const sections = buildNavSections({ supportInbox: true })
-    const workspace = itemLabels(sections, 'Workspace')
-    expect(workspace).toContain('Emails')
-    // Emails sits between Access & Security and Developers.
-    expect(workspace.indexOf('Emails')).toBe(workspace.indexOf('Access & Security') + 1)
-    const s = sections.find((x) => x.label === 'Workspace')!
-    const emails = s.items.find((i) => i.label === 'Emails')!
-    expect(!isNavGroup(emails) && emails.to).toBe('/admin/settings/channels')
+    expect(itemLabels(sections, 'Workspace')).not.toContain('Emails')
   })
 
   it('Members & Teams points at the merged members URL', () => {
@@ -183,7 +239,7 @@ describe('buildNavSections', () => {
     expect(!isNavGroup(security) && security.to).toBe('/admin/settings/security/authentication')
   })
 
-  it('Data contains People and Imports & exports (always), Conversations under supportInbox', () => {
+  it('Data contains People and Imports & exports (always), Conversations under support', () => {
     expect(itemLabels(buildNavSections(), 'Data')).toEqual([
       'People',
       'Companies',
@@ -191,6 +247,12 @@ describe('buildNavSections', () => {
     ])
     const sections = buildNavSections({ supportInbox: true })
     expect(itemLabels(sections, 'Data')).toEqual([
+      'People',
+      'Companies',
+      'Conversations',
+      'Imports & exports',
+    ])
+    expect(itemLabels(buildNavSections({ supportTickets: true }), 'Data')).toEqual([
       'People',
       'Companies',
       'Conversations',

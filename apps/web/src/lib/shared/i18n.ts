@@ -8,6 +8,16 @@
  */
 export const FALLBACK_UI_LOCALE = 'en' as const
 
+/**
+ * Upstream's name for the same constant. This fork renamed it to
+ * FALLBACK_UI_LOCALE so it cannot be mistaken for
+ * {@link DEFAULT_WORKSPACE_LOCALE} ('sv' here) -- but upstream code keeps
+ * importing `DEFAULT_LOCALE`, so the alias stays exported to keep every
+ * upstream merge free of a mechanical rename across a dozen files.
+ * Prefer FALLBACK_UI_LOCALE in fork-authored code.
+ */
+export const DEFAULT_LOCALE = FALLBACK_UI_LOCALE
+
 export const SUPPORTED_LOCALES = [
   'en',
   'de',
@@ -253,6 +263,41 @@ export async function loadWidgetMessages(locale: SupportedLocale): Promise<Recor
   const subset: Record<string, string> = {}
   for (const [key, value] of Object.entries(all)) {
     if (WIDGET_MESSAGE_PREFIXES.some((prefix) => key.startsWith(prefix))) subset[key] = value
+  }
+  return subset
+}
+
+/**
+ * Key prefixes the onboarding wizard renders. Ids authored under
+ * `routes/onboarding` and `components/onboarding` live under `onboarding.`;
+ * `portal.auth.` joins them because the account step renders the shared
+ * sign-in form rather than a second copy of it, and those strings are
+ * already translated. A unit test (onboarding-message-coverage.test.ts)
+ * re-derives the ids from source and fails if one falls outside this list,
+ * so a new key can't silently render its English fallback.
+ */
+const ONBOARDING_MESSAGE_PREFIXES = ['onboarding.', 'portal.auth.'] as const
+
+/** The prefix allowlist as a plain string[], for tests and iteration. */
+export const ONBOARDING_MESSAGE_PREFIX_LIST: readonly string[] = ONBOARDING_MESSAGE_PREFIXES
+
+/**
+ * The onboarding wizard's slice of the message catalog, loaded in the
+ * `/onboarding` layout loader. Mirrors {@link loadPortalMessages} and
+ * {@link loadWidgetMessages}: the wizard renders only `onboarding.` ids, so
+ * seeding the whole (portal + admin + widget) catalog would add ~80KB to the
+ * SSR document of the first screen a new workspace ever sees. Slicing keeps
+ * that at the handful of keys the wizard can actually show, and the moment
+ * translated onboarding copy lands in the catalogs it is picked up here with no
+ * further change.
+ */
+export async function loadOnboardingMessages(
+  locale: SupportedLocale
+): Promise<Record<string, string>> {
+  const all = await loadMessages(locale)
+  const subset: Record<string, string> = {}
+  for (const [key, value] of Object.entries(all)) {
+    if (ONBOARDING_MESSAGE_PREFIXES.some((prefix) => key.startsWith(prefix))) subset[key] = value
   }
   return subset
 }

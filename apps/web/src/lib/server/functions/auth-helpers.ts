@@ -62,7 +62,7 @@ async function getSessionDirect(): Promise<SessionResult | null> {
 }
 
 /**
- * The tenant settings row, served from the Redis-cached tenant-settings blob
+ * The workspace settings row, served from the Redis-cached workspace-settings blob
  * (a single Redis GET when warm) and additionally memoized per request. This is
  * the auth-helper READ path only — never a read-modify-write, which must keep
  * using the uncached settings read so a write is never based on a cached row.
@@ -283,14 +283,16 @@ import { ANONYMOUS_ACTOR } from '@/lib/server/policy/types'
 import { segmentIdsForPrincipal } from '@/lib/server/domains/segments/segment-membership.service'
 
 /**
- * Preserve all three principal types. Collapsing 'anonymous' onto 'user'
+ * Preserve known principal types. Collapsing 'anonymous' onto 'user'
  * is a security bug: a Better Auth anonymous session would satisfy
  * audience.kind='authenticated' and dodge the workspace requireApproval='anonymous'
- * moderation gate.
+ * moderation gate. Collapsing 'support' onto 'user' would put Cloud support
+ * back on people lists (`isIdentifiedHuman`).
  */
 export function normalizePrincipalType(raw: string | null | undefined): PrincipalType {
   if (raw === 'service') return 'service'
   if (raw === 'anonymous') return 'anonymous'
+  if (raw === 'support') return 'support'
   return 'user'
 }
 

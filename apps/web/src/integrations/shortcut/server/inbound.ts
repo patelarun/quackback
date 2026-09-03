@@ -56,8 +56,7 @@ export const shortcutInboundHandler: InboundWebhookHandler = {
     // array — Shortcut includes the workflow states involved in the change, so
     // no separately-cached ID→name map is needed.
     const references = payload.references as
-      | Array<{ id?: number; entity_type?: string; name?: string }>
-      | undefined
+      Array<{ id?: number; entity_type?: string; name?: string }> | undefined
     const stateName = references?.find(
       (ref) => ref.entity_type === 'workflow-state' && ref.id === newStateId
     )?.name

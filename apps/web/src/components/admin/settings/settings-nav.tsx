@@ -1,18 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ComponentType } from 'react'
 import { Link, useRouterState, useRouteContext } from '@tanstack/react-router'
 import {
   Cog6ToothIcon,
   UsersIcon,
   UserGroupIcon,
   Squares2X2Icon,
-  PaintBrushIcon,
   PuzzlePieceIcon,
   ChatBubbleLeftRightIcon,
   ChatBubbleLeftIcon,
   ClockIcon,
   CommandLineIcon,
   ShieldCheckIcon,
-  BeakerIcon,
   BookOpenIcon,
   TagIcon,
   MegaphoneIcon,
@@ -25,7 +23,10 @@ import {
   SignalIcon,
   BellIcon,
   BuildingOfficeIcon,
+  CreditCardIcon,
+  GlobeAltIcon,
 } from '@heroicons/react/24/solid'
+import { GitHubIcon } from '@/components/icons/integration-icons'
 import { cn } from '@/lib/shared/utils'
 import { NAV_ICON_CLASS, NAV_ITEM_CLASS, NAV_SECTION_CLASS } from '@/components/shared/nav-tokens'
 import { isProductEnabled, type FeatureFlags } from '@/lib/shared/types'
@@ -33,14 +34,18 @@ import { isProductEnabled, type FeatureFlags } from '@/lib/shared/types'
 interface NavItem {
   label: string
   to: string
-  icon: typeof Cog6ToothIcon
+  icon: ComponentType<{ className?: string }>
+  /** Highlight only on this path, not nested child pages. */
+  exact?: boolean
 }
 
 /** A product accordion inside the Products section (Feedback & Roadmaps, Support, ...). */
 interface NavGroup {
   label: string
-  icon: typeof Cog6ToothIcon
-  kids: NavItem[]
+  icon: ComponentType<{ className?: string }>
+  /** When set, the group label is also a page (Channels hub). */
+  to?: string
+  kids: NavEntry[]
 }
 
 type NavEntry = NavItem | NavGroup
@@ -59,31 +64,60 @@ export function isNavGroup(entry: NavEntry): entry is NavGroup {
  * ITEMS (or whole product accordions), never sections, so the sidebar layout
  * does not reflow when a flag flips. AI & Automation lives outside settings
  * entirely, as its own main-nav area at /admin/automation (M5).
+ *
+ * @param billingEnabled Whether this workspace has a valid billing projection
+ *   configured. Not a feature flag — a flag answers "has the admin turned it
+ *   on", and this answers "does this deployment sell anything". False on
+ *   every self-hosted install, which is why the Billing row is absent there.
  */
-export function buildNavSections(flags?: Partial<FeatureFlags>): NavSection[] {
+export function buildNavSections(
+  flags?: Partial<FeatureFlags>,
+  billingEnabled = false,
+  cloudEnabled = false
+): NavSection[] {
   const products: NavEntry[] = []
 
-  if (isProductEnabled(flags, 'feedback')) {
-    products.push({
-      label: 'Feedback & Roadmaps',
-      icon: ChatBubbleLeftIcon,
-      kids: [
-        { label: 'Boards', to: '/admin/settings/boards', icon: Squares2X2Icon },
-        { label: 'Statuses', to: '/admin/settings/statuses', icon: Cog6ToothIcon },
-        { label: 'Tags', to: '/admin/settings/tags', icon: TagIcon },
-        { label: 'Moderation', to: '/admin/settings/moderation', icon: ShieldCheckIcon },
-      ],
-    })
-  }
+  products.push({
+    label: 'Feedback & Roadmaps',
+    icon: ChatBubbleLeftIcon,
+    kids: [
+      { label: 'Boards', to: '/admin/settings/boards', icon: Squares2X2Icon },
+      { label: 'Statuses', to: '/admin/settings/statuses', icon: Cog6ToothIcon },
+      { label: 'Tags', to: '/admin/settings/tags', icon: TagIcon },
+      { label: 'Moderation', to: '/admin/settings/moderation', icon: ShieldCheckIcon },
+    ],
+  })
 
-  const supportKids: NavItem[] = [
+  const channelPages: NavItem[] = [
     ...(flags?.supportInbox
       ? [
           {
             label: 'Messenger',
-            to: '/admin/settings/conversations',
+            to: '/admin/settings/channels/messenger',
             icon: ChatBubbleLeftRightIcon,
           },
+        ]
+      : []),
+    ...(isProductEnabled(flags, 'support')
+      ? [
+          { label: 'Email', to: '/admin/settings/channels/email', icon: EnvelopeIcon },
+          { label: 'GitHub', to: '/admin/settings/channels/github', icon: GitHubIcon },
+        ]
+      : []),
+  ]
+  const supportKids: NavEntry[] = [
+    ...(flags?.supportInbox
+      ? [
+          {
+            label: 'Channels',
+            to: '/admin/settings/channels',
+            icon: ChatBubbleLeftRightIcon,
+            kids: channelPages,
+          } satisfies NavGroup,
+        ]
+      : channelPages),
+    ...(isProductEnabled(flags, 'support')
+      ? [
           { label: 'Macros', to: '/admin/settings/macros', icon: DocumentDuplicateIcon },
           { label: 'Office Hours', to: '/admin/settings/office-hours', icon: ClockIcon },
           { label: 'SLA policies', to: '/admin/settings/sla', icon: ShieldCheckIcon },
@@ -100,31 +134,31 @@ export function buildNavSections(flags?: Partial<FeatureFlags>): NavSection[] {
         ]
       : []),
   ]
-  if (isProductEnabled(flags, 'support') && supportKids.length > 0) {
+  if (isProductEnabled(flags, 'support')) {
     products.push({ label: 'Support', icon: ChatBubbleLeftRightIcon, kids: supportKids })
   }
 
   if (isProductEnabled(flags, 'helpCenter')) {
     products.push({
       label: 'Help Center',
+      to: '/admin/settings/help-center',
       icon: BookOpenIcon,
-      kids: [{ label: 'Settings', to: '/admin/settings/help-center', icon: BookOpenIcon }],
     })
   }
 
   if (isProductEnabled(flags, 'changelog')) {
     products.push({
       label: 'Changelog',
+      to: '/admin/settings/changelog',
       icon: MegaphoneIcon,
-      kids: [{ label: 'Settings', to: '/admin/settings/changelog', icon: MegaphoneIcon }],
     })
   }
 
   if (isProductEnabled(flags, 'status')) {
     products.push({
       label: 'Status',
+      to: '/admin/settings/status',
       icon: SignalIcon,
-      kids: [{ label: 'Settings', to: '/admin/settings/status', icon: SignalIcon }],
     })
   }
 
@@ -134,8 +168,11 @@ export function buildNavSections(flags?: Partial<FeatureFlags>): NavSection[] {
       label: 'Workspace',
       items: [
         { label: 'General', to: '/admin/settings/general', icon: Cog6ToothIcon },
+        ...(cloudEnabled
+          ? [{ label: 'Domains', to: '/admin/settings/domains', icon: GlobeAltIcon }]
+          : []),
         { label: 'Notifications', to: '/admin/settings/notifications', icon: BellIcon },
-        { label: 'Branding', to: '/admin/settings/branding', icon: PaintBrushIcon },
+        { label: 'Portal', to: '/admin/settings/portal', icon: GlobeAltIcon },
         { label: 'Widget', to: '/admin/settings/widget', icon: ChatBubbleLeftRightIcon },
         { label: 'Members & Teams', to: '/admin/settings/members', icon: UsersIcon },
         {
@@ -143,12 +180,11 @@ export function buildNavSections(flags?: Partial<FeatureFlags>): NavSection[] {
           to: '/admin/settings/security/authentication',
           icon: ShieldCheckIcon,
         },
-        ...(flags?.supportInbox
-          ? [{ label: 'Emails', to: '/admin/settings/channels', icon: EnvelopeIcon }]
-          : []),
         { label: 'Developers', to: '/admin/settings/developers', icon: CommandLineIcon },
         { label: 'Integrations', to: '/admin/settings/integrations', icon: PuzzlePieceIcon },
-        { label: 'Labs', to: '/admin/settings/labs', icon: BeakerIcon },
+        ...(billingEnabled
+          ? [{ label: 'Plan & billing', to: '/admin/settings/billing', icon: CreditCardIcon }]
+          : []),
       ],
     },
     {
@@ -156,7 +192,7 @@ export function buildNavSections(flags?: Partial<FeatureFlags>): NavSection[] {
       items: [
         { label: 'People', to: '/admin/settings/people', icon: UserGroupIcon },
         { label: 'Companies', to: '/admin/settings/companies', icon: BuildingOfficeIcon },
-        ...(flags?.supportInbox
+        ...(isProductEnabled(flags, 'support')
           ? [
               {
                 label: 'Conversations',
@@ -173,10 +209,13 @@ export function buildNavSections(flags?: Partial<FeatureFlags>): NavSection[] {
 
 export function SettingsNav() {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const { settings } = useRouteContext({ from: '__root__' })
+  const { settings, billingEnabled, cloudEnabled } = useRouteContext({ from: '__root__' })
   const flags = settings?.featureFlags as FeatureFlags | undefined
 
-  const navSections = useMemo(() => buildNavSections(flags), [flags])
+  const navSections = useMemo(
+    () => buildNavSections(flags, billingEnabled, cloudEnabled),
+    [flags, billingEnabled, cloudEnabled]
+  )
 
   return (
     <div className="space-y-2">
@@ -235,6 +274,14 @@ function NavCard({ section, pathname }: { section: NavSection; pathname: string 
   )
 }
 
+function entryIsInPath(entry: NavEntry, pathname: string): boolean {
+  if (isNavGroup(entry)) {
+    if (entry.to && (pathname === entry.to || pathname.startsWith(`${entry.to}/`))) return true
+    return entry.kids.some((kid) => entryIsInPath(kid, pathname))
+  }
+  return pathname === entry.to || pathname.startsWith(`${entry.to}/`)
+}
+
 /** A product accordion: a toggle row plus its indented child links. */
 function NavGroupRows({
   group,
@@ -245,40 +292,59 @@ function NavGroupRows({
   pathname: string
   parentOpen: boolean
 }) {
-  const hasActiveKid = group.kids.some(
-    (kid) => pathname === kid.to || pathname.startsWith(kid.to + '/')
-  )
+  const hasActiveKid = group.kids.some((kid) => entryIsInPath(kid, pathname))
+  const groupPageActive = !!group.to && pathname === group.to
+  const inGroup = groupPageActive || hasActiveKid
   // Groups with the active page start open; others start collapsed to keep
-  // the Products section scannable.
-  const [open, setOpen] = useState(hasActiveKid)
+  // the Products section scannable. A linked group (Channels) always shows
+  // its child pages — those are breadcrumb children, not a second accordion.
+  const [open, setOpen] = useState(inGroup)
+  const showKids = !!group.to || open
   const Icon = group.icon
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        tabIndex={parentOpen ? undefined : -1}
-        className={cn(
-          NAV_ITEM_CLASS,
-          'w-full font-medium',
-          hasActiveKid ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
-        )}
-      >
-        <Icon className={cn(NAV_ICON_CLASS, hasActiveKid && 'text-primary')} />
-        <span className="truncate flex-1 text-left">{group.label}</span>
-        <ChevronDownIcon
-          className={cn(
-            'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200 ease-out',
-            !open && '-rotate-90'
-          )}
+      {group.to ? (
+        <NavLink
+          item={{ label: group.label, to: group.to, icon: group.icon, exact: true }}
+          pathname={pathname}
+          tabbable={parentOpen}
         />
-      </button>
-      {open && (
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          tabIndex={parentOpen ? undefined : -1}
+          className={cn(
+            NAV_ITEM_CLASS,
+            'w-full font-medium',
+            inGroup ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <Icon className={cn(NAV_ICON_CLASS, inGroup && 'text-primary')} />
+          <span className="truncate flex-1 text-left">{group.label}</span>
+          <ChevronDownIcon
+            className={cn(
+              'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200 ease-out',
+              !open && '-rotate-90'
+            )}
+          />
+        </button>
+      )}
+      {showKids && (
         <div className="ml-4 border-l border-border/50 pl-1.5 space-y-0.5">
-          {group.kids.map((kid) => (
-            <NavLink key={kid.to} item={kid} pathname={pathname} tabbable={parentOpen} />
-          ))}
+          {group.kids.map((kid) =>
+            isNavGroup(kid) ? (
+              <NavGroupRows
+                key={kid.label}
+                group={kid}
+                pathname={pathname}
+                parentOpen={parentOpen}
+              />
+            ) : (
+              <NavLink key={kid.to} item={kid} pathname={pathname} tabbable={parentOpen} />
+            )
+          )}
         </div>
       )}
     </div>
@@ -294,7 +360,7 @@ function NavLink({
   pathname: string
   tabbable: boolean
 }) {
-  const isActive = pathname === item.to || pathname.startsWith(item.to + '/')
+  const isActive = pathname === item.to || (!item.exact && pathname.startsWith(`${item.to}/`))
   const Icon = item.icon
 
   return (

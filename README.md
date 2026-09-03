@@ -7,12 +7,12 @@
 <h1 align="center">Quackback</h1>
 
 <p align="center">
-  <strong>Open source feedback for teams that ship.</strong>
+  <strong>Open source support and product feedback for teams that ship.</strong>
 </p>
 
 <p align="center">
   The open-source alternative to Canny, UserVoice, and Productboard.<br />
-  Collect feedback. Prioritize what matters. Close the loop.
+  Collect feedback. Answer customers. Prioritize what matters. Close the loop.
 </p>
 
 <p align="center">
@@ -40,22 +40,22 @@
 
 ## Why Quackback?
 
-Most feedback tools are expensive, closed-source, and lock you in. Quackback gives you a modern feedback system you actually own.
+Most support-and-feedback suites are expensive, closed-source, and lock you in. Quackback is the suite you actually own: feedback, shared inbox, help center, changelog, status, and AI.
 
 - **Self-host for free.** Run on your own infrastructure. No per-seat pricing.
-- **Own your data.** Your feedback lives in your own database. No vendor lock-in.
+- **Own your data.** Feedback, conversations, and knowledge live in your own database. No vendor lock-in.
 - **AI-powered.** Automatic duplicate detection, AI summaries, feedback extraction from external sources, and an [MCP server](https://quackback.io/docs/mcp) that lets AI agents search, triage, and act on feedback directly.
 - **25 integrations.** Slack, Linear, Jira, GitHub, Intercom, Zendesk, and [more](#integrations) out of the box.
 
 ## Features
 
-- **Feedback boards.** Let users vote, comment, and track status on feature requests. Vote on behalf of customers and see a full activity timeline on every post.
-- **AI-powered.** Automatically detect duplicates, summarize key themes, and ingest feedback from Slack, email, and other sources so nothing slips through the cracks.
+- **Feedback boards.** Let users vote, comment, and track status on feature requests. Vote on behalf of customers, surface high-revenue accounts in triage, and see a full activity timeline on every post.
+- **Quinn AI.** A customer-facing agent and a teammate Copilot. Detect duplicates, summarize themes, connect remote MCP servers as Connectors, and permission every write tool: always allow, ask for approval, or deny.
 - **Embeddable widget.** Collect feedback right inside your app with a [drop-in widget](https://quackback.io/docs/widget/installation). Works on desktop and mobile, with native SDKs for [iOS](https://github.com/QuackbackIO/quackback-ios) and [Android](https://github.com/QuackbackIO/quackback-android).
 - **Admin inbox.** Triage incoming feedback in one place. Filter, group, dismiss, and restore deleted posts.
 - **Roadmap & changelog.** Show users what's planned, in progress, and shipped. Publish updates and schedule posts for later.
 - **Integrations.** [25 integrations](#integrations) including Slack, Linear, Jira, GitHub, Intercom, Zendesk, and two-way issue tracker sync.
-- **API, webhooks & MCP.** Automate workflows with the REST API, outbound webhooks, and a 23-tool [MCP server](https://quackback.io/docs/mcp) for AI agents.
+- **API, webhooks & MCP.** Automate workflows with the REST API, outbound webhooks, and an [MCP server](https://quackback.io/docs/mcp) for AI agents.
 - **Internationalization.** Portal and widget available in English, French, German, Spanish, and Arabic with full RTL support. Auto-detects browser language.
 - **Flexible auth.** Password, email OTP, Google, GitHub, and SSO with providers like Okta and Auth0.
 - **SEO-ready.** Auto-generated sitemap and social sharing previews on every portal page.
@@ -80,7 +80,11 @@ docker build -t quackback -f apps/web/Dockerfile .
 docker run -p 3000:3000 --env-file .env quackback
 ```
 
-Requires PostgreSQL and a Redis-compatible store. Set all variables in the canonical [runtime configuration table](docs/configuration.md). Migrations run automatically on startup.
+Requires PostgreSQL. Set all variables in the canonical [runtime configuration table](docs/configuration.md). Migrations run automatically on startup.
+
+### About the cloud code in this repo
+
+Quackback's hosted service runs this same codebase, and the client side of that arrangement lives here: a default-off `cloud` settings block, plan and entitlement gating, and a control-plane client. On a self-hosted install none of it activates — an install with no cloud configuration is entitled to every feature, no upgrade prompts render, and no outbound requests are made. Disabling is the default; there is nothing to opt out of. This is stated here so you never have to discover it in the code first.
 
 ## Contributing
 
@@ -90,7 +94,7 @@ See the [Contributing Guide](CONTRIBUTING.md) to get started.
 
 ### Local Development
 
-Prerequisites: [Bun](https://bun.sh/) v1.3.7+ and [Docker](https://docker.com/)
+Prerequisites: [Bun](https://bun.sh/) v1.4.0+ and [Docker](https://docker.com/)
 
 ```bash
 git clone https://github.com/QuackbackIO/quackback.git
@@ -105,8 +109,7 @@ Log in with `demo@example.com` / `password`.
 ### Tech Stack
 
 - [TanStack Start](https://tanstack.com/start) + [TanStack Router](https://tanstack.com/router) · Full-stack React framework
-- [PostgreSQL](https://www.postgresql.org/) + [Drizzle ORM](https://orm.drizzle.team/) · Database and type-safe ORM
-- [BullMQ](https://docs.bullmq.io/) · Background job processing
+- [PostgreSQL](https://www.postgresql.org/) + [Drizzle ORM](https://orm.drizzle.team/) · Database, type-safe ORM, and background job queue
 - [Better Auth](https://www.better-auth.com/) · Authentication
 - [Tailwind CSS v4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) · Styling
 - [Bun](https://bun.sh/) · Runtime and package manager

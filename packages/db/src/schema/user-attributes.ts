@@ -35,16 +35,7 @@ export type UserAttributeType = 'string' | 'number' | 'boolean' | 'date' | 'curr
 
 /** Currency code (ISO 4217) for currency-type attributes */
 export type CurrencyCode =
-  | 'USD'
-  | 'EUR'
-  | 'GBP'
-  | 'JPY'
-  | 'CAD'
-  | 'AUD'
-  | 'CHF'
-  | 'CNY'
-  | 'INR'
-  | 'BRL'
+  'USD' | 'EUR' | 'GBP' | 'JPY' | 'CAD' | 'AUD' | 'CHF' | 'CNY' | 'INR' | 'BRL'
 
 export const userAttributeDefinitions = pgTable(
   'user_attribute_definitions',

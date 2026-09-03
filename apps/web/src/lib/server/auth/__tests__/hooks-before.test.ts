@@ -19,11 +19,12 @@
  *   - oauth toggles: password on/off / magic-link on/off
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { makeAuthConfig, makeTenant, makeVerifiedDomain } from './_helpers'
+import { makeAuthConfig, makeWorkspace, makeVerifiedDomain } from './_helpers'
 
 const mockUserFindFirst = vi.fn()
 const mockPrincipalFindFirst = vi.fn()
-const mockGetTenantSettings = vi.fn()
+const mockInvitationFindFirst = vi.fn()
+const mockGetWorkspaceSettings = vi.fn()
 const mockGetPublicPortalConfig = vi.fn()
 
 // Spread the real db module (tables + operators stay current as new ones are
@@ -35,12 +36,27 @@ vi.mock('@/lib/server/db', async (importOriginal) => ({
     query: {
       user: { findFirst: (...a: unknown[]) => mockUserFindFirst(...a) },
       principal: { findFirst: (...a: unknown[]) => mockPrincipalFindFirst(...a) },
+      invitation: { findFirst: (...a: unknown[]) => mockInvitationFindFirst(...a) },
     },
   },
 }))
 
+// The two bootstrap facts the signup policy falls back on. Stubbed at their own
+// module boundary rather than through the db handle, because they are decided by
+// a real SQL read this suite has no connection for; `signup-policy.db.test.ts`
+// and `onboarding-bootstrap-claim.db.test.ts` exercise them against Postgres.
+// `signup-policy` itself stays REAL here — the point of these cases is that the
+// gate is wired into the pre-check, and a stubbed policy proves only that a
+// stand-in was called.
+const mockFindHumanAdmin = vi.fn()
+const mockIsOpenToBootstrapClaim = vi.fn()
+vi.mock('@/lib/server/domains/principals/bootstrap-admin', () => ({
+  findHumanAdmin: (...a: unknown[]) => mockFindHumanAdmin(...a),
+  isOpenToBootstrapClaim: (...a: unknown[]) => mockIsOpenToBootstrapClaim(...a),
+}))
+
 vi.mock('@/lib/server/domains/settings/settings.service', () => ({
-  getTenantSettings: (...a: unknown[]) => mockGetTenantSettings(...a),
+  getWorkspaceSettings: (...a: unknown[]) => mockGetWorkspaceSettings(...a),
   getPublicPortalConfig: (...a: unknown[]) => mockGetPublicPortalConfig(...a),
 }))
 
@@ -93,13 +109,26 @@ type Knobs = {
   ssoEnabled?: boolean
   passwordEnabled?: boolean
   magicLinkEnabled?: boolean
+  openSignup?: boolean
   verifiedDomains?: ReturnType<typeof makeVerifiedDomain>[]
 }
 
-const tenant = (k: Knobs = {}) => {
+/**
+ * `openSignup` defaults to the CLOSED value here on purpose.
+ *
+ * The permissive value would make the gate this file exercises inert for every
+ * case that does not name it, which is the shape a coverage hole hides in: the
+ * assertions would still pass with the gate deleted. Closed is also an ordinary
+ * thing for a real workspace to be — an admin who chose invitation-only — and
+ * `beforeEach` pairs it with an owner and a workspace nobody can claim by
+ * arriving, which is the only state in which the setting is a statement anybody
+ * made. Every case that needs the gate open says so.
+ */
+const workspace = (k: Knobs = {}) => {
   const verifiedDomains = k.verifiedDomains ?? []
-  const t = makeTenant({
+  const t = makeWorkspace({
     authConfig: makeAuthConfig({
+      openSignup: k.openSignup ?? false,
       oauth: { password: k.passwordEnabled, magicLink: k.magicLinkEnabled },
       ssoOidc: {
         // `enabled` defaults to true so existing tests exercising
@@ -110,7 +139,7 @@ const tenant = (k: Knobs = {}) => {
     }),
     verifiedDomains,
   })
-  // Side-effect: mirror this tenant's verified domains onto the single
+  // Side-effect: mirror this workspace's verified domains onto the single
   // owning provider 'sso' and derive its registered-set membership from
   // ssoEnabled (matching the prior isSsoActuallyRegistered default). Tests
   // exercising the fail-open path override mockGetRegisteredOidcProviderIds.
@@ -133,11 +162,17 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockUserFindFirst.mockResolvedValue(null)
   mockPrincipalFindFirst.mockResolvedValue(null)
-  mockGetTenantSettings.mockResolvedValue(tenant())
+  mockInvitationFindFirst.mockResolvedValue(null)
+  // A workspace somebody owns and that nobody can claim by arriving: the steady
+  // state every workspace reaches after setup, and the only one in which
+  // `openSignup` is a statement an admin actually made.
+  mockFindHumanAdmin.mockResolvedValue({ id: 'principal_owner' })
+  mockIsOpenToBootstrapClaim.mockResolvedValue(false)
+  mockGetWorkspaceSettings.mockResolvedValue(workspace())
   mockGetPublicPortalConfig.mockResolvedValue({
     oauth: { password: true, magicLink: false },
   })
-  // The provider-registry mocks are seeded by the `tenant()` call above.
+  // The provider-registry mocks are seeded by the `workspace()` call above.
   mockCheckSignInRateLimit.mockResolvedValue({ allowed: true })
   mockCheckMagicLinkRateLimit.mockResolvedValue({ allowed: true })
   mockCheckAnonMintRateLimit.mockResolvedValue({ allowed: true })
@@ -151,14 +186,14 @@ describe('handleSignInPreCheck — early exits', () => {
   it('skips when path is unrecognised (no provider inferred)', async () => {
     const ctx = ctxFor('/some/unknown/path', { email: 'a@b.com' })
     await handleSignInPreCheck(ctx)
-    expect(mockGetTenantSettings).not.toHaveBeenCalled()
+    expect(mockGetWorkspaceSettings).not.toHaveBeenCalled()
     expect(ctx.redirect).not.toHaveBeenCalled()
   })
 
   it('skips when path is in NO_EMAIL_BEFORE_PATHS (e.g. /sign-in/social)', async () => {
     const ctx = ctxFor('/sign-in/social', { email: 'a@b.com', provider: 'google' })
     await handleSignInPreCheck(ctx)
-    expect(mockGetTenantSettings).not.toHaveBeenCalled()
+    expect(mockGetWorkspaceSettings).not.toHaveBeenCalled()
     expect(ctx.redirect).not.toHaveBeenCalled()
   })
 
@@ -166,19 +201,19 @@ describe('handleSignInPreCheck — early exits', () => {
     const ctx = ctxFor('/oauth2/callback/:providerId', { email: 'a@b.com' })
     ctx.params = { providerId: 'sso' }
     await handleSignInPreCheck(ctx)
-    expect(mockGetTenantSettings).not.toHaveBeenCalled()
+    expect(mockGetWorkspaceSettings).not.toHaveBeenCalled()
   })
 
   it('skips when ctx.body.email is missing (magic-link verify path)', async () => {
     const ctx = ctxFor('/magic-link/verify', { token: 'xyz' })
     await handleSignInPreCheck(ctx)
-    expect(mockGetTenantSettings).not.toHaveBeenCalled()
+    expect(mockGetWorkspaceSettings).not.toHaveBeenCalled()
   })
 
   it('lower-cases and trims email before checking', async () => {
     const ctx = ctxFor('/sign-in/email', { email: '  Foo@Acme.COM  ' })
-    mockGetTenantSettings.mockResolvedValue(
-      tenant({ verifiedDomains: [makeVerifiedDomain('acme.com', true)] })
+    mockGetWorkspaceSettings.mockResolvedValue(
+      workspace({ verifiedDomains: [makeVerifiedDomain('acme.com', true)] })
     )
     mockUserFindFirst.mockResolvedValue({ id: 'user_1' })
     mockPrincipalFindFirst.mockResolvedValue({ role: 'admin' })
@@ -193,8 +228,8 @@ describe('handleSignInPreCheck — early exits', () => {
 
 describe('handleSignInPreCheck — per-domain enforced', () => {
   beforeEach(() => {
-    mockGetTenantSettings.mockResolvedValue(
-      tenant({
+    mockGetWorkspaceSettings.mockResolvedValue(
+      workspace({
         verifiedDomains: [makeVerifiedDomain('acme.com', true)],
       })
     )
@@ -243,8 +278,8 @@ describe('handleSignInPreCheck — per-domain enforced', () => {
   })
 
   it('does NOT block when the verified-domain row has enforced=false (routing-only)', async () => {
-    mockGetTenantSettings.mockResolvedValue(
-      tenant({
+    mockGetWorkspaceSettings.mockResolvedValue(
+      workspace({
         verifiedDomains: [makeVerifiedDomain('acme.com', false)],
       })
     )
@@ -272,7 +307,7 @@ describe('handleSignInPreCheck — per-domain enforced', () => {
 
 describe('handleSignInPreCheck — isAuthMethodAllowed gate', () => {
   it('blocks credential when oauth.password is explicitly false for team', async () => {
-    mockGetTenantSettings.mockResolvedValue(tenant({ passwordEnabled: false }))
+    mockGetWorkspaceSettings.mockResolvedValue(workspace({ passwordEnabled: false }))
     mockUserFindFirst.mockResolvedValue({ id: 'user_1' })
     mockPrincipalFindFirst.mockResolvedValue({ role: 'admin' })
     const ctx = ctxFor('/sign-in/email', { email: 'a@anywhere.com' })
@@ -281,7 +316,7 @@ describe('handleSignInPreCheck — isAuthMethodAllowed gate', () => {
   })
 
   it('allows credential when oauth.password is undefined (defaults to true for team)', async () => {
-    mockGetTenantSettings.mockResolvedValue(tenant({})) // no passwordEnabled
+    mockGetWorkspaceSettings.mockResolvedValue(workspace({})) // no passwordEnabled
     mockUserFindFirst.mockResolvedValue({ id: 'user_1' })
     mockPrincipalFindFirst.mockResolvedValue({ role: 'admin' })
     const ctx = ctxFor('/sign-in/email', { email: 'a@anywhere.com' })
@@ -291,7 +326,7 @@ describe('handleSignInPreCheck — isAuthMethodAllowed gate', () => {
   })
 
   it('redirects team-role blocks to the unified login with a /admin callback', async () => {
-    mockGetTenantSettings.mockResolvedValue(tenant({ passwordEnabled: false }))
+    mockGetWorkspaceSettings.mockResolvedValue(workspace({ passwordEnabled: false }))
     mockUserFindFirst.mockResolvedValue({ id: 'user_1' })
     mockPrincipalFindFirst.mockResolvedValue({ role: 'admin' })
     const ctx = ctxFor('/sign-in/email', { email: 'a@anywhere.com' })
@@ -302,7 +337,7 @@ describe('handleSignInPreCheck — isAuthMethodAllowed gate', () => {
   })
 
   it('returns silently when no principal exists (sign-up path) and provider is allowed', async () => {
-    mockGetTenantSettings.mockResolvedValue(tenant({}))
+    mockGetWorkspaceSettings.mockResolvedValue(workspace({ openSignup: true }))
     mockUserFindFirst.mockResolvedValue(null)
     mockPrincipalFindFirst.mockResolvedValue(null)
     const ctx = ctxFor('/sign-up/email', { email: 'brand@new.com' })
@@ -310,12 +345,115 @@ describe('handleSignInPreCheck — isAuthMethodAllowed gate', () => {
     await handleSignInPreCheck(ctx)
     expect(ctx.redirect).not.toHaveBeenCalled()
   })
+})
+
+// ============================================================
+// openSignup
+// ============================================================
+
+/**
+ * The setting was written on every workspace, serialised to the browser, and
+ * consulted by nothing on any server-side auth path. These cases drive the real
+ * `signup-policy` through the real pre-check, so they fail against the code
+ * that only drew a different form.
+ */
+describe('handleSignInPreCheck — openSignup', () => {
+  it('refuses a password sign-up on a workspace that has closed sign-ups', async () => {
+    mockGetWorkspaceSettings.mockResolvedValue(workspace({ openSignup: false }))
+    const ctx = ctxFor('/sign-up/email', { email: 'stranger@evil.example' })
+
+    await expect(handleSignInPreCheck(ctx)).rejects.toThrow(
+      'REDIRECT:/?auth=signin&error=signup_not_allowed'
+    )
+  })
+
+  it('refuses a magic-link send that would create the account on verify', async () => {
+    mockGetWorkspaceSettings.mockResolvedValue(
+      workspace({ openSignup: false, magicLinkEnabled: true })
+    )
+    const ctx = ctxFor('/sign-in/magic-link', { email: 'stranger@evil.example' })
+
+    await expect(handleSignInPreCheck(ctx)).rejects.toThrow(/signup_not_allowed/)
+  })
+
+  it('refuses the one-time-code send and the code redemption alike', async () => {
+    mockGetWorkspaceSettings.mockResolvedValue(
+      workspace({ openSignup: false, magicLinkEnabled: true })
+    )
+
+    await expect(
+      handleSignInPreCheck(
+        ctxFor('/email-otp/send-verification-otp', { email: 'stranger@evil.example' })
+      )
+    ).rejects.toThrow(/signup_not_allowed/)
+    await expect(
+      handleSignInPreCheck(ctxFor('/sign-in/email-otp', { email: 'stranger@evil.example' }))
+    ).rejects.toThrow(/signup_not_allowed/)
+  })
+
+  // A password sign-in against an address with no account already fails on the
+  // credential. Blocking it here would turn "wrong password" into "no account
+  // exists", which is a different and worse leak than the one being closed.
+  it('does not touch a password SIGN-IN, which cannot create anything', async () => {
+    mockGetWorkspaceSettings.mockResolvedValue(workspace({ openSignup: false }))
+    const ctx = ctxFor('/sign-in/email', { email: 'stranger@evil.example' })
+
+    await handleSignInPreCheck(ctx)
+    expect(ctx.redirect).not.toHaveBeenCalled()
+  })
+
+  // The controls. Each one changes exactly one fact from the refusing case, so
+  // a gate that refused everything, or read the wrong row, fails here.
+  it('lets an existing account sign in on a closed workspace', async () => {
+    mockGetWorkspaceSettings.mockResolvedValue(
+      workspace({ openSignup: false, magicLinkEnabled: true })
+    )
+    mockUserFindFirst.mockResolvedValue({ id: 'user_1' })
+    mockPrincipalFindFirst.mockResolvedValue({ role: 'user' })
+    const ctx = ctxFor('/sign-in/magic-link', { email: 'regular@acme.example' })
+
+    await handleSignInPreCheck(ctx)
+    expect(ctx.redirect).not.toHaveBeenCalled()
+  })
+
+  it('lets an invited person create their account on a closed workspace', async () => {
+    mockGetWorkspaceSettings.mockResolvedValue(workspace({ openSignup: false }))
+    mockInvitationFindFirst.mockResolvedValue({ id: 'invite_1' })
+    const ctx = ctxFor('/sign-up/email', { email: 'newhire@acme.example' })
+
+    await handleSignInPreCheck(ctx)
+    expect(ctx.redirect).not.toHaveBeenCalled()
+  })
+
+  // The product's normal install: nobody owns setup yet and arriving is still
+  // how that changes, so the stored setting is not yet anyone's statement.
+  it('lets the first user of an unclaimed, unprovisioned install sign up', async () => {
+    mockGetWorkspaceSettings.mockResolvedValue(workspace({ openSignup: false }))
+    mockFindHumanAdmin.mockResolvedValue(undefined)
+    mockIsOpenToBootstrapClaim.mockResolvedValue(true)
+    const ctx = ctxFor('/sign-up/email', { email: 'first@acme.example' })
+
+    await handleSignInPreCheck(ctx)
+    expect(ctx.redirect).not.toHaveBeenCalled()
+  })
+
+  // Same unclaimed workspace, one fact different: a control plane made it. The
+  // owner is recorded there, so being first through the door is not evidence of
+  // being them.
+  it('refuses that same first arrival when the workspace was provisioned', async () => {
+    mockGetWorkspaceSettings.mockResolvedValue(workspace({ openSignup: false }))
+    mockFindHumanAdmin.mockResolvedValue(undefined)
+    mockIsOpenToBootstrapClaim.mockResolvedValue(false)
+    const ctx = ctxFor('/sign-up/email', { email: 'first@acme.example' })
+
+    await expect(handleSignInPreCheck(ctx)).rejects.toThrow(/signup_not_allowed/)
+  })
 
   it('magic-link is allowed for team when oauth.magicLink toggle is true (verified-domain check separately gates)', async () => {
     // Per the `isAuthMethodAllowed` code: magic-link for team is now
     // gated by `authConfig.oauth.magicLink`. When the toggle is on,
     // only hard-binding can block magic-link.
-    mockGetTenantSettings.mockResolvedValue(tenant({ magicLinkEnabled: true }))
+    mockGetWorkspaceSettings.mockResolvedValue(workspace({ magicLinkEnabled: true }))
     mockUserFindFirst.mockResolvedValue({ id: 'user_1' })
     mockPrincipalFindFirst.mockResolvedValue({ role: 'admin' })
     const ctx = ctxFor('/sign-in/magic-link', { email: 'a@anywhere.com' })
@@ -331,8 +469,8 @@ describe('handleSignInPreCheck — isAuthMethodAllowed gate', () => {
 
 describe('handleSignInPreCheck — ssoOidc.enabled=false (workspace SSO disabled)', () => {
   it('does NOT block admin password sign-in even with stale enforced verified-domain row', async () => {
-    mockGetTenantSettings.mockResolvedValue(
-      tenant({
+    mockGetWorkspaceSettings.mockResolvedValue(
+      workspace({
         ssoEnabled: false,
         verifiedDomains: [makeVerifiedDomain('acme.com', true)],
       })
@@ -346,8 +484,8 @@ describe('handleSignInPreCheck — ssoOidc.enabled=false (workspace SSO disabled
   })
 
   it('does NOT block admin magic-link with stale enforced verified-domain row', async () => {
-    mockGetTenantSettings.mockResolvedValue(
-      tenant({
+    mockGetWorkspaceSettings.mockResolvedValue(
+      workspace({
         ssoEnabled: false,
         magicLinkEnabled: true,
         verifiedDomains: [makeVerifiedDomain('acme.com', true)],
@@ -362,8 +500,8 @@ describe('handleSignInPreCheck — ssoOidc.enabled=false (workspace SSO disabled
   })
 
   it('does NOT block admin password sign-in even with stale enforced verified-domain + disabled SSO', async () => {
-    mockGetTenantSettings.mockResolvedValue(
-      tenant({ ssoEnabled: false, verifiedDomains: [makeVerifiedDomain('acme.com', true)] })
+    mockGetWorkspaceSettings.mockResolvedValue(
+      workspace({ ssoEnabled: false, verifiedDomains: [makeVerifiedDomain('acme.com', true)] })
     )
     mockUserFindFirst.mockResolvedValue({ id: 'user_1' })
     mockPrincipalFindFirst.mockResolvedValue({ role: 'admin' })
@@ -376,7 +514,9 @@ describe('handleSignInPreCheck — ssoOidc.enabled=false (workspace SSO disabled
   it('still gates by method-allowed (password disabled → still blocks)', async () => {
     // The master SSO switch only affects SSO enforcement. Other policy
     // (oauth.password=false) keeps working independently.
-    mockGetTenantSettings.mockResolvedValue(tenant({ ssoEnabled: false, passwordEnabled: false }))
+    mockGetWorkspaceSettings.mockResolvedValue(
+      workspace({ ssoEnabled: false, passwordEnabled: false })
+    )
     mockUserFindFirst.mockResolvedValue({ id: 'user_1' })
     mockPrincipalFindFirst.mockResolvedValue({ role: 'admin' })
     const ctx = ctxFor('/sign-in/email', { email: 'a@anywhere.com' })
@@ -397,8 +537,8 @@ describe('handleSignInPreCheck — tier-downgrade / missing-secret fail-open', (
   // also be blocked → total lockout. The runtime check undoes the
   // enforcement until the operator fixes things.
   it('allows admin password sign-in at enforced verified domain when SSO not registered (tier downgrade)', async () => {
-    mockGetTenantSettings.mockResolvedValue(
-      tenant({ ssoEnabled: true, verifiedDomains: [makeVerifiedDomain('acme.com', true)] })
+    mockGetWorkspaceSettings.mockResolvedValue(
+      workspace({ ssoEnabled: true, verifiedDomains: [makeVerifiedDomain('acme.com', true)] })
     )
     mockGetRegisteredOidcProviderIds.mockResolvedValue(new Set<string>())
     mockUserFindFirst.mockResolvedValue({ id: 'user_1' })
@@ -410,8 +550,8 @@ describe('handleSignInPreCheck — tier-downgrade / missing-secret fail-open', (
   })
 
   it('allows admin magic-link too when SSO not registered', async () => {
-    mockGetTenantSettings.mockResolvedValue(
-      tenant({
+    mockGetWorkspaceSettings.mockResolvedValue(
+      workspace({
         ssoEnabled: true,
         magicLinkEnabled: true,
         verifiedDomains: [makeVerifiedDomain('acme.com', true)],
@@ -430,8 +570,8 @@ describe('handleSignInPreCheck — tier-downgrade / missing-secret fail-open', (
     // Sanity: the fail-open must not invert. Same input as the
     // "blocks password sign-in for admin at enforced verified domain"
     // test in the per-domain suite — should still block.
-    mockGetTenantSettings.mockResolvedValue(
-      tenant({
+    mockGetWorkspaceSettings.mockResolvedValue(
+      workspace({
         ssoEnabled: true,
         verifiedDomains: [makeVerifiedDomain('acme.com', true)],
       })
@@ -478,20 +618,20 @@ describe('handleSignInPreCheck — sign-in rate-limit', () => {
   })
 
   it('short-circuits all downstream work when rate-limited (cheapest reject)', async () => {
-    // Rate-limit fires BEFORE the tenant fetch so a DB hiccup can't
-    // mask a 429 with a 500. No tenant settings, user, or principal
+    // Rate-limit fires BEFORE the workspace fetch so a DB hiccup can't
+    // mask a 429 with a 500. No workspace settings, user, or principal
     // lookups should fire when the limiter blocks.
     mockCheckSignInRateLimit.mockResolvedValueOnce({ allowed: false, retryAfter: 60 })
     const ctx = ctxFor('/sign-in/email', { email: 'a@b.com' })
     await expect(handleSignInPreCheck(ctx)).rejects.toBeDefined()
 
-    expect(mockGetTenantSettings).not.toHaveBeenCalled()
+    expect(mockGetWorkspaceSettings).not.toHaveBeenCalled()
     expect(mockUserFindFirst).not.toHaveBeenCalled()
     expect(mockPrincipalFindFirst).not.toHaveBeenCalled()
   })
 
   it('omits Retry-After header when the limiter did not provide one', async () => {
-    // Defensive: bucketRetryAfter can return undefined in some Redis edge
+    // Defensive: bucketRetryAfter can return undefined in some store edge
     // cases. The header should be omitted entirely (not set to "undefined").
     mockCheckSignInRateLimit.mockResolvedValueOnce({ allowed: false })
     const ctx = ctxFor('/sign-in/email', { email: 'a@b.com' })
@@ -523,6 +663,9 @@ describe('handleSignInPreCheck — sign-in rate-limit', () => {
   })
 
   it('dispatches the magic-link limiter on /sign-in/magic-link (not the credential limiter)', async () => {
+    // Sign-ups open: which limiter runs is the question here, and a workspace
+    // that would refuse this address downstream never gets that far.
+    mockGetWorkspaceSettings.mockResolvedValue(workspace({ openSignup: true }))
     const ctx = ctxFor('/sign-in/magic-link', { email: 'a@b.com' })
     await handleSignInPreCheck(ctx)
     expect(mockCheckMagicLinkRateLimit).toHaveBeenCalledWith(expect.any(String), 'a@b.com')
@@ -570,10 +713,10 @@ describe('handleSignInPreCheck — anonymous-mint rate-limit', () => {
     expect(ctx.redirect).not.toHaveBeenCalled()
   })
 
-  it('short-circuits before any tenant/DB work (mint never needs the domain policy)', async () => {
+  it('short-circuits before any workspace/DB work (mint never needs the domain policy)', async () => {
     const ctx = ctxFor('/sign-in/anonymous', {})
     await handleSignInPreCheck(ctx)
-    expect(mockGetTenantSettings).not.toHaveBeenCalled()
+    expect(mockGetWorkspaceSettings).not.toHaveBeenCalled()
     expect(mockUserFindFirst).not.toHaveBeenCalled()
   })
 
@@ -620,17 +763,19 @@ describe('handleSignInPreCheck — reserved placeholder domain', () => {
     await expect(handleSignInPreCheck(ctx)).rejects.toBeDefined()
   })
 
-  it('refuses before any tenant or rate-limit work happens', async () => {
+  it('refuses before any workspace or rate-limit work happens', async () => {
     // Cheapest possible rejection, and it keeps the reserved domain out of the
     // rate-limit keyspace.
     const ctx = ctxFor('/sign-up/email', { email: 'x@anon.quackback.io' })
     await expect(handleSignInPreCheck(ctx)).rejects.toBeDefined()
-    expect(mockGetTenantSettings).not.toHaveBeenCalled()
+    expect(mockGetWorkspaceSettings).not.toHaveBeenCalled()
   })
 
   it('leaves a lookalike domain alone', async () => {
     // Only the exact reserved domain is reserved; a workspace legitimately
-    // owning something similar must not be blocked.
+    // owning something similar must not be blocked. Sign-ups open, so the only
+    // thing that could refuse this address is the reserved-domain check.
+    mockGetWorkspaceSettings.mockResolvedValue(workspace({ openSignup: true }))
     const ctx = ctxFor('/sign-up/email', { email: 'real@notanon.quackback.io.example.com' })
     await handleSignInPreCheck(ctx)
     expect(ctx.redirect).not.toHaveBeenCalled()

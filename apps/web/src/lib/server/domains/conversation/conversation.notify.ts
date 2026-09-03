@@ -2,11 +2,13 @@
  * Offline notifications for support-inbox conversations. Fire-and-forget from the service after a
  * write commits — a delivery failure must never break sending a message.
  *
- * Because it is fire-and-forget, a failed send has no caller to surface it: the
- * message row is already committed and the thread already renders it as sent. So
- * visitor-facing sends go through a small bounded retry (see sendWithRetry) to
- * convert the common transient provider failure into a success rather than a log
- * line nobody reads. A send that exhausts the retries is still only logged.
+ * Because it is fire-and-forget, a failed send has no caller to roll back: the
+ * message row is already committed. Thread-addressed channels (GitHub) mark
+ * that row pending at insert and move it to sent/failed once the provider
+ * answers, so the inbox can show ticks instead of a silent drop. Visitor-facing
+ * email still goes through a small bounded retry (see sendWithRetry) to convert
+ * the common transient provider failure into a success rather than a log line
+ * nobody reads. A send that exhausts the retries is still only logged.
  *
  *  - Visitor message  -> email the team only when no agent currently has a
  *    live stream (offline coverage). The in-app team bell for the same
@@ -18,10 +20,27 @@
  *    elsewhere is no evidence the reply was seen (see notifyAgentReply). An
  *    anonymous visitor with no captured address stays unreachable either way.
  */
-import { db, eq, inArray, principal, user, conversations } from '@/lib/server/db'
-import { resolveSendingAddress } from '@/lib/server/domains/channel-accounts/channel-account.service'
+import {
+  db,
+  eq,
+  inArray,
+  desc,
+  and,
+  isNull,
+  principal,
+  user,
+  conversations,
+  conversationMessages,
+} from '@/lib/server/db'
+import {
+  formatNamedSendingAddress,
+  resolveConversationFrom,
+} from '@/lib/server/domains/channel-accounts/channel-account.service'
+import { agentReplyDisplayName, assembleOutboundThreading } from '@quackback/email'
+import { getChannelDescriptor } from '@/lib/shared/channels'
+import { requireChannelAdapter } from '@/lib/server/domains/channels'
 import type { Conversation } from '@/lib/server/db'
-import type { PrincipalId, ConversationId } from '@quackback/ids'
+import type { ConversationId, ConversationMessageId, PrincipalId } from '@quackback/ids'
 import type { JSONContent } from '@tiptap/core'
 import { generateContentHTML } from '@/lib/shared/content-html'
 import { withEmailProxyHint } from '@/lib/server/content/email-image-proxy'
@@ -34,8 +53,9 @@ import {
   isEmailInboundConfigured,
   mintOutboundMessageId,
 } from './conversation.email-channel'
+import { currentMailSlug } from './conversation.mail-slug'
 import {
-  priorOutboundMessageIds,
+  threadIdsForOutbound,
   recordOutboundEmail,
   recordEmailIdentity,
 } from './conversation.email-store'
@@ -79,10 +99,10 @@ function messageBodyHtml(content: string, contentJson?: JSONContent | null): str
 
 /**
  * Threading headers for a visitor-facing conversation email: a fresh
- * deterministic Message-ID plus the References chain from prior outbound mails
- * (so mail clients thread the conversation, and a reply that strips the
- * plus-address still routes home via In-Reply-To/References). Absent when no
- * sending domain is configured.
+ * deterministic Message-ID plus the References chain of prior outbound ids
+ * AND the customer's inbound Message-IDs (so the reply joins the thread they
+ * started). In-Reply-To is the latest inbound id when one exists, else the
+ * latest outbound. Absent when no sending domain is configured.
  */
 async function outboundThreading(conversationId: ConversationId): Promise<{
   messageId?: string
@@ -91,12 +111,57 @@ async function outboundThreading(conversationId: ConversationId): Promise<{
 }> {
   const messageId = mintOutboundMessageId(conversationId)
   if (!messageId) return {}
-  const prior = await priorOutboundMessageIds(conversationId)
-  return {
+  const thread = await threadIdsForOutbound(conversationId)
+  return assembleOutboundThreading({
     messageId,
-    inReplyTo: prior[prior.length - 1],
-    references: prior.length > 0 ? prior : undefined,
-  }
+    outboundIds: thread.outbound,
+    inboundIds: thread.inbound,
+    mergedIds: thread.merged,
+  })
+}
+
+async function loadQuotedPreviousMessage(
+  conversationId: ConversationId
+): Promise<{ date: Date; name: string; text: string } | null> {
+  const rows = await db
+    .select({
+      content: conversationMessages.content,
+      createdAt: conversationMessages.createdAt,
+      senderType: conversationMessages.senderType,
+      name: user.name,
+    })
+    .from(conversationMessages)
+    .leftJoin(principal, eq(conversationMessages.principalId, principal.id))
+    .leftJoin(user, eq(principal.userId, user.id))
+    .where(
+      and(
+        eq(conversationMessages.conversationId, conversationId),
+        isNull(conversationMessages.deletedAt),
+        eq(conversationMessages.isInternal, false)
+      )
+    )
+    .orderBy(desc(conversationMessages.createdAt))
+    .limit(2)
+
+  const previous = rows[1]
+  if (!previous?.content) return null
+  const name = previous.name?.trim() || (previous.senderType === 'agent' ? 'Support' : 'Customer')
+  return { date: previous.createdAt, name, text: previous.content }
+}
+
+async function loadConversationMailContext(conversationId: ConversationId): Promise<{
+  subject: string | null
+  channel: Conversation['channel'] | undefined
+}> {
+  const [conv] = await db
+    .select({
+      subject: conversations.subject,
+      channel: conversations.channel,
+    })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .limit(1)
+  return { subject: conv?.subject ?? null, channel: conv?.channel }
 }
 
 /**
@@ -162,7 +227,7 @@ export async function notifyVisitorMessage(opts: {
       })
       .from(principal)
       .leftJoin(user, eq(principal.userId, user.id))
-      .where(inArray(principal.role, ['admin', 'member']))
+      .where(and(eq(principal.type, 'user'), inArray(principal.role, ['admin', 'member'])))
 
     if (team.length === 0) return
 
@@ -174,6 +239,9 @@ export async function notifyVisitorMessage(opts: {
       if (!ctx) return
       const ctaUrl = `${ctx.portalBaseUrl.replace(/\/$/, '')}/admin/inbox?i=${opts.conversation.id}`
       const { sendConversationMessageEmail } = await import('@quackback/email')
+      const { teamThreadRootMessageId, mintTeamOutboundMessageId } =
+        await import('@/lib/server/domains/conversation/conversation.email-channel')
+      const teamRoot = teamThreadRootMessageId(opts.conversation.id)
       // Contact class: the only link is an /admin/inbox URL, which carries no
       // capability — the session does. So a teammate reachable only via their
       // contact address is correctly included, which the old truthiness filter
@@ -196,6 +264,12 @@ export async function notifyVisitorMessage(opts: {
               ctaUrl,
               workspaceName: ctx.workspaceName,
               logoUrl: ctx.logoUrl ?? undefined,
+              isFirstMessage: opts.isFirstMessage,
+              conversationSubject: opts.conversation.subject,
+              messageId: mintTeamOutboundMessageId(opts.conversation.id) ?? undefined,
+              inReplyTo: teamRoot ?? undefined,
+              references: teamRoot ? [teamRoot] : undefined,
+              conversationId: opts.conversation.id,
             })
           )
       )
@@ -213,21 +287,51 @@ export async function notifyVisitorMessage(opts: {
 export const EMAIL_SEND_RETRY_DELAYS_MS = [2000, 4000]
 
 /**
+ * Has this error positively declared that re-sending reproduces it?
+ *
+ * Opt-in, and absence means "retry". Only a transport knows which of its own
+ * failures are about the moment and which are about the message — a From on a
+ * domain the provider is not authorized to send as is the same rejection every
+ * time — so the transport says so and this honours it, without anything here
+ * having to hold a per-provider error taxonomy.
+ */
+function declaresPermanentFailure(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'retryable' in err &&
+    (err as { retryable: unknown }).retryable === false
+  )
+}
+
+/**
  * Send with a small bounded retry. The email dispatch layer THROWS on any
  * provider error, and this whole path is fire-and-forget behind a `void` call
  * whose catch only logs — so without a retry a thirty-second provider blip
  * silently loses an agent's reply, while the message row is committed and the
  * thread renders it as sent.
  *
- * Deliberately retries every thrown error rather than classifying which are
- * transient. A per-provider error taxonomy has to be hand-maintained and fails
- * CLOSED: the day the provider adds an error name, an allow-list quietly stops
- * retrying it. Two wasted calls on a genuinely terminal failure is by far the
- * cheaper mistake.
+ * Retries by default rather than classifying which errors are transient. A
+ * per-provider error taxonomy has to be hand-maintained and fails CLOSED: the
+ * day the provider adds an error name, an allow-list quietly stops retrying it.
+ * Two wasted calls on a genuinely terminal failure is by far the cheaper
+ * mistake. The one exception is an error that declares its own permanence — a
+ * transport saying "this message is wrong" rather than "not right now" — which
+ * costs nothing to honour because the default stays retry for everything that
+ * says nothing.
  *
- * The caller mints the threading headers ONCE, above this — a Message-ID minted
- * per attempt would make a provider that errors after accepting deliver two
- * mails that neither dedupe in the client nor thread together.
+ * The caller mints the threading headers ONCE, above this, so a Message-ID
+ * minted per attempt cannot make a provider that errors after accepting deliver
+ * two mails that neither dedupe in the client nor thread together. That holds
+ * only on the transports where WE own the Message-ID. On one that generates its
+ * own and rejects a caller-supplied header, every attempt necessarily carries a
+ * different id, so the transport reopens that window whatever this loop does:
+ * only the id of the attempt that RETURNS is recorded, and a mail delivered by
+ * an earlier attempt is unroutable by Message-ID. Not retrying an error that
+ * declares itself permanent is what narrows the window here, and what keeps a
+ * duplicate merely a duplicate rather than a second conversation is the
+ * plus-addressed Reply-To: it is per conversation, so it is identical on every
+ * attempt and routes a reply to either copy into the same thread.
  */
 async function sendWithRetry<T>(
   conversationId: ConversationId,
@@ -238,9 +342,10 @@ async function sendWithRetry<T>(
       return await send()
     } catch (err) {
       const delay = EMAIL_SEND_RETRY_DELAYS_MS[attempt]
-      // Out of budget: rethrow so the caller's own catch logs it as a failed
+      // Out of budget, or an error that has already told us a second attempt
+      // reproduces it: rethrow so the caller's own catch logs it as a failed
       // notification, exactly as it did before retries existed.
-      if (delay === undefined) throw err
+      if (delay === undefined || declaresPermanentFailure(err)) throw err
       log.warn(
         { err, conversation_id: conversationId, attempt: attempt + 1 },
         'conversation email send failed; retrying'
@@ -256,7 +361,7 @@ async function sendWithRetry<T>(
  * future email reply routes back and cold inbound resolves the address to the
  * visitor. The two callers differ only in `direction`.
  */
-async function sendVisitorConversationEmail(opts: {
+export async function sendVisitorConversationEmail(opts: {
   conversationId: ConversationId
   visitorPrincipalId: PrincipalId
   recipient: string
@@ -267,21 +372,36 @@ async function sendVisitorConversationEmail(opts: {
   contentJson?: JSONContent | null
   ctaUrl: string
   ctx: { workspaceName: string; logoUrl: string | null }
+  channel?: Conversation['channel']
 }): Promise<void> {
   // Only advertise a reply address we can actually receive on, so a visitor's
   // email reply threads back into this conversation (inbound email channel).
+  // The mail slug is what makes an address routable on a shared inbound domain;
+  // when there is none to mint under, no address is emitted at all and the mail
+  // goes out with the portal footer as its only route back.
   const replyTo = isEmailInboundConfigured()
-    ? (inboundReplyToAddress(opts.conversationId) ?? undefined)
+    ? (inboundReplyToAddress(opts.conversationId, currentMailSlug()) ?? undefined)
     : undefined
   const threading = await outboundThreading(opts.conversationId)
-  // Send as the conversation's team sending address (§4.8) when configured, else
-  // the branded workspace default (EMAIL_FROM).
-  const [conv] = await db
-    .select({ assignedTeamId: conversations.assignedTeamId })
-    .from(conversations)
-    .where(eq(conversations.id, opts.conversationId))
-    .limit(1)
-  const from = (await resolveSendingAddress(conv?.assignedTeamId ?? null)) ?? undefined
+  const mailCtx = await loadConversationMailContext(opts.conversationId)
+  const channel = opts.channel ?? mailCtx.channel
+  const descriptor = channel ? getChannelDescriptor(channel) : undefined
+  const correspondence = descriptor?.surface === 'theirs'
+  const quotedPrevious = correspondence
+    ? ((await loadQuotedPreviousMessage(opts.conversationId)) ?? undefined)
+    : undefined
+  // Reply from the address the customer wrote to when this workspace has proved
+  // it may send as that domain, else the assigned team's sending address, else
+  // the branded workspace default (EMAIL_FROM). A thread that arrived at the
+  // customer's own support address should not change identity on the way back.
+  const resolvedFrom = (await resolveConversationFrom(opts.conversationId)) ?? undefined
+  const fromDisplayName = correspondence
+    ? agentReplyDisplayName(opts.senderName, opts.ctx.workspaceName)
+    : undefined
+  const from =
+    resolvedFrom && fromDisplayName
+      ? formatNamedSendingAddress(resolvedFrom, fromDisplayName)
+      : resolvedFrom
   const { sendConversationMessageEmail } = await import('@quackback/email')
   const result = await sendWithRetry(opts.conversationId, () =>
     sendConversationMessageEmail({
@@ -297,18 +417,34 @@ async function sendVisitorConversationEmail(opts: {
       logoUrl: opts.ctx.logoUrl ?? undefined,
       replyTo,
       from,
+      fromDisplayName: from ? undefined : fromDisplayName,
+      channel,
+      conversationSubject: mailCtx.subject,
+      correspondence,
+      quotedPrevious,
+      conversationId: opts.conversationId,
       ...threading,
     })
   )
   if (result && result.sent === false) {
     log.warn(
-      { conversation_id: opts.conversationId, direction: opts.direction },
-      'conversation email not sent (provider returned sent:false)'
+      { conversation_id: opts.conversationId, direction: opts.direction, reason: result.reason },
+      'conversation email not sent'
     )
   }
+  // Which Message-ID actually went out, which is not always the one we minted.
+  // A transport that owns the header generates its own and reports it back, and
+  // that reported id is the one a reply resolves against — not necessarily the
+  // literal token it quotes, which the store reconciles. An explicit null means
+  // it generated one it did not disclose, in which case there is nothing to
+  // record and the plus-addressed Reply-To is the only route a reply has home.
+  // Recording the minted id there would store an id that exists nowhere and
+  // guarantee a miss.
+  const outboundMessageId =
+    result?.messageId === undefined ? threading.messageId : (result.messageId ?? undefined)
   await Promise.all([
-    threading.messageId
-      ? recordOutboundEmail(threading.messageId, opts.conversationId)
+    outboundMessageId
+      ? recordOutboundEmail(outboundMessageId, opts.conversationId)
       : Promise.resolve(),
     recordEmailIdentity(opts.recipient, opts.visitorPrincipalId),
   ])
@@ -333,6 +469,9 @@ export async function notifyAgentReply(opts: {
    *  compile rather than silently default to 'messenger' and reinstate the
    *  presence-suppression bug this parameter exists to fix. */
   channel: Conversation['channel']
+  /** The agent message being delivered; thread-addressed adapters stamp
+   *  pending → sent/failed on this row. */
+  messageId?: ConversationMessageId
 }): Promise<void> {
   try {
     // Presence gates the MESSENGER surface only. On an email conversation the
@@ -342,7 +481,11 @@ export async function notifyAgentReply(opts: {
     // does not apply. Worst case an online email visitor gets the in-app copy
     // AND the mail, which is the right way round to be wrong: a duplicate beats
     // a silent drop.
-    if (opts.channel !== 'email' && (await isPrincipalOnline(opts.visitorPrincipalId))) return
+    if (
+      getChannelDescriptor(opts.channel)?.surface === 'ours' &&
+      (await isPrincipalOnline(opts.visitorPrincipalId))
+    )
+      return
 
     const [visitor] = await db
       .select({ type: principal.type, email: user.email, contactEmail: principal.contactEmail })
@@ -372,17 +515,21 @@ export async function notifyAgentReply(opts: {
     // the visitor's own session (or a re-identify in the host app), so the URL
     // only navigates — it carries no capability of its own.
     const ctaUrl = await resolveVisitorConversationLink(ctx.portalBaseUrl, opts.conversationId)
-    if (recipient) {
-      await sendVisitorConversationEmail({
+    const adapter = requireChannelAdapter(opts.channel)
+    const threadAddressed = getChannelDescriptor(opts.channel)?.addressing === 'thread'
+    if (recipient || threadAddressed) {
+      await adapter.deliverAgentMessage({
         conversationId: opts.conversationId,
+        messageId: opts.messageId,
         visitorPrincipalId: opts.visitorPrincipalId,
-        recipient,
-        direction: 'agent_reply',
-        senderName: opts.agentName,
         content: opts.content,
         contentJson: opts.contentJson,
+        agentName: opts.agentName,
+        recipient: recipient ?? '',
         ctaUrl,
-        ctx,
+        workspaceName: ctx.workspaceName,
+        logoUrl: ctx.logoUrl,
+        direction: 'agent_reply',
       })
     }
 
@@ -400,16 +547,18 @@ export async function notifyAgentReply(opts: {
       )
       for (const participant of participants) {
         try {
-          await sendVisitorConversationEmail({
+          await adapter.deliverAgentMessage({
             conversationId: opts.conversationId,
+            messageId: opts.messageId,
             visitorPrincipalId: participant.principalId,
-            recipient: participant.email,
-            direction: 'agent_reply',
-            senderName: opts.agentName,
             content: opts.content,
             contentJson: opts.contentJson,
+            agentName: opts.agentName,
+            recipient: participant.email,
             ctaUrl,
-            ctx,
+            workspaceName: ctx.workspaceName,
+            logoUrl: ctx.logoUrl,
+            direction: 'agent_reply',
           })
         } catch (err) {
           log.warn(
@@ -440,6 +589,7 @@ export async function notifyConversationStarted(opts: {
   /** Rich message body (TipTap doc) rendered inline in the email, when present. */
   contentJson?: JSONContent | null
   agentName: string
+  messageId?: ConversationMessageId
 }): Promise<void> {
   try {
     const [visitor] = await db
@@ -450,7 +600,10 @@ export async function notifyConversationStarted(opts: {
       .limit(1)
 
     const recipient = resolveReplyRecipient(visitor, visitor?.contactEmail, null)
-    if (!recipient) {
+    const mailCtx = await loadConversationMailContext(opts.conversationId)
+    const channel = mailCtx.channel ?? 'messenger'
+    const threadAddressed = getChannelDescriptor(channel)?.addressing === 'thread'
+    if (!recipient && !threadAddressed) {
       log.warn(
         { conversation_id: opts.conversationId },
         'outbound message undeliverable (no email)'
@@ -461,16 +614,18 @@ export async function notifyConversationStarted(opts: {
     const ctx = await buildHookContext()
     if (!ctx) return
     const ctaUrl = await resolveVisitorConversationLink(ctx.portalBaseUrl, opts.conversationId)
-    await sendVisitorConversationEmail({
+    await requireChannelAdapter(channel).deliverAgentMessage({
       conversationId: opts.conversationId,
+      messageId: opts.messageId,
       visitorPrincipalId: opts.visitorPrincipalId,
-      recipient,
-      direction: 'agent_started',
-      senderName: opts.agentName,
       content: opts.content,
       contentJson: opts.contentJson,
+      agentName: opts.agentName,
+      recipient: recipient ?? '',
       ctaUrl,
-      ctx,
+      workspaceName: ctx.workspaceName,
+      logoUrl: ctx.logoUrl,
+      direction: 'agent_started',
     })
   } catch (err) {
     log.warn({ err }, 'notify conversation started failed')
@@ -515,7 +670,12 @@ export async function notifyCsatRequestEmail(
       .from(conversations)
       .where(eq(conversations.id, conversationId))
       .limit(1)
-    if (!conv || conv.channel !== 'email' || !conv.visitorPrincipalId) return
+    if (
+      !conv ||
+      !conv.visitorPrincipalId ||
+      getChannelDescriptor(conv.channel)?.surface !== 'theirs'
+    )
+      return
     const visitorPrincipalId = conv.visitorPrincipalId
 
     const [visitor] = await db
@@ -525,7 +685,8 @@ export async function notifyCsatRequestEmail(
       .where(eq(principal.id, visitorPrincipalId))
       .limit(1)
     const recipient = resolveReplyRecipient(visitor, visitor?.contactEmail, null)
-    if (!recipient) return
+    const threadAddressed = getChannelDescriptor(conv.channel)?.addressing === 'thread'
+    if (!recipient && !threadAddressed) return
 
     const ctx = await buildHookContext()
     if (!ctx) return
@@ -541,13 +702,14 @@ export async function notifyCsatRequestEmail(
       string,
     ]
 
-    const { sendCsatRequestEmail } = await import('@quackback/email')
-    await sendCsatRequestEmail({
-      to: recipient,
+    await requireChannelAdapter(conv.channel).deliverCsatRequest({
+      conversationId,
+      visitorPrincipalId,
+      recipient: recipient ?? '',
       promptText,
       ratingUrls,
       workspaceName: ctx.workspaceName,
-      logoUrl: ctx.logoUrl ?? undefined,
+      logoUrl: ctx.logoUrl,
     })
   } catch (err) {
     log.warn({ err, conversationId }, 'csat request email failed')

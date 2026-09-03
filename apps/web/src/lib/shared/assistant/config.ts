@@ -28,12 +28,23 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+function isStoredAssetRef(value: string): boolean {
+  if (!value.startsWith('/api/storage/')) return false
+  try {
+    const parsed = new URL(value, 'https://placeholder.invalid')
+    return parsed.pathname.startsWith('/api/storage/') && parsed.pathname !== '/api/storage/'
+  } catch {
+    return false
+  }
+}
+
 export const assistantAvatarUrlSchema = z
   .string()
   .trim()
-  .url()
   .max(ASSISTANT_AVATAR_URL_MAX_LENGTH)
-  .refine(isHttpUrl, { message: 'Avatar URL must use HTTP or HTTPS' })
+  .refine((value) => isHttpUrl(value) || isStoredAssetRef(value), {
+    message: 'Avatar URL must be a stored asset ref or HTTP(S) URL',
+  })
 
 export const assistantIdentitySchema = z.object({
   name: z.string().trim().min(1).max(ASSISTANT_NAME_MAX_LENGTH),
@@ -107,6 +118,22 @@ export const assistantCopilotKnowledgeSchema = z.object({
   status: z.boolean(),
 } satisfies Record<AssistantCopilotKnowledgeSource, z.ZodType<boolean>>)
 
+/**
+ * Per-tool permission rule for a BUILT-IN write tool, keyed by tool name:
+ * - `allow` — run without asking (after RBAC)
+ * - `ask` — pause on a persisted proposal a teammate approves or denies
+ * - `deny` — omit the tool from this agent's catalogue entirely
+ *
+ * An absent key changes nothing: the turn's role policy keeps deciding, so a
+ * workspace that never opens the dial behaves exactly as before. Saved per
+ * agent, mirroring the remote-connector dial's vocabulary.
+ */
+export const ASSISTANT_TOOL_RULES = ['allow', 'ask', 'deny'] as const
+export const assistantToolRuleSchema = z.enum(ASSISTANT_TOOL_RULES)
+export type AssistantToolRule = z.infer<typeof assistantToolRuleSchema>
+export const assistantToolRulesSchema = z.record(z.string().min(1), assistantToolRuleSchema)
+export type AssistantToolRules = z.infer<typeof assistantToolRulesSchema>
+
 /** Copilot capabilities gate the teammate-facing Q&A route. */
 export const assistantCopilotCapabilitiesSchema = z.object({
   qa: z.boolean(),
@@ -116,12 +143,16 @@ export const assistantCopilotCapabilitiesSchema = z.object({
 export const assistantAgentConfigSchema = z.object({
   voice: assistantVoiceSchema,
   knowledge: assistantAgentKnowledgeSchema,
+  /** Absent key = role policy decides; see {@link assistantToolRulesSchema}. */
+  toolRules: assistantToolRulesSchema.default({}),
 })
 
 /** Copilot (teammate-facing) sub-config: capabilities + a wider knowledge map, no voice (D11). */
 export const assistantCopilotConfigSchema = z.object({
   capabilities: assistantCopilotCapabilitiesSchema,
   knowledge: assistantCopilotKnowledgeSchema,
+  /** Absent key = role policy decides; see {@link assistantToolRulesSchema}. */
+  toolRules: assistantToolRulesSchema.default({}),
 })
 
 // The z.infer of this schema (`AssistantConfig`) has a hand-written structural
@@ -166,6 +197,7 @@ export const DEFAULT_ASSISTANT_CONFIG: AssistantConfig = {
         documents: true,
         status: false,
       },
+      toolRules: {},
     },
     copilot: {
       capabilities: {
@@ -176,11 +208,12 @@ export const DEFAULT_ASSISTANT_CONFIG: AssistantConfig = {
         posts: true,
         pastConversations: true,
         internalNotes: true,
-        tickets: false,
-        changelog: false,
+        tickets: true,
+        changelog: true,
         documents: true,
         status: true,
       },
+      toolRules: {},
     },
   },
 }
@@ -332,10 +365,12 @@ const assistantConfigInputSchema = z.object({
         additionalInstructions: z.string(),
       }),
       knowledge: assistantAgentKnowledgeSchema,
+      toolRules: assistantToolRulesSchema.optional(),
     }),
     copilot: z.object({
       capabilities: assistantCopilotCapabilitiesSchema,
       knowledge: assistantCopilotKnowledgeSchema,
+      toolRules: assistantToolRulesSchema.optional(),
     }),
   }),
 })

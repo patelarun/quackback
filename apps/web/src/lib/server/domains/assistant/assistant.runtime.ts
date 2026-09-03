@@ -41,7 +41,12 @@ import type {
 } from '@/lib/shared/conversation/types'
 import { resolveContentAudience } from './audience'
 import { assembleAssistantToolset } from './assistant.tools'
-import { makeAssistantToolContext, makeAssistantToolLedger } from './assistant.toolspec'
+import {
+  applyBuiltInToolRules,
+  resolveToolSpecs,
+  makeAssistantToolContext,
+  makeAssistantToolLedger,
+} from './assistant.toolspec'
 import { listConversationAttributes } from '@/lib/server/domains/conversation-attributes/conversation-attribute.service'
 import type {
   AssistantCitation,
@@ -51,7 +56,8 @@ import type {
   AssistantToolOutcome,
   AssistantToolSpec,
 } from './assistant.toolspec'
-import { listActionSpecsForAgent } from './custom-actions.service'
+import { listConnectorToolSpecsForAgent } from './connectors/connector-tools'
+import { compileSkillCatalogue, countAssignedSkills } from './skills.service'
 import { resolveAssistantKnowledgeSnapshot, type RetrievedItem } from './retrieval-sources'
 import { listEnabledGuidanceCandidates, type AssistantGuidanceRule } from './guidance.service'
 import { selectApplicableGuidance, splitGuidanceCandidates } from './guidance-selector'
@@ -128,9 +134,6 @@ export interface AssistantRuntimeConfig {
   config: AssistantConfig
   revision: number
   workspaceName: string
-  actionsEnabled: boolean
-  /** `assistantCustomActions` flag: gates dynamic custom-action registration (Phase 5). */
-  customActionsEnabled: boolean
   configFallbackReason?: string
 }
 
@@ -247,8 +250,8 @@ interface AssistantTurnCommonInput {
    * Force write tools to report what they would do instead of running, even
    * with a real `conversationId` (which otherwise implies a live run; see
    * `makeAssistantToolContext`). Undefined preserves the existing
-   * conversationId-derived default for every caller. Used by Test agent; live
-   * role policy is selected exclusively by the discriminated role below.
+   * conversationId-derived default for every caller. Live role policy is
+   * selected exclusively by the discriminated role below.
    */
   simulate?: boolean
   /**
@@ -261,7 +264,7 @@ interface AssistantTurnCommonInput {
    * teammate), so the metadata carries no `principalId` key in that case.
    */
   actorPrincipalId?: PrincipalId | null
-  /** Tenant db handle for the tools; defaults to the app db. */
+  /** Workspace db handle for the tools; defaults to the app db. */
   db?: Executor
   /** Aborts the in-flight provider call. */
   signal?: AbortSignal
@@ -682,7 +685,7 @@ export interface ConversationGroundingFacts {
  * guards the one place a caller-authored value sits on a trusted line.
  */
 function sanitizeFactValue(value: string, max = 200): string {
-  // eslint-disable-next-line no-control-regex
+  // oxlint-disable-next-line no-control-regex
   const flattened = value.replace(/[\u0000-\u001F\u007F]+/g, ' ').trim()
   return flattened.length > max ? `${flattened.slice(0, max)}…` : flattened
 }
@@ -825,8 +828,6 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
       config: structuredClone(DEFAULT_ASSISTANT_CONFIG),
       revision: 1,
       workspaceName: 'this workspace',
-      actionsEnabled: false,
-      customActionsEnabled: false,
       configFallbackReason: 'database_read_failed',
     }
   }
@@ -933,6 +934,13 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
 
   // Shared construction point (simulate derives from the null conversation =
   // sandbox; actor defaults to Quinn's bounded set).
+  const agentKind = roleToAgent(role)
+  let skillCount = 0
+  try {
+    skillCount = await countAssignedSkills(agentKind, execDb)
+  } catch (error) {
+    log.warn({ err: error }, 'skill count failed; omitting use_skill this turn')
+  }
   const toolContext = makeAssistantToolContext({
     db: execDb,
     assistantPrincipalId: input.assistantPrincipalId,
@@ -948,6 +956,7 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
     latestCustomerMessageId: input.latestCustomerMessageId,
     simulate: input.simulate,
     writeToolPolicy: input.simulate === true ? 'simulate' : rolePolicy.writeToolPolicy,
+    skills: { count: skillCount, loads: 0 },
   })
   const promptChannel = surface === 'widget' || surface === 'email' ? surface : null
   const guidanceChannel = surface
@@ -989,19 +998,20 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
     )
   )
 
-  // Custom actions (Phase 5): when the `assistantCustomActions` flag is on,
-  // resolve every enabled definition assigned to THIS turn's agent into a
-  // dynamic write-risk spec. Turn-scoped like the flag/write-policy read below,
-  // so a retry can't change the set mid-turn. A definition assigned to the
-  // other agent, disabled, or resolved for the wrong agent simply never
-  // appears. Best-effort: a load failure drops custom actions for the turn
-  // rather than failing the whole reply.
-  let customActionSpecs: AssistantToolSpec[] = []
-  if (runtimeConfig.customActionsEnabled) {
+  // Resolve every enabled connector assigned to this turn's agent. A policy
+  // of never is filtered before assembly.
+  let connectorSpecs: AssistantToolSpec[] = []
+  try {
+    connectorSpecs = await listConnectorToolSpecsForAgent(agentKind, execDb)
+  } catch (error) {
+    log.warn({ err: error }, 'connector load failed; omitting connectors this turn')
+  }
+  let skillCatalogue: Array<{ name: string; whenToUse: string }> = []
+  if (skillCount > 0) {
     try {
-      customActionSpecs = await listActionSpecsForAgent(roleToAgent(role), execDb)
+      skillCatalogue = await compileSkillCatalogue(agentKind, execDb)
     } catch (error) {
-      log.warn({ err: error }, 'custom action load failed; omitting custom actions this turn')
+      log.warn({ err: error }, 'skill catalogue load failed; omitting skills this turn')
     }
   }
 
@@ -1010,17 +1020,24 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
   // flip gating mid-turn, and shares the same tool set across every attempt.
   // `activeSpecs` (the specs behind `tools`, index-aligned) is what the
   // system prompt's per-tool guidance composes from below.
+  // The workspace's saved per-tool dials for this agent overlay the built-in
+  // catalogue before assembly: deny never reaches the model, ask/allow ride
+  // the same approvalPolicy seam the connector dial uses, and an empty map
+  // leaves role policy deciding exactly as before the dial existed.
+  const builtInSpecs = applyBuiltInToolRules(
+    resolveToolSpecs(),
+    runtimeConfig.config.agents[agentKind].toolRules
+  )
   let { tools, activeSpecs } = await assembleAssistantToolset(
     toolContext,
-    undefined,
-    runtimeConfig.actionsEnabled,
-    customActionSpecs
+    builtInSpecs,
+    connectorSpecs
   )
   let toolNames = new Set(tools.map((t) => t.name))
 
   // Live attribute catalogue (P0 catalogue injection): fetched only when
   // set_attribute actually made it into this turn's tool set, so a turn with
-  // the tool disabled (or assistantTools off entirely) never pays for the
+  // the tool disabled never pays for the
   // read. IO stays here, not inside buildAssistantSystemPrompt, which is pure.
   let attributeDefinitions: Awaited<ReturnType<typeof listConversationAttributes>> | undefined
   if (toolNames.has('set_attribute')) {
@@ -1111,6 +1128,7 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
     workflowInstructions: input.stepInstructions,
     attributeCatalogue: attributeDefinitions,
     boardCatalogue,
+    skillCatalogue,
   })
 
   // Instrumentation-only OTel tracing (one span per turn, child spans per tool
@@ -1311,7 +1329,7 @@ export interface StreamAssistantTurnOptions {
   wire: WireRunIds
   /**
    * Maps the turn's post-processed result to this surface's terminal payload
-   * (CopilotFinalPayload, AssistantTestFinalPayload, ...), carried on AG-UI's
+   * (CopilotFinalPayload, ...), carried on AG-UI's
    * standard RUN_FINISHED.result slot. Runs after
    * the turn fully completes — citations relinked, completion validated — so
    * the payload is the enriched result, never the raw model object.

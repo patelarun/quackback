@@ -148,14 +148,12 @@ const periods: Array<{ value: AnalyticsPeriod; label: string }> = [
 export function AnalyticsPage() {
   const { settings } = useRouteContext({ from: '__root__' })
   const flags = settings?.featureFlags as FeatureFlags | undefined
-  // Product reports follow product availability; visitor reporting retains
-  // its separate privacy-sensitive Labs gate.
+  // Product reports follow product availability. Visitor reporting is always on.
   const sections = SECTION_NAV_ITEMS.filter(
     (i) =>
       (i.key !== 'feedback' || isProductEnabled(flags, 'feedback')) &&
       (i.key !== 'support' || isProductEnabled(flags, 'support')) &&
-      (i.key !== 'changelog' || isProductEnabled(flags, 'changelog')) &&
-      (i.key !== 'visitors' || (flags?.visitorAnalytics ?? false))
+      (i.key !== 'changelog' || isProductEnabled(flags, 'changelog'))
   )
 
   const [period, setPeriod] = useState<AnalyticsPeriod>('30d')
@@ -171,7 +169,7 @@ export function AnalyticsPage() {
   const { data: visitorData, isLoading: visitorLoading } = useQuery({
     ...analyticsQueries.visitors(period, surface),
     placeholderData: keepPreviousData,
-    enabled: (flags?.visitorAnalytics ?? false) && section === 'visitors',
+    enabled: section === 'visitors',
   })
 
   return (

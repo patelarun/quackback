@@ -3,8 +3,8 @@
  * published help-center articles.
  *
  * Same public envelope as kb-search (feature gate + CORS *), plus the
- * helpCenterAiAnswers flag, a per-IP/session/tenant rate limit, and a
- * query length cap. The session and tenant buckets stop a single anonymous
+ * help-center product, a per-IP/session/workspace rate limit, and a
+ * query length cap. The session and workspace buckets stop a single anonymous
  * session (or a Host-header switcheroo) from burning unlimited AI budget
  * even while staying under the per-IP cap.
  *
@@ -41,6 +41,7 @@ import {
   runFinishedChunk,
   runErrorChunk,
   stateSnapshotChunk,
+  withSseKeepalive,
 } from '@/lib/server/domains/assistant/agui'
 import type {
   KbAskFinalPayload,
@@ -53,7 +54,7 @@ import {
   widgetJsonError,
 } from '@/lib/server/widget/public-endpoint'
 import { resolveWidgetViewer } from '@/lib/server/widget/widget-viewer'
-import { readSettings } from '@/lib/server/functions/workspace'
+import { getSettings } from '@/lib/server/functions/workspace'
 import type { Actor } from '@/lib/server/policy/types'
 import { enforceAiTokenBudget } from '@/lib/server/domains/settings/tier-enforce'
 import { TierLimitError } from '@/lib/server/errors/tier-limit-error'
@@ -73,6 +74,7 @@ const KB_ASK_RELATED_TOP_K = 3
 function toSourceMeta(a: RetrievedKbArticle): KbAskSourceMeta {
   return {
     articleId: a.id,
+    urlId: a.urlId,
     title: a.title,
     slug: a.slug,
     categorySlug: a.categorySlug,
@@ -130,7 +132,7 @@ export async function handleKbAskProbe({
   request: Request
 }): Promise<Response> {
   const flags = await getFeatureFlags()
-  if (!flags.helpCenter || !flags.helpCenterAiAnswers) {
+  if (!flags.helpCenter) {
     return widgetJsonError(404, 'NOT_FOUND', 'Knowledge base not found')
   }
   return Response.json({ data: { enabled: isAskAiConfigured() } }, { headers: widgetCorsHeaders() })
@@ -138,7 +140,7 @@ export async function handleKbAskProbe({
 
 export async function handleKbAsk({ request }: { request: Request }): Promise<Response> {
   const flags = await getFeatureFlags()
-  if (!flags.helpCenter || !flags.helpCenterAiAnswers) {
+  if (!flags.helpCenter) {
     return widgetJsonError(404, 'NOT_FOUND', 'Knowledge base not found')
   }
 
@@ -171,20 +173,20 @@ export async function handleKbAsk({ request }: { request: Request }): Promise<Re
     )
   }
 
-  // Configuration is a sync check: refuse before spending a Redis round-trip
+  // Configuration is a sync check: refuse before spending a store round-trip
   // on rate limiting requests that could never be answered.
   if (!isAskAiConfigured()) {
     return widgetJsonError(503, 'AI_NOT_CONFIGURED', 'AI answers are not configured')
   }
 
-  // Tenant bucket is keyed on the resolved workspace, not caller-supplied
+  // Workspace bucket is keyed on the resolved workspace, not caller-supplied
   // headers, so it can't be evaded the way a Host-header key could.
-  const settings = await readSettings()
+  const settings = await getSettings()
   if (!settings) return widgetJsonError(503, 'WORKSPACE_UNAVAILABLE', 'Workspace unavailable')
 
   const limited = await enforceWidgetQuota(request, {
     keyPrefix: 'kbask',
-    tenantId: settings.id,
+    workspaceKey: settings.id,
     limit: KB_ASK_RATE_LIMIT,
     windowSeconds: RATE_WINDOW_SECONDS,
     message: 'Too many questions, slow down',
@@ -307,7 +309,9 @@ export async function handleKbAsk({ request }: { request: Request }): Promise<Re
     }
   })()
 
-  return toServerSentEventsResponse(queue.stream(), { headers: widgetCorsHeaders() })
+  return withSseKeepalive(
+    toServerSentEventsResponse(queue.stream(), { headers: widgetCorsHeaders() })
+  )
 }
 
 export const Route = createFileRoute('/api/widget/kb-ask')({

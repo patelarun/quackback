@@ -4,25 +4,28 @@ import { and, db, eq, principal, settings, sql } from '@/lib/server/db'
 import { isPathManaged } from '@/lib/server/config-file/managed-paths'
 import { logger } from '@/lib/server/logger'
 import {
+  assistantAgentSchema,
   assistantConfigSchema,
   assistantCopilotCapabilitiesSchema,
   assistantAgentKnowledgeSchema,
   assistantCopilotKnowledgeSchema,
   assistantIdentitySchema,
+  assistantToolRulesSchema,
   assistantVoiceSchema,
   DEFAULT_ASSISTANT_CONFIG,
   normalizeAssistantConfig,
+  type AssistantAgentKind,
   type AssistantAgentKnowledge,
   type AssistantConfig,
   type AssistantCopilotCapabilities,
   type AssistantCopilotKnowledge,
   type AssistantIdentity,
+  type AssistantToolRules,
   type AssistantVoice,
 } from '@/lib/shared/assistant/config'
 import { ConflictError, ForbiddenError, InternalError, NotFoundError } from '@/lib/shared/errors'
 import { z } from 'zod'
 import { invalidateSettingsCache, requireSettings } from './settings.helpers'
-import { resolveFeatureFlags } from './settings.types'
 
 const log = logger.child({ component: 'settings-assistant' })
 
@@ -51,6 +54,12 @@ export const assistantCopilotCapabilitiesUpdateSchema = z.object({
   capabilities: assistantCopilotCapabilitiesSchema,
 })
 
+export const assistantToolRulesUpdateSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  agent: assistantAgentSchema,
+  toolRules: assistantToolRulesSchema,
+})
+
 export interface AssistantConfigState {
   config: AssistantConfig
   revision: number
@@ -60,10 +69,6 @@ export type AssistantConfigFallbackReason = 'invalid_assistant_config'
 
 export interface AssistantRuntimeConfigState extends AssistantConfigState {
   workspaceName: string
-  actionsEnabled: boolean
-  /** `settings.feature_flags.assistantCustomActions` — gates dynamic
-   *  registration of custom actions into an agent's toolset (Phase 5). */
-  customActionsEnabled: boolean
   configFallbackReason?: AssistantConfigFallbackReason
 }
 
@@ -101,13 +106,10 @@ export async function getAssistantSettings(): Promise<AssistantSettingsState> {
 /** Runtime read posture: invalid behavior JSON falls back without reintroducing a V1 reader. */
 export async function getAssistantRuntimeConfig(): Promise<AssistantRuntimeConfigState> {
   const row = await requireSettings()
-  const flags = resolveFeatureFlags(row.featureFlags)
   const parsed = assistantConfigSchema.safeParse(row.assistantConfig)
   const runtimeFields = {
     revision: row.assistantConfigRevision,
     workspaceName: row.name,
-    actionsEnabled: flags.assistantTools,
-    customActionsEnabled: flags.assistantCustomActions,
   }
   if (parsed.success) return { config: parsed.data, ...runtimeFields }
 
@@ -147,6 +149,9 @@ function auditEventForPaths(paths: string[]): AuditEventType {
   if (root === 'identity') return 'assistant.identity.changed'
   if (paths.every((path) => path.startsWith('agents.copilot.capabilities'))) {
     return 'assistant.capabilities.changed'
+  }
+  if (paths.every((path) => path.includes('.toolRules'))) {
+    return 'assistant.tools.changed'
   }
   if (paths.every((path) => path.endsWith('.knowledge') || path.includes('.knowledge.'))) {
     return 'assistant.knowledge.changed'
@@ -355,6 +360,30 @@ export function updateAssistantCopilotCapabilities(
     (current) => ({
       ...current,
       agents: { ...current.agents, copilot: { ...current.agents.copilot, capabilities } },
+    }),
+    actor
+  )
+}
+
+/**
+ * A per-tool permission write for one agent's built-in write tools. The whole
+ * map is replaced (the card edits it as a unit), and
+ * `normalizeAssistantConfig` re-validates the vocabulary at the write
+ * boundary. An empty map is a real state: every dial back on role policy.
+ */
+export function updateAssistantToolRules(
+  expectedRevision: number,
+  update: { agent: AssistantAgentKind; toolRules: AssistantToolRules },
+  actor: AssistantConfigAuditActor
+): Promise<AssistantConfigState> {
+  return updateAssistantConfig(
+    expectedRevision,
+    (current) => ({
+      ...current,
+      agents: {
+        ...current.agents,
+        [update.agent]: { ...current.agents[update.agent], toolRules: update.toolRules },
+      },
     }),
     actor
   )

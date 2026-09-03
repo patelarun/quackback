@@ -59,6 +59,11 @@ export interface IntegrationSettingsEntry {
   connectedBanner?: ReactNode
   /** Override the "Connected to X" workspace label (e.g. azure_devops → organizationName). */
   getWorkspaceName?: (integration: IntegrationSettingsData) => string | null | undefined
+  /**
+   * When true, the route skips the wrapping card and the shared health panel
+   * so this config can own Connection / Health / product sections.
+   */
+  bareConfig?: boolean
 }
 
 // ── lazy per-provider components ────────────────────────────────────────────
@@ -471,12 +476,14 @@ export const INTEGRATION_SETTINGS: Record<string, IntegrationSettingsEntry> = {
         </p>,
       ],
     },
+    bareConfig: true,
     renderConfig: ({ integration, isConnected }) => (
       <GitHubConfig
         integrationId={integration.id}
         initialConfig={integration.config}
         initialEventMappings={integration.eventMappings}
         enabled={isConnected}
+        health={integration.health}
       />
     ),
   },
@@ -981,7 +988,7 @@ export const INTEGRATION_SETTINGS: Record<string, IntegrationSettingsEntry> = {
         'Connect Microsoft Teams to receive notifications when users submit feedback, when statuses change, and when comments are added.',
       steps: [
         <p key="1">
-          Register Quackback in your Azure AD tenant and add the Teams bot permissions.
+          Register Quackback in your Azure AD workspace and add the Teams bot permissions.
         </p>,
         <p key="2">
           Click <span className="font-medium text-foreground">Connect</span> to authorize Quackback

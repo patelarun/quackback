@@ -12,12 +12,13 @@ import {
   postCommentReactions,
   postStatuses,
   principal as principalTable,
+  user as userTable,
 } from '@/lib/server/db'
 import { toUuid, fromUuid, type PostId, type PostCommentId, type PrincipalId } from '@quackback/ids'
 import { buildCommentTree, toStatusChange } from '@/lib/shared'
 import type { PublicPostDetail, PublicComment, PinnedComment } from './post.types'
 import { DEFAULT_COMMENT_PAGE_SIZE, encodeCommentCursor, decodeCommentCursor } from './comment-page'
-import { resolveAvatarUrl, parseJson, parseAvatarData } from './post.public'
+import { resolveAvatarUrl, parseJson } from './post.public'
 import { getExecuteRows } from '@/lib/server/utils'
 import {
   canViewPost,
@@ -29,6 +30,7 @@ import {
 import { hydrateMentions } from './hydrate-mentions'
 import type { TiptapContent } from '@/lib/shared/db-types'
 import type { JSONContent } from '@tiptap/core'
+import { contentJsonForClient } from '@/lib/server/content/storage-read-urls'
 
 /**
  * Fetch the public-facing detail view for a post.
@@ -154,13 +156,17 @@ export async function getPublicPostDetail(
           SELECT m.display_name FROM ${principalTable} m
           WHERE m.id = ${posts.principalId}
         )`.as('author_name'),
+        // All four sources — resolveUserAvatarUrl still needs the OAuth
+        // URLs when a stored key cannot produce a public URL (storage off).
         authorAvatarData: sql<string | null>`(
-          SELECT CASE
-            WHEN m.avatar_key IS NOT NULL
-            THEN json_build_object('key', m.avatar_key)
-            ELSE json_build_object('url', m.avatar_url)
-          END
+          SELECT json_build_object(
+            'userImageKey', u.image_key,
+            'avatarKey', m.avatar_key,
+            'userImage', u.image,
+            'avatarUrl', m.avatar_url
+          )
           FROM ${principalTable} m
+          LEFT JOIN ${userTable} u ON u.id = m.user_id
           WHERE m.id = ${posts.principalId}
         )`.as('author_avatar_data'),
       })
@@ -203,7 +209,15 @@ export async function getPublicPostDetail(
   const tagsResult = parseJson<
     Array<{ id: import('@quackback/ids').PostTagId; name: string; color: string }>
   >(postResult.tagsJson)
-  const authorAvatarUrl = parseAvatarData(postResult.authorAvatarData)
+  const authorAvatarFields = postResult.authorAvatarData
+    ? parseJson<{
+        userImageKey: string | null
+        avatarKey: string | null
+        userImage: string | null
+        avatarUrl: string | null
+      }>(postResult.authorAvatarData)
+    : null
+  const authorAvatarUrl = resolveAvatarUrl(authorAvatarFields ?? {})
 
   type CommentRow = {
     id: string
@@ -221,11 +235,14 @@ export async function getPublicPostDetail(
     deleted_by_principal_id: string | null
     avatar_key: string | null
     avatar_url: string | null
+    user_image: string | null
+    user_image_key: string | null
     reactions_json: string
     sc_from_name: string | null
     sc_from_color: string | null
     sc_to_name: string | null
     sc_to_color: string | null
+    moderation_state: string
   }
 
   // The comment set is the UNION of this post + every merged source the actor
@@ -245,8 +262,9 @@ export async function getPublicPostDetail(
         c.id, c.post_id, c.parent_id, c.principal_id,
         m.display_name as author_name,
         c.content, c.content_json, c.is_team_member, c.is_private,
+        c.moderation_state,
         c.created_at, c.updated_at, c.deleted_at, c.deleted_by_principal_id,
-        m.avatar_key, m.avatar_url,
+        m.avatar_key, m.avatar_url, u.image as user_image, u.image_key as user_image_key,
         COALESCE(
           json_agg(json_build_object('emoji', cr.emoji, 'principalId', cr.principal_id))
           FILTER (WHERE cr.id IS NOT NULL),
@@ -256,6 +274,7 @@ export async function getPublicPostDetail(
         sct.name as sc_to_name, sct.color as sc_to_color
       FROM ${postComments} c
       INNER JOIN ${principalTable} m ON c.principal_id = m.id
+      LEFT JOIN ${userTable} u ON m.user_id = u.id
       LEFT JOIN ${postCommentReactions} cr ON cr.comment_id = c.id
       LEFT JOIN ${postStatuses} scf ON scf.id = c.status_change_from_id
       LEFT JOIN ${postStatuses} sct ON sct.id = c.status_change_to_id
@@ -263,7 +282,7 @@ export async function getPublicPostDetail(
       ${includePrivateComments ? sql`` : sql`AND c.is_private = false`}
       ${moderationFilterSql}
       ${whereExtra}
-      GROUP BY c.id, m.display_name, m.avatar_key, m.avatar_url, scf.name, scf.color, sct.name, sct.color
+      GROUP BY c.id, m.display_name, m.avatar_key, m.avatar_url, u.image, u.image_key, scf.name, scf.color, sct.name, sct.color
       ${orderLimit}
     `)
 
@@ -363,6 +382,7 @@ export async function getPublicPostDetail(
       null,
     isTeamMember: comment.is_team_member,
     isPrivate: comment.is_private,
+    moderationState: comment.moderation_state,
     createdAt: ensureDate(comment.created_at),
     updatedAt: comment.updated_at ? ensureDate(comment.updated_at) : null,
     deletedAt: comment.deleted_at ? ensureDate(comment.deleted_at) : null,
@@ -372,6 +392,8 @@ export async function getPublicPostDetail(
     avatarUrl: resolveAvatarUrl({
       avatarKey: comment.avatar_key,
       avatarUrl: comment.avatar_url,
+      userImageKey: comment.user_image_key,
+      userImage: comment.user_image,
     }),
     statusChange: toStatusChange(
       comment.sc_from_name ? { name: comment.sc_from_name, color: comment.sc_from_color! } : null,
@@ -406,6 +428,7 @@ export async function getPublicPostDetail(
       isEdited: !deleted && !!node.updatedAt,
       avatarUrl: deleted ? null : (node.avatarUrl ?? null),
       statusChange: deleted ? null : (node.statusChange ?? null),
+      moderationState: deleted ? 'published' : (node.moderationState ?? 'published'),
       replies: node.replies.map(mapToPublicComment),
       reactions: deleted ? [] : node.reactions,
     }
@@ -417,9 +440,11 @@ export async function getPublicPostDetail(
   // renamed users show up-to-date names. List views skip this; only the
   // detail read paths pay the extra round-trip.
   const hydratePublicCommentTree = async (node: PublicComment): Promise<PublicComment> => {
-    const hydratedContentJson = node.contentJson
-      ? ((await hydrateMentions(node.contentJson as JSONContent)) as PublicComment['contentJson'])
-      : node.contentJson
+    const hydratedContentJson = contentJsonForClient(
+      node.contentJson
+        ? ((await hydrateMentions(node.contentJson as JSONContent)) as PublicComment['contentJson'])
+        : node.contentJson
+    )
     const hydratedReplies = await Promise.all(node.replies.map(hydratePublicCommentTree))
     return { ...node, contentJson: hydratedContentJson, replies: hydratedReplies }
   }
@@ -439,11 +464,13 @@ export async function getPublicPostDetail(
     if (pinnedRow && !pinnedRow.deleted_at) {
       const pinnedContentJson =
         (pinnedRow.content_json as PinnedComment['contentJson'] | null | undefined) ?? null
-      const pinnedHydrated = pinnedContentJson
-        ? ((await hydrateMentions(
-            pinnedContentJson as JSONContent
-          )) as PinnedComment['contentJson'])
-        : null
+      const pinnedHydrated = contentJsonForClient(
+        pinnedContentJson
+          ? ((await hydrateMentions(
+              pinnedContentJson as JSONContent
+            )) as PinnedComment['contentJson'])
+          : null
+      )
       pinnedComment = {
         id: fromUuid('post_comment', pinnedRow.id) as PostCommentId,
         content: pinnedRow.content,
@@ -453,6 +480,8 @@ export async function getPublicPostDetail(
         avatarUrl: resolveAvatarUrl({
           avatarKey: pinnedRow.avatar_key,
           avatarUrl: pinnedRow.avatar_url,
+          userImageKey: pinnedRow.user_image_key,
+          userImage: pinnedRow.user_image,
         }),
         createdAt: ensureDate(pinnedRow.created_at),
         isTeamMember: pinnedRow.is_team_member,
@@ -460,9 +489,11 @@ export async function getPublicPostDetail(
     }
   }
 
-  const hydratedPostContentJson = postResult.contentJson
-    ? ((await hydrateMentions(postResult.contentJson as JSONContent)) as TiptapContent | null)
-    : postResult.contentJson
+  const hydratedPostContentJson = contentJsonForClient(
+    postResult.contentJson
+      ? ((await hydrateMentions(postResult.contentJson as JSONContent)) as TiptapContent | null)
+      : postResult.contentJson
+  )
 
   return {
     id: postResult.id,
@@ -488,5 +519,6 @@ export async function getPublicPostDetail(
     pinnedComment,
     pinnedCommentId: pinnedComment ? (postResult.pinnedCommentId as PostCommentId) : null,
     isCommentsLocked: postResult.isCommentsLocked,
+    moderationState: postResult.postModerationState,
   }
 }

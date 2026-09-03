@@ -36,7 +36,7 @@ export interface WorkingMethodInputs {
   providers: ReadonlyArray<{ id: string; enabled: boolean; configured: boolean }>
   /** The unified workspace sign-in config — `authConfig.oauth`. */
   oauth: Record<string, boolean | undefined>
-  /** Whether SMTP/Resend delivery is wired (gates magic-link usability). */
+  /** Whether an outbound transport is wired (gates magic-link usability). */
   emailConfigured: boolean
   /** Social provider ids to consider (e.g. google, github). */
   socialIds: readonly string[]
@@ -152,10 +152,10 @@ export async function checkIsOnlyWorkingSignInMethod(
    *  (e.g. the upsert path), avoiding a second `listIdentityProviders()`. */
   knownProviders?: IdentityProvider[]
 ): Promise<boolean> {
-  const { getTenantSettings } = await import('@/lib/server/domains/settings/settings.service')
-  const tenant = await getTenantSettings()
+  const { getWorkspaceSettings } = await import('@/lib/server/domains/settings/settings.service')
+  const workspace = await getWorkspaceSettings()
   const inputs = await gatherWorkingMethodInputs(
-    (tenant?.authConfig?.oauth ?? {}) as Record<string, boolean | undefined>,
+    (workspace?.authConfig?.oauth ?? {}) as Record<string, boolean | undefined>,
     knownProviders
   )
   return isOnlyWorkingSignInMethod({ ...inputs, targetIdpId })

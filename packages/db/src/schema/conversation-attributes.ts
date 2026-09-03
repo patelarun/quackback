@@ -15,12 +15,7 @@ import { typeIdWithDefault } from '@quackback/ids/drizzle'
 
 /** Supported field types (immutable after creation). */
 export type ConversationAttributeFieldType =
-  | 'text'
-  | 'number'
-  | 'select'
-  | 'multi_select'
-  | 'checkbox'
-  | 'date'
+  'text' | 'number' | 'select' | 'multi_select' | 'checkbox' | 'date'
 
 /**
  * A select/multi_select option. `id` is the stable stored value; `label` is

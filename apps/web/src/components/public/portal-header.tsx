@@ -4,6 +4,8 @@ import { useTheme } from 'next-themes'
 import { resolvePortalNavItems } from './portal-header-nav'
 import { usePreviewDraft } from './preview-draft-context'
 import { isProductEnabled } from '@/lib/shared/types/settings'
+import { isStatusPagePublished } from '@/lib/shared/status-settings'
+import { isPortalSupportSurfaceEnabled } from '@/lib/shared/support-surfaces'
 import { useIntl, FormattedMessage } from 'react-intl'
 import { cn } from '@/lib/shared/utils'
 import { PortalLanguageMenu } from '@/components/public/portal-language-menu'
@@ -69,24 +71,17 @@ export function PortalHeader({
 
   const flags = settings?.featureFlags
   const feedbackEnabled = isProductEnabled(flags, 'feedback')
-  const helpCenterEnabled =
-    isProductEnabled(flags, 'helpCenter') && !!settings?.helpCenterConfig?.enabled
-  const supportEnabled =
-    !!flags?.supportTickets || (!!flags?.supportInbox && !!settings?.portalConfig?.support?.enabled)
-  // Default true so a workspace that never customized this setting keeps
-  // the changelog tab it had before this toggle existed.
-  const changelogEnabled =
-    isProductEnabled(flags, 'changelog') && (settings?.changelogConfig?.portalTabEnabled ?? true)
-  // Status tab: flag + product enabled + tab toggle. A non-public audience
-  // still needs a signed-in viewer to bother showing the tab; the route
-  // enforces the real per-viewer segment gate (settings here are
-  // workspace-global, not per-viewer).
+  const helpCenterEnabled = isProductEnabled(flags, 'helpCenter')
+  const supportEnabled = isPortalSupportSurfaceEnabled(flags, settings?.portalConfig)
+  const changelogEnabled = isProductEnabled(flags, 'changelog')
+  // Status tab: product flag + published. A non-public audience still needs
+  // a signed-in viewer to bother showing the tab; the route enforces the
+  // real per-viewer segment gate (settings here are workspace-global, not
+  // per-viewer). Hide or reorder the tab in Portal → Navigation.
   const statusAudience = settings?.statusConfig?.audience ?? 'public'
   const statusLoggedIn = !!session?.user && session.user.principalType !== 'anonymous'
   const statusEnabled =
-    isProductEnabled(flags, 'status') &&
-    !!settings?.statusConfig?.enabled &&
-    (settings?.statusConfig?.portalTabEnabled ?? true) &&
+    isStatusPagePublished(flags, settings?.statusConfig) &&
     (statusAudience === 'public' || statusLoggedIn)
   const onHelpPages = pathname === '/hc' || pathname.startsWith('/hc/')
   // Admin-configured help center links render beside the built-in nav on help
@@ -339,7 +334,7 @@ export function PortalHeader({
       {/* Admin Button (visible for team members) */}
       {canAccessAdmin && (
         <Button variant="outline" size="sm" asChild className="ms-1 me-2">
-          <Link to="/admin">
+          <Link to="/admin" search={{}}>
             <ShieldCheckIcon className="me-2 h-4 w-4" />
             <FormattedMessage id="portal.header.auth.admin" defaultMessage="Admin" />
           </Link>
@@ -379,7 +374,7 @@ export function PortalHeader({
             <DropdownMenuSeparator />
             {canAccessAdmin && (
               <DropdownMenuItem asChild>
-                <Link to="/admin">
+                <Link to="/admin" search={{}}>
                   <ShieldCheckIcon className="me-2 h-4 w-4" />
                   <FormattedMessage id="portal.header.auth.admin" defaultMessage="Admin" />
                 </Link>

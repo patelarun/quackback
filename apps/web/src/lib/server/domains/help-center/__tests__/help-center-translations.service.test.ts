@@ -189,7 +189,7 @@ describe('article translations', () => {
       set: vi.fn().mockReturnThis(),
       where: vi.fn().mockReturnThis(),
       returning: vi.fn().mockResolvedValue([]),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line @typescript-eslint/no-explicit-any
     } as any)
 
     await expect(
@@ -252,7 +252,7 @@ describe('category translations', () => {
       values: vi.fn().mockReturnThis(),
       onConflictDoUpdate: vi.fn().mockReturnThis(),
       returning: chainReturning,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line @typescript-eslint/no-explicit-any
     } as any)
 
     const result = await upsertCategoryTranslation({

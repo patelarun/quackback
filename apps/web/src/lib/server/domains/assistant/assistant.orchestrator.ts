@@ -34,7 +34,7 @@ import {
 } from '@/lib/server/domains/assistant/assistant-activity-snapshot'
 import { enforceAiTokenBudget } from '@/lib/server/domains/settings/tier-enforce'
 import { TierLimitError } from '@/lib/server/errors/tier-limit-error'
-import { isFeatureEnabled } from '@/lib/server/domains/settings/settings.service'
+import { EntitlementRequiredError } from '@/lib/server/errors/entitlement-error'
 import { getLiveWorkflowReferencedAttributeKeys } from '@/lib/server/domains/workflows/workflow.service'
 import { classifyConversationAttributes } from '@/lib/server/domains/conversation-attributes/ai-classification.service'
 import {
@@ -54,23 +54,29 @@ import {
   activityToStatus,
 } from '.'
 import { logger } from '@/lib/server/logger'
+import { WorkspaceKeyedCache } from '@/lib/server/workspaces/workspace-keyed'
 
 const log = logger.child({ component: 'assistant-orchestrator' })
 
 // The assistant's service principal is immutable once provisioned, so its id is
-// memoized in-process to skip the find-or-create round trip on every turn.
-let memoizedAssistantPrincipalId: PrincipalId | null = null
+// memoized to skip the find-or-create round trip on every turn — but per workspace.
+// This id is written as the author foreign key on every message the assistant
+// sends, so one workspace's id memoized process-wide is another workspace's rows
+// pointing at a principal that does not exist in its database.
+const memoizedAssistantPrincipalId = new WorkspaceKeyedCache<PrincipalId>(256)
+const ASSISTANT_PRINCIPAL_KEY = 'principal-id'
 
 async function ensureAssistantPrincipalId(): Promise<PrincipalId> {
-  if (memoizedAssistantPrincipalId) return memoizedAssistantPrincipalId
+  const memoized = memoizedAssistantPrincipalId.get(ASSISTANT_PRINCIPAL_KEY)
+  if (memoized) return memoized
   const principal = await ensureAssistantPrincipal()
-  memoizedAssistantPrincipalId = principal.id
-  return memoizedAssistantPrincipalId
+  memoizedAssistantPrincipalId.set(ASSISTANT_PRINCIPAL_KEY, principal.id)
+  return principal.id
 }
 
-/** Test-only: clear the in-process principal-id memo between cases. */
+/** Test-only: clear the principal-id memo between cases. */
 export function __resetAssistantPrincipalMemo(): void {
-  memoizedAssistantPrincipalId = null
+  memoizedAssistantPrincipalId.clear()
 }
 
 /**
@@ -86,7 +92,6 @@ export function __resetAssistantPrincipalMemo(): void {
  */
 async function triggerLiveAttributeRecheck(conversationId: ConversationId): Promise<void> {
   try {
-    if (!(await isFeatureEnabled('inboxAi'))) return
     const keys = await getLiveWorkflowReferencedAttributeKeys()
     if (keys.size === 0) return
     await classifyConversationAttributes(conversationId, {
@@ -113,6 +118,50 @@ async function triggerLiveAttributeRecheck(conversationId: ConversationId): Prom
  * case ever passes this; every other caller (the ordinary customer-message
  * turn in conversation.service.ts) omits it.
  */
+export type AssistantTurnEligibility = 'eligible' | 'declined'
+
+/**
+ * Cheap gates the orchestrator would exit on before spending on the model.
+ * A workflow "Let Quinn answer" node uses this so a decline can resume the
+ * escalated edge immediately instead of parking forever.
+ */
+export async function previewAssistantTurnForConversation(
+  conversationId: ConversationId,
+  opts?: { surface?: 'widget' | 'workflow_step' }
+): Promise<AssistantTurnEligibility> {
+  if (!isAssistantConfigured()) return 'declined'
+  try {
+    const { requireEntitlement } = await import('@/lib/server/domains/settings/cloud/entitlements')
+    await requireEntitlement('aiAssistant')
+  } catch (err) {
+    if (err instanceof EntitlementRequiredError) return 'declined'
+    throw err
+  }
+  try {
+    await enforceAiTokenBudget()
+  } catch (err) {
+    if (err instanceof TierLimitError) return 'declined'
+    throw err
+  }
+  const { getMessengerConfig } = await import('@/lib/server/domains/settings/settings.widget')
+  const messenger = await getMessengerConfig()
+  if (messenger.assistant?.respond !== true) return 'declined'
+
+  const [assistantPrincipalId, threadRows] = await Promise.all([
+    ensureAssistantPrincipalId(),
+    loadConversationThread(conversationId),
+  ])
+  const messages = mapRowsToThreadMessages(threadRows, assistantPrincipalId)
+  if (messages.length === 0) return 'declined'
+  if (!respondEligible(messages)) return 'declined'
+
+  if ((opts?.surface ?? 'widget') === 'widget') {
+    const latest = await getLatestInvolvement(conversationId)
+    if (latest?.status === 'handed_off') return 'declined'
+  }
+  return 'eligible'
+}
+
 export async function runAssistantTurnForConversation(
   conversationId: ConversationId,
   opts?: {
@@ -121,6 +170,17 @@ export async function runAssistantTurnForConversation(
   }
 ): Promise<void> {
   if (!isAssistantConfigured()) return
+
+  try {
+    const { requireEntitlement } = await import('@/lib/server/domains/settings/cloud/entitlements')
+    await requireEntitlement('aiAssistant')
+  } catch (err) {
+    if (err instanceof EntitlementRequiredError) {
+      log.info({ conversationId }, 'assistant turn skipped: ai assistant not entitled')
+      return
+    }
+    throw err
+  }
 
   try {
     await enforceAiTokenBudget()
@@ -202,11 +262,11 @@ export async function runAssistantTurnForConversation(
   // reply.
   let previewSilent = false
   // Coalesce delta publishes: each carries the FULL answer so far, so publishing
-  // on every fragment is O(N^2) bytes + one Redis publish per token. Throttle to
+  // on every fragment is O(N^2) bytes + one realtime publish per token. Throttle to
   // a smooth cadence — a dropped tail is harmless since the persisted reply is the
   // ground truth that replaces the buffer moments later.
   let lastDeltaAt = 0
-  // Mirrored into Redis on every publish (and cleared when the turn ends, in
+  // Mirrored into the KV cache on every publish (and cleared when the turn ends, in
   // the finally below) so a subscriber that connects mid-turn can replay the
   // current state instead of missing it — see assistant-activity-snapshot.ts.
   const publishActivity = (status: 'thinking' | 'searching_kb' | 'reviewing_conversation') => {
@@ -304,9 +364,12 @@ export async function runAssistantTurnForConversation(
     // (today `internal`, the copilot leak gate, and `updatedAt`, the copilot
     // freshness line) can never leak into storage — it simply isn't projected,
     // no per-field strip to forget.
-    const persistedCitations = result.citations.map(
-      (c): ConversationMessageCitation => ({ type: c.type, id: c.id, title: c.title, url: c.url })
-    )
+    const persistedCitations = result.citations.map((c): ConversationMessageCitation => ({
+      type: c.type,
+      id: c.id,
+      title: c.title,
+      url: c.url,
+    }))
     await appendAssistantReply(conversationId, result.text, author, {
       waiting: result.escalation?.mode === 'handoff',
       citations: persistedCitations,

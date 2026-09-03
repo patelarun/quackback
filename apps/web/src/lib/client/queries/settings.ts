@@ -13,6 +13,8 @@ import {
   fetchWidgetConfig,
   fetchWidgetSecret,
   fetchWorkflowAbandonedAutoCloseFn,
+  fetchWorkflowCloseSpamFn,
+  fetchDefaultSlaPolicyFn,
   getSpamFilterConfigFn,
 } from '@/lib/server/functions/settings'
 import { getHelpCenterConfigFn } from '@/lib/server/functions/help-center-settings'
@@ -32,8 +34,6 @@ import { listRolesFn } from '@/lib/server/functions/roles'
 import {
   fetchSettingsLogoData,
   fetchSettingsHeaderLogoData,
-  fetchSettingsPortalOgImageData,
-  fetchSettingsFaviconData,
 } from '@/lib/server/functions/settings-utils'
 
 const STALE_TIME_SHORT = 30 * 1000
@@ -87,20 +87,6 @@ export const settingsQueries = {
     queryOptions({
       queryKey: ['settings', 'headerLogo'],
       queryFn: fetchSettingsHeaderLogoData,
-      staleTime: STALE_TIME_LONG,
-    }),
-
-  portalOgImage: () =>
-    queryOptions({
-      queryKey: ['settings', 'portalOgImage'],
-      queryFn: fetchSettingsPortalOgImageData,
-      staleTime: STALE_TIME_LONG,
-    }),
-
-  favicon: () =>
-    queryOptions({
-      queryKey: ['settings', 'favicon'],
-      queryFn: fetchSettingsFaviconData,
       staleTime: STALE_TIME_LONG,
     }),
 
@@ -223,6 +209,20 @@ export const settingsQueries = {
     queryOptions({
       queryKey: ['settings', 'workflowAbandonedAutoClose'],
       queryFn: fetchWorkflowAbandonedAutoCloseFn,
+      staleTime: STALE_TIME_MEDIUM,
+    }),
+
+  workflowCloseSpam: () =>
+    queryOptions({
+      queryKey: ['settings', 'workflowCloseSpam'],
+      queryFn: fetchWorkflowCloseSpamFn,
+      staleTime: STALE_TIME_MEDIUM,
+    }),
+
+  defaultSlaPolicy: () =>
+    queryOptions({
+      queryKey: ['settings', 'defaultSlaPolicy'],
+      queryFn: fetchDefaultSlaPolicyFn,
       staleTime: STALE_TIME_MEDIUM,
     }),
 

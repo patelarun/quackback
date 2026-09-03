@@ -11,8 +11,7 @@ import type { ConversationId, TicketId } from '@quackback/ids'
 import type { Actor } from '@/lib/server/policy/types'
 
 export type MessageParent =
-  | { kind: 'ticket'; ticketId: TicketId }
-  | { kind: 'conversation'; conversationId: ConversationId }
+  { kind: 'ticket'; ticketId: TicketId } | { kind: 'conversation'; conversationId: ConversationId }
 
 /**
  * Resolve `message`'s parent. For a ticket-parented message, authorizes the

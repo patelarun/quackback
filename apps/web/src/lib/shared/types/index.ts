@@ -25,7 +25,12 @@ export type {
 } from './inbox'
 
 // Post domain types
-export type { CreatePostInput, AdminEditPostInput, PublicPostListItem } from './posts'
+export type {
+  CreatePostInput,
+  AdminEditPostInput,
+  PublicPostListItem,
+  InboxFilterCounts,
+} from './posts'
 
 // User domain types
 export type {
@@ -64,8 +69,8 @@ export type { ApiKey } from './api-keys'
 export type { FeatureFlags, ProductId } from './settings'
 export {
   DEFAULT_FEATURE_FLAGS,
-  FEATURE_FLAG_REGISTRY,
-  LAB_SECTIONS,
+  featureFlagsForUseCase,
+  enableFlagsForUseCase,
   PRODUCT_DEFINITIONS,
   getFirstEnabledAdminProductPath,
   getProductFlagUpdate,

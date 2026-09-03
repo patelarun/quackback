@@ -38,12 +38,11 @@ import { normalizePrincipalType } from '@/lib/server/functions/auth-helpers'
 import type { Actor } from '@/lib/server/policy/types'
 import { createSseStream, SSE_RESPONSE_HEADERS } from '@/lib/server/utils/sse'
 import { streamLimiter } from '@/lib/server/realtime/stream-connection-limit'
+import { startStreamHeartbeat } from '@/lib/server/realtime/stream-heartbeat'
 import { getClientIp } from '@/lib/server/domains/api/rate-limit'
 import { logger } from '@/lib/server/logger'
 
 const log = logger.child({ component: 'chat-stream' })
-
-const HEARTBEAT_MS = 20_000
 
 interface StreamPrincipal {
   principalId: PrincipalId
@@ -206,8 +205,8 @@ export const Route = createFileRoute('/api/chat/stream')({
         }
 
         const isAgentStream = scope === 'inbox' || scope === 'presence'
-        // Unique per stream so presence is tracked per-connection in Redis
-        // (cross-replica), not by a per-process count.
+        // Unique per stream so presence is tracked per-connection in the shared
+        // Postgres presence store (cross-replica), not by a per-process count.
         const streamId = crypto.randomUUID()
         const lastEventId = request.headers.get('last-event-id')
 
@@ -222,14 +221,15 @@ export const Route = createFileRoute('/api/chat/stream')({
         const sse = createSseStream({ onCancel: () => cleanup() })
         let cleanedUp = false
         let presenceMarked = false
-        let heartbeat: ReturnType<typeof setInterval> | null = null
+        let heartbeat: { stop: () => void } | null = null
         let unsubscribe: (() => Promise<void>) | null = null
 
         cleanup = async () => {
           if (cleanedUp) return
           cleanedUp = true
+          heartbeat?.stop()
+          heartbeat = null
           sse.close()
-          if (heartbeat) clearInterval(heartbeat)
           if (unsubscribe) {
             try {
               await unsubscribe()
@@ -241,8 +241,8 @@ export const Route = createFileRoute('/api/chat/stream')({
             const wentOffline = await clearPresence(me.principalId, streamId, isAgentStream)
             // When an inbox agent's last stream closes cluster-wide, return
             // their unanswered conversations to the queue so they aren't
-            // stranded. wentOffline is now Redis-backed, so an agent still
-            // live on another replica is not treated as offline here.
+            // stranded. wentOffline reads the shared presence store, so an agent
+            // still live on another replica is not treated as offline here.
             if (wentOffline && isAgentStream) {
               const { requeueUnansweredOnAgentOffline } =
                 await import('@/lib/server/domains/conversation/conversation.service')
@@ -299,8 +299,8 @@ export const Route = createFileRoute('/api/chat/stream')({
             // where the stream opens after the turn already started) would
             // otherwise miss every "thinking" / "searching" frame published
             // before it subscribed. Kicked off AFTER subscribing (no gap) but
-            // awaited past the backfill below so the Redis read overlaps the
-            // DB round trips; sent before the live-buffer flush so an activity
+            // awaited past the backfill below so the snapshot read overlaps the
+            // backfill round trips; sent before the live-buffer flush so an activity
             // frame that arrived during backfill is flushed after it and wins.
             // Only for a conversation-scoped stream — the trace is never
             // inbox-wide.
@@ -380,10 +380,23 @@ export const Route = createFileRoute('/api/chat/stream')({
               sse.sendRaw(frame)
             }
 
-            heartbeat = setInterval(() => {
-              sse.sendRaw(`: ping\n\n`)
-              void refreshPresence(me.principalId, streamId, isAgentStream)
-            }, HEARTBEAT_MS)
+            // Presence writes (and, for channel subscribers, a session-mode
+            // LISTEN) pin the tenant compute. An abandoned tab that never
+            // aborts the request would otherwise poll forever; the heartbeat
+            // times out when pings stop being consumed.
+            heartbeat = startStreamHeartbeat({
+              sendPing: () => {
+                if (request.signal.aborted || sse.isClosed()) return 'closed'
+                return sse.heartbeatPing()
+              },
+              onAlive: () => {
+                void refreshPresence(me.principalId, streamId, isAgentStream)
+              },
+              onTimeout: () => {
+                log.info({ stream_id: streamId }, 'chat stream heartbeat timed out — tearing down')
+                void cleanup()
+              },
+            })
 
             // A late abort (during the awaits above) must still tear down.
             if (request.signal.aborted) await cleanup()

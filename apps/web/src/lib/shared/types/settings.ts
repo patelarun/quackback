@@ -4,9 +4,9 @@
  * Re-exported from the server domain for architectural compliance — type-only
  * imports are erased at compile time and never affect the bundle.
  *
- * Note: FEATURE_FLAG_REGISTRY and DEFAULT_PORTAL_CONFIG are runtime constants
- * also re-exported here because settings.types has no DB dependencies and the
- * constants are needed in route files and components.
+ * Note: DEFAULT_PORTAL_CONFIG is a runtime constant also re-exported here
+ * because settings.types has no DB dependencies and the constants are needed
+ * in route files and components.
  */
 
 export type {
@@ -16,7 +16,7 @@ export type {
   PortalNavItemType,
   PortalWelcomeCard,
   HeaderDisplayMode,
-  TenantSettings,
+  WorkspaceSettings,
   HelpCenterConfig,
   HelpCenterHeaderLink,
   HelpCenterDomainConfig,
@@ -28,7 +28,7 @@ export type {
   VerifiedDomain,
 } from '@/lib/server/domains/settings'
 
-// FeatureFlags and FEATURE_FLAG_REGISTRY live only in settings.types (not barrel-exported)
+// FeatureFlags lives only in settings.types (not barrel-exported)
 export type {
   FeatureFlags,
   ProductId,
@@ -42,8 +42,8 @@ export type {
 // Runtime constants — safe because settings.types has no DB dependencies
 export {
   DEFAULT_FEATURE_FLAGS,
-  FEATURE_FLAG_REGISTRY,
-  LAB_SECTIONS,
+  featureFlagsForUseCase,
+  enableFlagsForUseCase,
   PRODUCT_DEFINITIONS,
   getFirstEnabledAdminProductPath,
   getProductFlagUpdate,
@@ -51,5 +51,5 @@ export {
   DEFAULT_AUTH_CONFIG,
   DEFAULT_PORTAL_CONFIG,
   DEFAULT_WIDGET_HOME_CARDS,
-  PORTAL_WELCOME_CARD_TITLE_MAX,
+  EMPTY_WELCOME_BODY,
 } from '@/lib/server/domains/settings/settings.types'

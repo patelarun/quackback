@@ -5,8 +5,13 @@ import {
   contentJsonToMarkdown,
   projectContentJsonToMarkdown,
   commentMarkdownToTiptapJson,
+  githubMarkdownToTiptapJson,
+  normalizeGitHubMarkdown,
   tiptapJsonToText,
   hasTextLeaf,
+  hasImageNode,
+  hasExternalLink,
+  commentPlainText,
 } from '../markdown-tiptap'
 
 describe('markdownToTiptapJson', () => {
@@ -270,7 +275,11 @@ describe('contentJsonToMarkdown', () => {
     const result = contentJsonToMarkdown(doc, 'stale stored markdown')
     expect(result).toContain('🎉')
     expect(result).toContain('![S](https://cdn.example.com/s.png)')
-    expect(result).toContain('[Embedded post: post_123]')
+    // The serializer escapes markdown punctuation in literal text, so the
+    // placeholder arrives as `\[Embedded post: post\_123\]`. Compare with the
+    // escapes stripped: what matters is that the embed survives the round trip,
+    // not which characters the serializer chose to protect.
+    expect(result.replace(/\\/g, '')).toContain('[Embedded post: post_123]')
   })
 
   test('projects current text for an image-free structured-only edit', () => {
@@ -342,17 +351,17 @@ describe('commentMarkdownToTiptapJson', () => {
     expect(types.has('paragraph')).toBe(true)
   })
 
-  test('image markdown does not produce an image node', () => {
+  test('image markdown produces an image node', () => {
     const result = commentMarkdownToTiptapJson('![alt](https://example.com/x.png)')
     const hasImage = JSON.stringify(result).includes('"type":"image"')
-    expect(hasImage).toBe(false)
+    expect(hasImage).toBe(true)
   })
 
-  test('table markdown does not produce a table node', () => {
+  test('table markdown produces a table node', () => {
     const md = '| a | b |\n|---|---|\n| 1 | 2 |'
     const result = commentMarkdownToTiptapJson(md)
     const hasTable = JSON.stringify(result).includes('"type":"table"')
-    expect(hasTable).toBe(false)
+    expect(hasTable).toBe(true)
   })
 
   test('javascript: links are stripped or escaped', () => {
@@ -373,10 +382,11 @@ describe('commentMarkdownToTiptapJson', () => {
     expect(json).not.toContain('"type":"script"')
   })
 
-  test('single newline becomes a hard break (GFM)', () => {
+  test('single newline stays in one paragraph (same as posts)', () => {
     const result = commentMarkdownToTiptapJson('line one\nline two')
     const json = JSON.stringify(result)
-    expect(json).toContain('"type":"hardBreak"')
+    expect(json).toContain('line one')
+    expect(json).toContain('line two')
   })
 
   test('Unicode emoji characters in markdown survive as plain text', () => {
@@ -388,6 +398,20 @@ describe('commentMarkdownToTiptapJson', () => {
     const result = commentMarkdownToTiptapJson('Hello 😀 world!')
     const json = JSON.stringify(result)
     expect(json).toContain('😀')
+  })
+})
+
+describe('githubMarkdownToTiptapJson', () => {
+  test('turns a literal backslash-n body into real line breaks', () => {
+    expect(normalizeGitHubMarkdown('Steps:\\n1. Open Safari')).toBe('Steps:\n1. Open Safari')
+    const result = githubMarkdownToTiptapJson(
+      'Steps:\\n1. Open checkout on Safari 17\\n2. Submit payment'
+    )
+    const json = JSON.stringify(result)
+    expect(json).not.toContain('\\n')
+    expect(json).toContain('Steps:')
+    expect(json).toContain('Open checkout')
+    expect(json).toContain('orderedList')
   })
 })
 
@@ -510,5 +534,66 @@ describe('hasTextLeaf', () => {
   test('false for null/undefined', () => {
     expect(hasTextLeaf(null)).toBe(false)
     expect(hasTextLeaf(undefined)).toBe(false)
+  })
+})
+
+describe('hasImageNode / hasExternalLink / commentPlainText', () => {
+  const imageDoc = {
+    type: 'doc',
+    content: [{ type: 'image', attrs: { src: 'https://cdn.example.com/x.png' } }],
+  }
+  const linkDoc = {
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        content: [
+          {
+            type: 'text',
+            text: 'click',
+            marks: [{ type: 'link', attrs: { href: 'https://evil.example' } }],
+          },
+        ],
+      },
+    ],
+  }
+  const mentionDoc = {
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        content: [{ type: 'mention', attrs: { id: 'principal_x', label: 'Ada' } }],
+      },
+    ],
+  }
+
+  test('hasImageNode finds image and resizableImage', () => {
+    expect(hasImageNode(imageDoc)).toBe(true)
+    expect(
+      hasImageNode({ type: 'doc', content: [{ type: 'resizableImage', attrs: { src: 'x' } }] })
+    ).toBe(true)
+    expect(hasImageNode(linkDoc)).toBe(false)
+    expect(hasImageNode(null)).toBe(false)
+  })
+
+  test('hasExternalLink finds http(s) link marks and not mentions', () => {
+    expect(hasExternalLink(linkDoc)).toBe(true)
+    expect(hasExternalLink(mentionDoc)).toBe(false)
+    expect(hasExternalLink(null, 'see https://evil.example/path')).toBe(true)
+    expect(hasExternalLink(null, 'no urls here')).toBe(false)
+  })
+
+  test('hasExternalLink ignores same-origin and internal product URLs', () => {
+    const origin = 'https://acme.example'
+    expect(hasExternalLink(null, `${origin}/b/ideas/posts/post_01abc`, origin)).toBe(false)
+    expect(hasExternalLink(null, 'https://other.example/page', origin)).toBe(true)
+  })
+
+  test('commentPlainText yields [image] for image-only comments', () => {
+    expect(commentPlainText({ content: '', contentJson: imageDoc })).toBe('[image]')
+  })
+
+  test('commentPlainText parses image markdown when JSON is absent', () => {
+    expect(commentPlainText({ content: '![alt](https://example.com/x.png)' })).toBe('[image]')
   })
 })

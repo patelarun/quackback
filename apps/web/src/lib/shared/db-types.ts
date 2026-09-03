@@ -13,6 +13,8 @@
 import {
   getSetupState as getSetupStateFromDb,
   isOnboardingComplete as isOnboardingCompleteFromDb,
+  needsActivationHandoff as needsActivationHandoffFromDb,
+  needsCloudOnboardingWizard as needsCloudOnboardingWizardFromDb,
   normalizeOnboardingOutcome as normalizeOnboardingOutcomeFromDb,
   type SetupState,
   type UseCaseType,
@@ -33,6 +35,7 @@ export {
   CONVERSATION_END_REASONS,
   CONVERSATION_SPAM_FILED_BY,
   CONVERSATION_PRIORITIES,
+  CHANNELS,
   TEAM_ASSIGNMENT_METHODS,
   TICKET_TYPES,
   TICKET_STATUS_CATEGORIES,
@@ -45,6 +48,7 @@ export {
 } from '@quackback/db/types'
 export type {
   AccessTier,
+  Channel,
   BoardAccess,
   ModerationRuleValue,
   ConversationEndReason,
@@ -76,6 +80,14 @@ export type {
   // Structural twin of the assistant config schema; a drift tripwire in
   // lib/shared/assistant/__tests__/config.test.ts asserts the two agree.
   StoredAssistantConfig,
+  // Structural twin of CloudConfig; a drift tripwire in
+  // lib/server/domains/settings/cloud/__tests__/cloud-stored-shape.test.ts
+  // asserts the two agree.
+  StoredCloudConfig,
+  StoredBillingProjection,
+  StoredProjectedLimits,
+  StoredCloudIdentityProjection,
+  StoredCloudCustomDomain,
 } from '@quackback/db/schema'
 
 // Runtime exports used in client components.
@@ -88,6 +100,14 @@ export function getSetupState(setupStateJson: string | null): SetupState | null 
 
 export function isOnboardingComplete(setupState: SetupState | null): boolean {
   return isOnboardingCompleteFromDb(setupState)
+}
+
+export function needsActivationHandoff(setupState: SetupState | null): boolean {
+  return needsActivationHandoffFromDb(setupState)
+}
+
+export function needsCloudOnboardingWizard(setupState: SetupState | null): boolean {
+  return needsCloudOnboardingWizardFromDb(setupState)
 }
 
 /**

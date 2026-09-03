@@ -63,7 +63,7 @@ vi.mock('@/lib/server/policy/permissions', () => ({
 }))
 
 // Remaining imports of public-posts.ts — mocked only so the module loads.
-vi.mock('@/lib/server/functions/workspace', () => ({ getSettings: vi.fn(), readSettings: vi.fn() }))
+vi.mock('@/lib/server/functions/workspace', () => ({ getSettings: vi.fn() }))
 vi.mock('@/lib/server/domains/settings/settings.types', () => ({
   workspaceAllowsAnonymous: vi.fn().mockReturnValue(true),
 }))

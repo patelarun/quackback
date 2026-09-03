@@ -24,7 +24,7 @@ import { recordAuditEvent } from '@/lib/server/audit/log'
 import { hashRecoveryCode, verifyRecoveryCode } from '@/lib/server/auth/recovery-codes'
 import { mintMagicLinkUrl } from '@/lib/server/auth/magic-link-mint'
 import { getClientIp } from '@/lib/server/domains/api/rate-limit'
-import { bucketRetryAfter, incrementBucket } from '@/lib/server/utils/redis-rate-bucket'
+import { bucketRetryAfter, incrementBucket } from '@/lib/server/utils/rate-bucket'
 import { config } from '@/lib/server/config'
 import { logger } from '@/lib/server/logger'
 
@@ -41,7 +41,7 @@ type ConsumeResult = { ok: true; redirectUrl: string } | { ok: false; error: str
  * 5 attempts per 5 minutes per (ip, email). Both success and failure
  * count toward the cap, matching GitHub / Linear practice. Combined
  * with the 60-bit recovery-code entropy this makes blind brute-force
- * impractical. Fail-open on Redis errors via the shared bucket
+ * impractical. Fail-open on store errors via the shared bucket
  * primitive.
  */
 const RECOVERY_ATTEMPT_LIMIT = 5
@@ -214,12 +214,12 @@ async function sendRecoveryCodeAlert(opts: {
       return
     }
 
-    const { getTenantSettings } = await import('@/lib/server/domains/settings/settings.service')
-    const tenant = await getTenantSettings()
+    const { getWorkspaceSettings } = await import('@/lib/server/domains/settings/settings.service')
+    const workspace = await getWorkspaceSettings()
 
     await sendRecoveryCodeUsedEmail({
       to,
-      workspaceName: tenant?.settings?.name,
+      workspaceName: workspace?.settings?.name,
       ipAddress: getClientIp(opts.headers) || null,
       userAgent: opts.headers.get('user-agent'),
       occurredAt: opts.occurredAt.toUTCString(),

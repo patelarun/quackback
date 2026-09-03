@@ -40,8 +40,7 @@ import { CUSTOM_ROLE_BADGE } from './role-ui'
 type RoleWithMeta = Awaited<ReturnType<typeof listRolesFn>>['roles'][number]
 
 type RoleEditorProps =
-  | { mode: 'edit'; roleId: string }
-  | { mode: 'create'; duplicateFromId?: string }
+  { mode: 'edit'; roleId: string } | { mode: 'create'; duplicateFromId?: string }
 
 const ROLES_TAB = { to: '/admin/settings/members', search: { tab: 'roles' } } as const
 

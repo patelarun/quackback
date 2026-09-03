@@ -230,8 +230,7 @@ describe('summarizeConversationOnClose', () => {
 
     expect(mockLoadConversationThread).toHaveBeenCalledWith(CONVERSATION_ID)
     const optsArg = mockLoadConversationThread.mock.calls[0]?.[1] as
-      | { includeInternal?: boolean }
-      | undefined
+      { includeInternal?: boolean } | undefined
     expect(optsArg?.includeInternal).not.toBe(true)
   })
 

@@ -45,7 +45,7 @@ const tsvector = customType<{ data: string }>({
 /**
  * Support-inbox conversations — one thread between a visitor (anonymous or
  * identified) and the team, arriving via any channel (messenger, email, ...).
- * Scoped to the tenant by the database connection (database-per-tenant); no
+ * Scoped to the workspace by the database connection (database-per-workspace); no
  * workspace column.
  */
 export const conversations = pgTable(
@@ -197,6 +197,14 @@ export const conversations = pgTable(
     index('conversations_snoozed_until_idx')
       .on(table.snoozedUntil)
       .where(sql`status = 'snoozed' AND snoozed_until IS NOT NULL`),
+    // Spam retention sweep (conversation.spam-retention.ts): the same shape as
+    // the snooze wake above, over the spam-filed candidate set. Ordered on the
+    // FILING instant, which is the clock the retention window is measured from;
+    // restore-from-spam clears end_reason, so a released thread leaves this
+    // index rather than lingering in it (migration 0252).
+    index('conversations_spam_resolved_at_idx')
+      .on(table.resolvedAt)
+      .where(sql`status = 'closed' AND end_reason = 'spam'`),
     // SLA sweep passes (sla.service.ts's sweepOverdueSlaBreaches +
     // sweepApproachingSlaBreaches + sweepSlaBreachTriggers, via the shared
     // scanAndClaimSlaClocks) all scan on `sla_applied IS NOT NULL` plus "at
@@ -357,6 +365,10 @@ export const conversationMessages = pgTable(
     uniqueIndex('conversation_messages_email_message_id_idx')
       .using('btree', sql`(metadata ->> 'emailMessageId')`)
       .where(sql`(metadata ->> 'emailMessageId') IS NOT NULL`),
+    // Inbound GitHub comment dedupe: one message per REST comment id.
+    uniqueIndex('conversation_messages_github_comment_id_idx')
+      .using('btree', sql`(metadata ->> 'githubCommentId')`)
+      .where(sql`(metadata ->> 'githubCommentId') IS NOT NULL`),
     // Inbound-webhook dedupe: one external-status system note per (ticket,
     // delivery) — a redelivered tracker webhook no-ops instead of double-noting
     // (same idiom as emailMessageId above; one delivery fans to many tickets,

@@ -24,7 +24,7 @@
  * mocked dependency graph and checking the side-effect tape.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { makeAuthConfig, makeTenant, makeVerifiedDomain } from './_helpers'
+import { makeAuthConfig, makeWorkspace, makeVerifiedDomain } from './_helpers'
 
 // Better-Auth's middleware factory is identity for the test — `hooksAfter`
 // becomes the inner async function directly callable.
@@ -44,7 +44,17 @@ const mockPrincipalFindFirst = vi.fn(async () =>
 const mockUserFindFirst = vi.fn()
 const mockAccountFindFirst = vi.fn()
 const mockTxPrincipalFindFirst = vi.fn()
-const mockTxExecute = vi.fn(async () => undefined)
+/**
+ * The transaction's executor answers BY STATEMENT, as the real one does: the
+ * advisory lock returns nothing, the provenance read returns a settings row.
+ * `stamp: null` is an install nobody provisioned, which is the workspace shape
+ * every case in this file is about.
+ */
+const mockTxExecute = vi.fn(async (statement?: { strings?: TemplateStringsArray }) => {
+  const text = (statement?.strings ?? []).join('')
+  if (!text.includes('cloud_workspace_key')) return undefined
+  return [{ stamp_column: null, metadata: null }] as unknown as undefined
+})
 const mockTxUpdateSet = vi.fn((patch: { role?: 'admin' | 'member' | 'user' }) => {
   if (patch.role) state.role = patch.role
 })
@@ -53,7 +63,7 @@ const mockUpdateSet = vi.fn((patch: { role?: 'admin' | 'member' | 'user' }) => {
 })
 const mockSessionDelete = vi.fn(async () => undefined)
 const mockDelete = vi.fn()
-const mockGetTenantSettings = vi.fn()
+const mockGetWorkspaceSettings = vi.fn()
 const mockGetPublicPortalConfig = vi.fn()
 const mockRecordAuditEvent = vi.fn(async (_spec: unknown) => undefined)
 const mockDeleteSessionCookie = vi.fn((_ctx: unknown) => undefined)
@@ -107,7 +117,7 @@ vi.mock('@/lib/server/db', () => {
 })
 
 vi.mock('@/lib/server/domains/settings/settings.service', () => ({
-  getTenantSettings: (...a: unknown[]) => mockGetTenantSettings(...a),
+  getWorkspaceSettings: (...a: unknown[]) => mockGetWorkspaceSettings(...a),
   getPublicPortalConfig: (...a: unknown[]) => mockGetPublicPortalConfig(...a),
 }))
 
@@ -139,12 +149,12 @@ vi.mock('@/lib/server/domains/settings/tier-limits.service', () => ({
 
 // Task 12/13: hooksAfter loads the provider registry on callback paths and
 // threads it to the after-hooks. Mock both; derive the single owning
-// provider 'sso' from the tenant's verified domains AND its ssoOidc config so
+// provider 'sso' from the workspace's verified domains AND its ssoOidc config so
 // the enforced / not-enforced scenarios carry through to
 // handleCallbackPolicyCleanup, and so handleAutoProvisionAfter reads the
 // provider's per-provider provisioning config (autoCreateUsers / role).
 const mockListIdentityProviders = vi.fn(async () => {
-  const tenant = (await mockGetTenantSettings()) as
+  const workspace = (await mockGetWorkspaceSettings()) as
     | {
         verifiedDomains?: unknown[]
         authConfig?: {
@@ -157,7 +167,7 @@ const mockListIdentityProviders = vi.fn(async () => {
         }
       }
     | undefined
-  const sso = tenant?.authConfig?.ssoOidc
+  const sso = workspace?.authConfig?.ssoOidc
   return [
     {
       id: 'idp_sso',
@@ -165,8 +175,8 @@ const mockListIdentityProviders = vi.fn(async () => {
       enabled: sso?.enabled !== false,
       autoCreateUsers: sso?.autoCreateUsers ?? true,
       autoProvisionRole: sso?.autoProvisionRole ?? null,
-      attributeMapping: sso?.attributeMapping ?? null,
-      domains: tenant?.verifiedDomains ?? [],
+      claimMapping: sso?.attributeMapping ? { role: sso.attributeMapping } : null,
+      domains: workspace?.verifiedDomains ?? [],
     },
   ]
 })
@@ -210,8 +220,8 @@ beforeEach(() => {
 
 describe('hooksAfter — successful SSO sign-in by brand-new verified-domain user', () => {
   beforeEach(() => {
-    mockGetTenantSettings.mockResolvedValue(
-      makeTenant({
+    mockGetWorkspaceSettings.mockResolvedValue(
+      makeWorkspace({
         authConfig: makeAuthConfig({
           ssoOidc: { autoCreateUsers: true, autoProvisionRole: 'member' },
         }),
@@ -253,8 +263,8 @@ describe('hooksAfter — successful SSO sign-in by brand-new verified-domain use
 
 describe('hooksAfter — bootstrap precedes auto-provision', () => {
   it('promotes the first SSO user to admin even when autoProvisionRole="member"', async () => {
-    mockGetTenantSettings.mockResolvedValue(
-      makeTenant({
+    mockGetWorkspaceSettings.mockResolvedValue(
+      makeWorkspace({
         authConfig: makeAuthConfig({
           ssoOidc: { autoCreateUsers: true, autoProvisionRole: 'member' },
         }),
@@ -286,8 +296,8 @@ describe('hooksAfter — short-circuit on blocked sign-in', () => {
   it('skips the success audit when cleanup throws (admin tries credential at enforced verified domain)', async () => {
     // Per-domain enforcement. Admin tried password at a verified-domain
     // email (post-session compensating cleanup path via /sign-in/social).
-    mockGetTenantSettings.mockResolvedValue(
-      makeTenant({
+    mockGetWorkspaceSettings.mockResolvedValue(
+      makeWorkspace({
         authConfig: makeAuthConfig({ ssoOidc: { enabled: true } }),
         verifiedDomains: [makeVerifiedDomain('acme.com', true)],
       })

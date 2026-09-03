@@ -3,7 +3,7 @@
  * response headers, the JSON error shape, and the per-IP rate limit.
  */
 import { getClientIp } from '@/lib/server/domains/api/rate-limit'
-import { incrementBucket, bucketRetryAfter } from '@/lib/server/utils/redis-rate-bucket'
+import { incrementBucket, bucketRetryAfter } from '@/lib/server/utils/rate-bucket'
 import { createHash } from 'node:crypto'
 
 /** Every public widget response: any origin may read it, nothing caches it. */
@@ -28,7 +28,7 @@ export function widgetJsonError(
 }
 
 export interface PerIpLimitSpec {
-  /** Redis key prefix; the bucket key is `<keyPrefix>:ip:<ip>`. */
+  /** Bucket key prefix; the bucket key is `<keyPrefix>:ip:<ip>`. */
   keyPrefix: string
   /** Requests allowed per window. */
   limit: number
@@ -39,7 +39,7 @@ export interface PerIpLimitSpec {
 
 /**
  * Enforce a fixed-window per-IP limit. Returns the 429 response (with
- * Retry-After) when over the limit, or null to proceed. Redis errors fail
+ * Retry-After) when over the limit, or null to proceed. Store errors fail
  * open (null count) so an outage doesn't take the endpoint down.
  */
 export async function enforcePerIpLimit(
@@ -61,7 +61,7 @@ export async function enforcePerIpLimit(
 /** Bound widget abuse across IP, bearer session, and workspace. */
 export async function enforceWidgetQuota(
   request: Request,
-  spec: PerIpLimitSpec & { tenantId: string }
+  spec: PerIpLimitSpec & { workspaceKey: string }
 ): Promise<Response | null> {
   const auth = request.headers.get('authorization') ?? ''
   const sessionKey = auth
@@ -70,7 +70,7 @@ export async function enforceWidgetQuota(
   const buckets = [
     { key: `${spec.keyPrefix}:ip:${getClientIp(request)}`, windowSeconds: spec.windowSeconds },
     { key: `${spec.keyPrefix}:session:${sessionKey}`, windowSeconds: spec.windowSeconds },
-    { key: `${spec.keyPrefix}:tenant:${spec.tenantId}`, windowSeconds: spec.windowSeconds },
+    { key: `${spec.keyPrefix}:workspace:${spec.workspaceKey}`, windowSeconds: spec.windowSeconds },
   ]
   const results = await Promise.all(buckets.map((bucket) => incrementBucket(bucket)))
   const blockedIndex = results.findIndex(

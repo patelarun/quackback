@@ -67,7 +67,7 @@ vi.mock('@/lib/server/functions/auth-helpers', () => ({
   }),
 }))
 
-vi.mock('@/lib/server/functions/workspace', () => ({ getSettings: vi.fn(), readSettings: vi.fn() }))
+vi.mock('@/lib/server/functions/workspace', () => ({ getSettings: vi.fn() }))
 vi.mock('@/lib/server/policy', () => ({ canViewBoard: vi.fn() }))
 vi.mock('@/lib/server/domains/posts/post.public.utils', () => ({
   getPublicRoadmapPostsPaginated: vi.fn(),

@@ -168,6 +168,7 @@ const DEFAULT_RUNTIME_CONFIG: AssistantRuntimeConfig = {
           documents: true,
           status: false,
         },
+        toolRules: {},
       },
       copilot: {
         capabilities: { qa: true },
@@ -176,18 +177,17 @@ const DEFAULT_RUNTIME_CONFIG: AssistantRuntimeConfig = {
           posts: true,
           pastConversations: true,
           internalNotes: true,
-          tickets: false,
-          changelog: false,
+          tickets: true,
+          changelog: true,
           documents: true,
           status: true,
         },
+        toolRules: {},
       },
     },
   },
   revision: 1,
   workspaceName: 'Quackback',
-  actionsEnabled: false,
-  customActionsEnabled: false,
 }
 
 const mockGetAssistantRuntimeConfig = vi.fn()
@@ -224,10 +224,6 @@ function mockRuntimeConfig(
       },
     },
   })
-}
-
-function mockActionsFlag(enabled: boolean) {
-  mockRuntimeConfig({ actionsEnabled: enabled })
 }
 
 const mockListEnabledGuidanceCandidates = vi.fn()
@@ -373,6 +369,7 @@ describe('mockRuntimeConfig helper', () => {
               documents: false,
               status: true,
             },
+            toolRules: {},
           },
         },
       },
@@ -657,7 +654,7 @@ describe('runAssistantTurn', () => {
           type: 'article',
           id: 'kb_article_1',
           title: 'Title kb_article_1',
-          url: '/hc/articles/general/slug-kb_article_1',
+          url: '/hc/en/articles/1-slug-kb_article_1',
           updatedAt: '2026-06-01T00:00:00.000Z',
         },
       ],
@@ -1030,7 +1027,6 @@ describe('runAssistantTurn', () => {
   it('reuses one config revision and tool snapshot across a retry', async () => {
     mockRuntimeConfig({
       revision: 37,
-      actionsEnabled: true,
     })
     const object = { text: 'Second try.', citations: [] }
     mockChat
@@ -1044,8 +1040,7 @@ describe('runAssistantTurn', () => {
     expect(mockAssembleAssistantToolset).toHaveBeenCalledTimes(1)
     expect(mockAssembleAssistantToolset).toHaveBeenCalledWith(
       expect.any(Object),
-      undefined,
-      true,
+      expect.anything(),
       []
     )
     expect(result.status !== 'suppressed' && result.trace.configRevision).toBe(37)
@@ -2081,7 +2076,7 @@ describe('runAssistantTurn: V2 prompt and config snapshot', () => {
     return opts.systemPrompts
   }
 
-  it('applies dynamic identity and customer voice even when assistantTools is disabled', async () => {
+  it('applies dynamic identity and customer voice', async () => {
     const identity = {
       name: 'Nova',
       avatarUrl: 'https://cdn.example.com/nova.png',
@@ -2089,7 +2084,6 @@ describe('runAssistantTurn: V2 prompt and config snapshot', () => {
     mockRuntimeConfig({
       revision: 12,
       workspaceName: 'Acme',
-      actionsEnabled: false,
       config: {
         identity,
         voice: {
@@ -2137,8 +2131,7 @@ describe('runAssistantTurn: V2 prompt and config snapshot', () => {
           status: false,
         },
       }),
-      undefined,
-      false,
+      expect.anything(),
       []
     )
   })
@@ -2228,17 +2221,8 @@ describe('runAssistantTurn: attribute catalogue injection (P0)', () => {
     },
   ]
 
-  it('flag off (set_attribute not active): never fetches the catalogue', async () => {
-    mockChat.mockImplementation(() => chunkStream(completeRun({ text: 'ok', citations: [] })))
-
-    await runAssistantTurn({ ...baseInput, messages: customerAsks('hi') })
-
-    expect(mockListConversationAttributes).not.toHaveBeenCalled()
-    expect(systemPromptsFromLastCall().join('\n')).not.toContain('# Workspace attribute catalogue')
-  })
-
-  it('flag on (set_attribute active): fetches and injects the live catalogue', async () => {
-    mockActionsFlag(true)
+  it('fetches and injects the live catalogue when set_attribute is active', async () => {
+    mockRuntimeConfig({})
     mockListConversationAttributes.mockResolvedValue(fakeDefinitions)
     mockChat.mockImplementation(() => chunkStream(completeRun({ text: 'ok', citations: [] })))
 
@@ -2251,8 +2235,8 @@ describe('runAssistantTurn: attribute catalogue injection (P0)', () => {
     expect(prompts.join('\n')).toContain('opt_billing')
   })
 
-  it('flag on but no definitions exist: no workspace-attributes section is added', async () => {
-    mockActionsFlag(true)
+  it('adds no workspace-attributes section when no definitions exist', async () => {
+    mockRuntimeConfig({})
     mockListConversationAttributes.mockResolvedValue([])
     mockListBoards.mockResolvedValue([
       { id: 'board_features', name: 'Feature Requests', description: 'Product ideas' },
@@ -2271,18 +2255,8 @@ describe('runAssistantTurn: board catalogue (capture_feedback)', () => {
     return call.systemPrompts
   }
 
-  it('actions off: no board fetch and no board-catalogue section', async () => {
-    mockActionsFlag(false)
-    mockChat.mockImplementation(() => chunkStream(completeRun({ text: 'ok', citations: [] })))
-
-    await runAssistantTurn({ ...baseInput, messages: customerAsks('hi') })
-
-    expect(mockListBoards).not.toHaveBeenCalled()
-    expect(systemPromptsFromLastCall().join('\n')).not.toContain('# Workspace board catalogue')
-  })
-
-  it('actions on: fetches and injects the live board catalogue', async () => {
-    mockActionsFlag(true)
+  it('fetches and injects the live board catalogue', async () => {
+    mockRuntimeConfig({})
     mockChat.mockImplementation(() => chunkStream(completeRun({ text: 'ok', citations: [] })))
 
     await runAssistantTurn({ ...baseInput, messages: customerAsks('hi') })
@@ -2295,7 +2269,7 @@ describe('runAssistantTurn: board catalogue (capture_feedback)', () => {
   })
 
   it('board read fails: capture_feedback is dropped rather than left unusable', async () => {
-    mockActionsFlag(true)
+    mockRuntimeConfig({})
     mockListBoards.mockRejectedValue(new Error('db down'))
     let toolNames: string[] = []
     mockChat.mockImplementation((opts: { tools: Array<{ name: string }> }) => {
@@ -2310,7 +2284,7 @@ describe('runAssistantTurn: board catalogue (capture_feedback)', () => {
   })
 
   it('no boards exist: capture_feedback is dropped (its boardId would be unguessable)', async () => {
-    mockActionsFlag(true)
+    mockRuntimeConfig({})
     mockListBoards.mockResolvedValue([])
     let toolNames: string[] = []
     mockChat.mockImplementation((opts: { tools: Array<{ name: string }> }) => {

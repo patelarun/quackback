@@ -247,7 +247,7 @@ describe('evaluator — company_attr attribute (custom attributes)', () => {
       { attribute: 'company_attr', operator: 'eq', value: 'eu', metadataKey: 'region' },
     ])
     await evaluateDynamicSegment('segment_test' as never)
-    expect(capturedSql).toContain("co.custom_attributes::jsonb->>")
+    expect(capturedSql).toContain('co.custom_attributes::jsonb->>')
     expect(capturedSql).toContain('region')
     expect(capturedSql).toContain('eu')
   })

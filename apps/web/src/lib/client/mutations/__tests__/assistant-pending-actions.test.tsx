@@ -75,9 +75,9 @@ describe('useApproveAssistantAction', () => {
       )
     )
     await waitFor(() =>
-      expect(client.getQueryState(conversationKeys.agentThread(CONVERSATION_ID))?.isInvalidated).toBe(
-        true
-      )
+      expect(
+        client.getQueryState(conversationKeys.agentThread(CONVERSATION_ID))?.isInvalidated
+      ).toBe(true)
     )
   })
 })

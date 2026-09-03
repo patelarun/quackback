@@ -11,7 +11,11 @@ import type { PrincipalId, UserId } from '@quackback/ids'
 
 const mockCacheDel = vi.fn()
 
-vi.mock('@/lib/server/redis', () => ({
+vi.mock('@/lib/server/domains/principals/membership-sync', () => ({
+  enqueueMembershipSync: vi.fn(async () => {}),
+}))
+
+vi.mock('@/lib/server/cache', () => ({
   cacheDel: (...args: unknown[]) => mockCacheDel(...args),
   CACHE_KEYS: {
     PRINCIPAL_BY_USER: (userId: string) => `principal:user:${userId}`,
@@ -89,6 +93,19 @@ describe('updateMemberRole', () => {
 
     expect(mockCacheDel).not.toHaveBeenCalled()
   })
+
+  it('refuses to change the role of a support principal', async () => {
+    mockFindFirst.mockResolvedValue({
+      id: TARGET,
+      userId: TARGET_USER,
+      type: 'support',
+      role: 'admin',
+    })
+    await expect(updateMemberRole(TARGET, 'member', ACTING)).rejects.toMatchObject({
+      code: 'MEMBER_NOT_FOUND',
+    })
+    expect(mockCacheDel).not.toHaveBeenCalled()
+  })
 })
 
 describe('removeTeamMember', () => {
@@ -103,5 +120,18 @@ describe('removeTeamMember', () => {
     await removeTeamMember(TARGET, ACTING)
 
     expect(mockCacheDel).toHaveBeenCalledWith(`principal:user:${TARGET_USER}`)
+  })
+
+  it('refuses to remove a support principal', async () => {
+    mockFindFirst.mockResolvedValue({
+      id: TARGET,
+      userId: TARGET_USER,
+      type: 'support',
+      role: 'admin',
+    })
+    await expect(removeTeamMember(TARGET, ACTING)).rejects.toMatchObject({
+      code: 'MEMBER_NOT_FOUND',
+    })
+    expect(mockCacheDel).not.toHaveBeenCalled()
   })
 })

@@ -3,9 +3,7 @@ import { parse as parseYaml } from 'yaml'
 import { parseQuackbackConfig, type QuackbackConfig } from './schema'
 
 export type LoadResult =
-  | { kind: 'ok'; config: QuackbackConfig }
-  | { kind: 'absent' }
-  | { kind: 'error'; error: string }
+  { kind: 'ok'; config: QuackbackConfig } | { kind: 'absent' } | { kind: 'error'; error: string }
 
 /**
  * Read + parse + validate the config file at `path`.

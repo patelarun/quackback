@@ -1,4 +1,7 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll } from 'vitest'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import postgres from 'postgres'
 import { z } from 'zod'
 
 // A real, non-transactional pool that bypasses config.ts's full env validation
@@ -7,6 +10,7 @@ import { z } from 'zod'
 // emit.ts itself only imports table objects + `sql` from here (it takes the tx
 // as a parameter), so those still come through from the original module.
 vi.mock('@/lib/server/db', async (importOriginal) => {
+  // oxlint-disable-next-line no-restricted-imports -- sanctioned test fixture, same as db-test-fixture.ts
   const { createDb } = await import('@quackback/db/client')
   const url =
     process.env.DATABASE_URL ?? 'postgresql://postgres:password@localhost:5432/quackback_test'
@@ -16,7 +20,13 @@ vi.mock('@/lib/server/db', async (importOriginal) => {
   }
 })
 
-import { db, events, auditLog, eq, and } from '@/lib/server/db'
+vi.mock('@/lib/server/workspaces/workspace-context', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/server/workspaces/workspace-context')>()),
+  getCurrentWorkspace: () => ({ workspaceKey: 'ws_emit' }),
+}))
+
+import { db, events, auditLog, eq, and, sql } from '@/lib/server/db'
+import { getExecuteRows } from '@/lib/server/utils/execute-rows'
 import { createId } from '@quackback/ids'
 import { emit, inherit } from '../emit'
 import type { EventDefinition } from '../catalogue/define'
@@ -52,6 +62,34 @@ const plainDef: EventDefinition<{ postId: string }> = {
 }
 
 describe('emit()', () => {
+  beforeAll(async () => {
+    const url =
+      process.env.DATABASE_URL ?? 'postgresql://postgres:password@localhost:5432/quackback_test'
+    const admin = postgres(url, { max: 1, onnotice: () => {} })
+    try {
+      await admin.unsafe(
+        readFileSync(
+          path.resolve(
+            __dirname,
+            '../../../../../../../packages/db/drizzle/0253_event_dispatch_owner.sql'
+          ),
+          'utf8'
+        )
+      )
+      await admin.unsafe(
+        readFileSync(
+          path.resolve(
+            __dirname,
+            '../../../../../../../packages/db/drizzle/0254_event_dispatch_owner_default_job.sql'
+          ),
+          'utf8'
+        )
+      )
+    } finally {
+      await admin.end({ timeout: 2 })
+    }
+  })
+
   it('inserts exactly one events row with the envelope fields', async () => {
     const entityId = createId('post')
     const eventId = await db.transaction((tx) =>
@@ -75,14 +113,20 @@ describe('emit()', () => {
     expect((row.context as { depth: number; source: string }).depth).toBe(0)
     expect((row.context as { source: string }).source).toBe('api')
     expect(row.publishedAt).toBeNull()
+    expect(row.dispatchOwner).toBe('job')
+    const jobs = await db.execute(sql`
+      SELECT queue FROM job_queue
+      WHERE queue = 'event-dispatch' AND payload->>'eventId' = ${eventId}
+    `)
+    expect(getExecuteRows(jobs).length).toBeGreaterThan(0)
   })
 
   it('rolls back the event when the surrounding transaction aborts', async () => {
     const entityId = createId('post')
     await expect(
       db.transaction(async (tx) => {
-        await emit(tx, plainDef, {
-          payload: { postId: entityId },
+        await emit(tx, auditedDef, {
+          payload: { postId: entityId, note: 'nope' },
           actor: { type: 'service' },
           entityId,
         })
@@ -92,6 +136,39 @@ describe('emit()', () => {
 
     const rows = await db.select().from(events).where(eq(events.entityId, entityId))
     expect(rows).toHaveLength(0)
+    const leftover = await db.execute(sql`
+      SELECT 1 FROM job_queue WHERE queue = 'event-dispatch'
+        AND payload->>'eventId' IN (
+          SELECT event_id FROM events WHERE entity_id = ${entityId}
+        )
+    `)
+    expect(getExecuteRows(leftover).length).toBe(0)
+    const leftoverAudit = await db.select().from(auditLog).where(eq(auditLog.targetId, entityId))
+    expect(leftoverAudit).toHaveLength(0)
+  })
+
+  it('commits event, audit, and dispatch job together', async () => {
+    const entityId = createId('post')
+    const eventId = await db.transaction((tx) =>
+      emit(tx, auditedDef, {
+        payload: { postId: entityId, note: 'atomic' },
+        actor: { type: 'user', id: createId('principal') },
+        entityId,
+      })
+    )
+    const eventRows = await db.select().from(events).where(eq(events.eventId, eventId))
+    const auditRows = await db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.eventType, 'test.emit_audited'), eq(auditLog.targetId, entityId)))
+    const jobs = await db.execute(sql`
+      SELECT queue FROM job_queue
+      WHERE queue = 'event-dispatch' AND payload->>'eventId' = ${eventId}
+    `)
+    expect(eventRows).toHaveLength(1)
+    expect(eventRows[0].dispatchOwner).toBe('job')
+    expect(auditRows).toHaveLength(1)
+    expect(getExecuteRows(jobs).length).toBeGreaterThan(0)
   })
 
   it('rejects a payload that fails the catalogue zod schema', async () => {

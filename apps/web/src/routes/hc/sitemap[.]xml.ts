@@ -24,9 +24,6 @@ export const Route = createFileRoute('/hc/sitemap.xml')({
         }
 
         const helpCenterConfig = await getHelpCenterConfig()
-        if (!helpCenterConfig.enabled) {
-          return new Response('Not Found', { status: 404 })
-        }
 
         // Indexing toggle (domains/languages §1): an operator that turned off
         // "allow search engines to index" doesn't want a sitemap advertised either.
@@ -57,13 +54,20 @@ export const Route = createFileRoute('/hc/sitemap.xml')({
           // Map articles to the shape expected by the URL builder.
           // Service returns Date objects; the builder expects ISO strings.
           const articles: SitemapArticle[] = articleResult.items.map((a) => ({
+            id: a.id,
+            urlId: a.urlId,
             slug: a.slug,
             updatedAt:
               a.updatedAt instanceof Date ? a.updatedAt.toISOString() : String(a.updatedAt),
             category: { slug: a.category.slug },
           }))
 
-          allUrls = buildHelpCenterSitemapUrls(baseUrl, categories, articles)
+          allUrls = buildHelpCenterSitemapUrls(
+            baseUrl,
+            categories.map((c) => ({ id: c.id, urlId: c.urlId, slug: c.slug })),
+            articles,
+            defaultLocale
+          )
         } else {
           // Per-locale gating (domains/languages §1/§2): each additional
           // locale only includes categories/articles that are actually
@@ -79,10 +83,11 @@ export const Route = createFileRoute('/hc/sitemap.xml')({
             )
             perLocale.push({
               locale,
-              categories: categories.map((c) => ({ id: c.id, slug: c.slug })),
+              categories: categories.map((c) => ({ id: c.id, urlId: c.urlId, slug: c.slug })),
               articles: articlesByCategory.flatMap(({ categorySlug, articles }) =>
                 articles.map((a) => ({
                   id: a.id,
+                  urlId: a.urlId,
                   slug: a.slug,
                   // The locale-gated article list projects publishedAt, not
                   // updatedAt (list-view summary shape) -- a reasonable
@@ -109,6 +114,7 @@ export const Route = createFileRoute('/hc/sitemap.xml')({
           headers: {
             'Content-Type': 'application/xml; charset=utf-8',
             'Cache-Control': 'public, max-age=3600',
+            Vary: 'Host',
           },
         })
       },

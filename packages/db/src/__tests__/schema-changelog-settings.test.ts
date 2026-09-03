@@ -2,10 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getTableName, getTableColumns } from 'drizzle-orm'
-import {
-  changelogCategories,
-  changelogEntryCategories,
-} from '../schema/changelog-categories'
+import { changelogCategories, changelogEntryCategories } from '../schema/changelog-categories'
 import { changelogSubscriptions } from '../schema/changelog-subscriptions'
 
 describe('changelog settings schema (migration 0158)', () => {

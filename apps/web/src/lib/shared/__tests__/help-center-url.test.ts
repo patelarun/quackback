@@ -4,6 +4,10 @@ import {
   localizedHcPath,
   parseHcLocalePath,
   resolveHcLandingLocale,
+  formatHcIdSlug,
+  parseHcIdSlug,
+  hcArticlePath,
+  hcCollectionPath,
 } from '../help-center-url'
 
 describe('getHelpCenterBaseUrl', () => {
@@ -12,30 +16,82 @@ describe('getHelpCenterBaseUrl', () => {
   })
 })
 
+describe('formatHcIdSlug / parseHcIdSlug', () => {
+  it('joins a numeric id with the slug', () => {
+    expect(formatHcIdSlug(42, 'what-is-quackback')).toBe('42-what-is-quackback')
+  })
+
+  it('omits the hyphen when the slug is empty', () => {
+    expect(formatHcIdSlug(42, '')).toBe('42')
+    expect(formatHcIdSlug(42, '---')).toBe('42')
+  })
+
+  it('round-trips a numeric article param', () => {
+    const param = formatHcIdSlug(42, 'what-is-quackback')
+    expect(parseHcIdSlug(param)).toEqual({
+      urlId: 42,
+      slug: 'what-is-quackback',
+    })
+  })
+
+  it('parses an id with no slug', () => {
+    expect(parseHcIdSlug('42')).toEqual({ urlId: 42, slug: '' })
+  })
+
+  it('rejects a legacy category slug that is not numeric', () => {
+    expect(parseHcIdSlug('getting-started')).toBeNull()
+  })
+
+  it('rejects a leading-zero or ULID key so legacy slugs stay distinct', () => {
+    expect(parseHcIdSlug('01m1cxgr9qf22rxt2vwk5jrchg-what-is-quackback')).toBeNull()
+    expect(parseHcIdSlug('0-slug')).toBeNull()
+  })
+})
+
+describe('hcArticlePath / hcCollectionPath', () => {
+  it('always includes the locale, including the default', () => {
+    expect(hcArticlePath({ locale: 'en', urlId: 42, slug: 'what-is-quackback' })).toBe(
+      '/hc/en/articles/42-what-is-quackback'
+    )
+    expect(hcCollectionPath({ locale: 'en', urlId: 7, slug: 'getting-started' })).toBe(
+      '/hc/en/collections/7-getting-started'
+    )
+  })
+
+  it('prefixes additional locales the same way', () => {
+    expect(hcArticlePath({ locale: 'de', urlId: 42, slug: 'intro' })).toBe(
+      '/hc/de/articles/42-intro'
+    )
+  })
+})
+
 describe('localizedHcPath', () => {
-  it('leaves the base content locale unprefixed', () => {
-    expect(localizedHcPath('en', '/hc/categories/billing', 'en')).toBe('/hc/categories/billing')
+  it('leaves the default-locale homepage unprefixed', () => {
+    expect(localizedHcPath('en', '/hc')).toBe('/hc')
+  })
+
+  it('prefixes content paths even for the default locale', () => {
+    expect(localizedHcPath('en', '/hc/collections/billing')).toBe('/hc/en/collections/billing')
   })
 
   it('prefixes an additional locale', () => {
-    expect(localizedHcPath('de', '/hc/categories/billing', 'en')).toBe('/hc/de/categories/billing')
+    expect(localizedHcPath('de', '/hc/collections/billing')).toBe('/hc/de/collections/billing')
   })
 
-  it('prefixes the bare homepage path', () => {
-    expect(localizedHcPath('de', '/hc', 'en')).toBe('/hc/de')
-  })
-
-  it('follows a non-English base locale', () => {
-    // A Swedish-authored help center serves Swedish on the unprefixed paths
-    // and pushes English into the /hc/en subtree.
-    expect(localizedHcPath('sv', '/hc/categories/billing', 'sv')).toBe('/hc/categories/billing')
-    expect(localizedHcPath('en', '/hc/categories/billing', 'sv')).toBe('/hc/en/categories/billing')
+  it('prefixes the bare homepage path for additional locales', () => {
+    expect(localizedHcPath('de', '/hc')).toBe('/hc/de')
   })
 
   it('prefixes an article path', () => {
-    expect(localizedHcPath('fr', '/hc/articles/billing/invoices', 'en')).toBe(
-      '/hc/fr/articles/billing/invoices'
-    )
+    expect(localizedHcPath('fr', '/hc/articles/id-slug')).toBe('/hc/fr/articles/id-slug')
+  })
+
+  // Fork behaviour: `baseLocale` defaults to DEFAULT_LOCALE for upstream's
+  // two-argument callers, but a workspace authoring in Swedish serves Swedish
+  // on the unprefixed homepage and pushes English into the /hc/en subtree.
+  it('follows a non-English base locale', () => {
+    expect(localizedHcPath('sv', '/hc', 'sv')).toBe('/hc')
+    expect(localizedHcPath('en', '/hc', 'sv')).toBe('/hc/en')
   })
 })
 

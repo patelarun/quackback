@@ -185,25 +185,23 @@ export const snippetsKnowledgeSource: KnowledgeSource = {
   sourceType: 'snippet',
   async retrieve(query, ceiling) {
     const rows = await retrieveSnippets(query, ceiling)
-    return rows.map(
-      (s): RetrievedItem => ({
+    return rows.map((s): RetrievedItem => ({
+      id: s.id,
+      sourceType: 'snippet' as const,
+      title: s.title,
+      excerpt: s.content.slice(0, KNOWLEDGE_SNIPPET_CHARS),
+      score: s.score,
+      updatedAt: s.updatedAt.toISOString(),
+      citation: {
+        type: 'snippet' as const,
         id: s.id,
-        sourceType: 'snippet' as const,
         title: s.title,
-        excerpt: s.content.slice(0, KNOWLEDGE_SNIPPET_CHARS),
-        score: s.score,
-        updatedAt: s.updatedAt.toISOString(),
-        citation: {
-          type: 'snippet' as const,
-          id: s.id,
-          title: s.title,
-          url: '',
-          // A snippet is only ever surfaced to a viewer whose ceiling covers
-          // its audience, but 'team'/'internal' snippets are still not
-          // customer-safe: flag them for the copilot leak gate.
-          ...(s.audience === 'public' ? {} : { internal: true }),
-        },
-      })
-    )
+        url: '',
+        // A snippet is only ever surfaced to a viewer whose ceiling covers
+        // its audience, but 'team'/'internal' snippets are still not
+        // customer-safe: flag them for the copilot leak gate.
+        ...(s.audience === 'public' ? {} : { internal: true }),
+      },
+    }))
   },
 }

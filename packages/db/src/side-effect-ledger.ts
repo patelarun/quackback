@@ -121,7 +121,7 @@ export const SIDE_EFFECT_LEDGER: readonly LedgerRegistration[] = [
     policy: 'settle',
     strategy: 'stamp-pending',
     reason:
-      'The outbox relay drains WHERE published_at IS NULL through the events_unpublished_idx partial index and fans each row out to the hook queue, so a rewind re-delivers every webhook in the restored window.',
+      'event-dispatch drains unpublished job-owned events through the events_unpublished_idx partial index and fans each row out to the hook queue, so a rewind re-delivers every webhook in the restored window.',
   },
   {
     column: schema.changelogEntries.notifiedAt,
@@ -156,7 +156,6 @@ export const SIDE_EFFECT_LEDGER: readonly LedgerRegistration[] = [
     reason:
       'Same shape and same reasoning as post_mentions, for @-mentions inside internal notes: stamped synchronously after dispatch, with no drain reading it today.',
   },
-
   // -- preserve: this is the data -------------------------------------------
   {
     column: schema.invitation.lastSentAt,
@@ -233,6 +232,12 @@ export const SIDE_EFFECT_LEDGER: readonly LedgerRegistration[] = [
     column: schema.integrations.lastInboundAt,
     policy: 'preserve',
     reason: 'Inbound twin of last_outbound_at, feeding the same panel under the same rule.',
+  },
+  {
+    column: schema.connectors.lastSyncedAt,
+    policy: 'reset',
+    reason:
+      'When the remote MCP tool catalogue was last refreshed. Nothing outbound reads it — sync is operator-initiated or scheduled against the remote, not drained on IS NULL — so after a restore an older value merely reports the catalogue as staler than it is, and the next sync overwrites it.',
   },
 ]
 

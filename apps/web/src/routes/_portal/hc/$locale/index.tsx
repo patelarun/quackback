@@ -7,6 +7,7 @@ import { getTopLevelCategories } from '@/components/help-center/help-center-util
 import { listPublicCategoriesFn } from '@/lib/server/functions/help-center'
 import { portalHeadMessage } from '@/lib/shared/portal-head-message'
 import type { HelpCenterConfig } from '@/lib/shared/types/settings'
+import { resolvePortalOgImageUrl } from '@/lib/shared/portal-og-image'
 
 /** Fallbacks for a locale whose admin-authored chrome strings are still empty.
  *  Resolved through react-intl so the page reads in the visitor's language
@@ -41,7 +42,10 @@ export const Route = createFileRoute('/_portal/hc/$locale/')({
       description: chrome?.homepageDescription || '',
       searchPlaceholder: chrome?.searchPlaceholder || undefined,
       workspaceName: settings?.name ?? 'Help Center',
-      logoUrl: settings?.brandingData?.logoUrl || '/logo.png',
+      logoUrl: resolvePortalOgImageUrl(
+        { logoUrl: settings?.brandingData?.logoUrl },
+        context.baseUrl
+      ),
     }
   },
   head: ({ loaderData, matches }) => {

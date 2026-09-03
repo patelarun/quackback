@@ -27,6 +27,7 @@ import {
 import { useChangePostStatusId } from '@/lib/client/mutations/posts'
 import { usePortalPermissions } from '@/lib/client/hooks/use-portal-permissions'
 import { PERMISSIONS } from '@/lib/shared/permissions'
+import { useApprovePost, useRejectPost } from '@/lib/client/mutations/moderation'
 import type { PublicPostListItem } from '@/lib/shared/types'
 import { cn } from '@/lib/shared/utils'
 import type { PostId, PostStatusId } from '@quackback/ids'
@@ -52,6 +53,7 @@ interface FeedbackContainerProps {
    * every card — including infinite-scroll pages — and the submit CTA.
    */
   boardPermissions?: Record<string, { canSubmit: boolean; canVote: boolean }>
+  showPoweredBy?: boolean
 }
 
 export function FeedbackContainer({
@@ -69,6 +71,7 @@ export function FeedbackContainer({
   defaultBoardId,
   user,
   boardPermissions,
+  showPoweredBy = true,
 }: FeedbackContainerProps): React.ReactElement {
   const intl = useIntl()
   const router = useRouter()
@@ -83,6 +86,8 @@ export function FeedbackContainer({
   // Holders of post.approve get the inline moderation section (banner + pending
   // cards).
   const canApprove = can(PERMISSIONS.POST_APPROVE)
+  const approvePost = useApprovePost()
+  const rejectPost = useRejectPost()
 
   // List key for animations - only updates when data finishes loading
   // This prevents double animations when filters change (stale data → new data)
@@ -234,6 +239,9 @@ export function FeedbackContainer({
 
   const currentBoardInfo = activeBoard ? boards.find((b) => b.slug === activeBoard) : boards[0]
   const boardIdForCreate = currentBoardInfo?.id || defaultBoardId
+  // A selected board is page context (sidebar / ?board=), not a filter the
+  // submit form or chip row should switch away from.
+  const boardLocked = Boolean(activeBoard)
 
   function handlePostCreated(postId: string): void {
     setTimeout(() => {
@@ -325,6 +333,7 @@ export function FeedbackContainer({
             user={effectiveUser}
             boardPermissions={boardPermissions}
             onPostCreated={handlePostCreated}
+            boardLocked={boardLocked}
           />
 
           <FeedbackToolbar
@@ -340,6 +349,7 @@ export function FeedbackContainer({
                 statuses={statuses}
                 tags={tags}
                 boards={boards}
+                boardLocked={boardLocked}
               />
             }
           />
@@ -351,6 +361,7 @@ export function FeedbackContainer({
               statuses={statuses}
               tags={tags}
               boards={boards}
+              boardLocked={boardLocked}
             />
           </div>
 
@@ -420,6 +431,11 @@ export function FeedbackContainer({
                         onStatusChange={(statusId) => handleStatusChange(post, statusId)}
                         isUpdatingStatus={changeStatus.isPending}
                         showAvatar={false}
+                        moderationState={post.moderationState}
+                        canModerate={canApprove}
+                        moderationBusy={approvePost.isPending || rejectPost.isPending}
+                        onApprove={() => approvePost.mutate(post.id)}
+                        onReject={() => rejectPost.mutate({ postId: post.id })}
                       />
                     </div>
                   ))}
@@ -441,6 +457,7 @@ export function FeedbackContainer({
           currentBoard={activeBoard}
           onBoardChange={handleBoardChange}
           workspaceSlug={workspaceSlug}
+          showPoweredBy={showPoweredBy}
         />
       </div>
     </div>

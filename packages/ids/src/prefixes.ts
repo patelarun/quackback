@@ -77,7 +77,12 @@ export const ID_PREFIXES = {
   // Distinct from `assistant_action` above, which is the pending-action row a
   // write-tool proposal mints (AssistantPendingActionId) — an unfortunate but
   // load-bearing name collision, so the definition table gets its own prefix.
-  assistant_custom_action: 'assistant_custom_action',
+  // Remote MCP connector (Agent Connectors). Distinct from the retired REST
+  // "data connectors" wave; the tool-name prefix `connector_<slug>__` is the
+  // same proven grammar.
+  connector: 'connector',
+  // Packaged agent procedure (name + when-to-use + markdown body).
+  skill: 'skill',
   assistant_tool_call: 'assistant_tool_call',
   assistant_snippet: 'assistant_snippet',
   assistant_document: 'assistant_document',
@@ -94,6 +99,7 @@ export const ID_PREFIXES = {
 
   // Email channel (support platform §4.8)
   channel_account: 'channel_account',
+  channel_thread: 'channel_thread',
   sending_domain: 'sending_domain',
 
   // Workflows + SLA + office hours (support platform §4.6)
@@ -141,6 +147,7 @@ export const ID_PREFIXES = {
   // AI
   sentiment: 'sentiment',
   ai_usage: 'ailog',
+  email_log: 'emaillog',
   pipeline_log: 'plog',
 
   // Feedback aggregation
@@ -155,6 +162,11 @@ export const ID_PREFIXES = {
 
   // Visitor analytics
   page_view: 'pv',
+
+  // Billing (self-serve subscription for hosted workspaces; inert unless
+  // a billing provider is configured)
+  billing_event: 'billing_event',
+  billing_usage: 'billing_usage',
 
   // ============================================
   // Auth Entities (Better-auth, text primary keys)
@@ -186,6 +198,12 @@ export const ID_PREFIXES = {
   // ============================================
 
   event: 'evt',
+
+  // ============================================
+  // Background jobs (Postgres queue)
+  // ============================================
+
+  job: 'job',
 
   // ============================================
   // App platform (third-party OAuth apps)

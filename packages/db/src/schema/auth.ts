@@ -52,6 +52,7 @@ export interface StoredAssistantConfig {
         documents: boolean
         status: boolean
       }
+      toolRules: Record<string, string>
     }
     copilot: {
       capabilities: { qa: boolean }
@@ -65,8 +66,64 @@ export interface StoredAssistantConfig {
         documents: boolean
         status: boolean
       }
+      toolRules: Record<string, string>
     }
   }
+}
+
+/** Storage-only shape for the narrow control-plane projection. A NULL cloud
+ * column is the default for every self-hosted workspace. */
+export interface StoredProjectedLimits {
+  maxBoards: number | null
+  maxPosts: number | null
+  maxTeamSeats: number | null
+  maxStatusComponents: number | null
+  maxCustomRoles: number | null
+  maxSendingDomains: number | null
+  aiTokensPerMonth: number | null
+  apiRequestsPerMonth: number | null
+  apiRequestsPerMinute: number | null
+}
+
+/** Commercial state safe to project from the control plane into a workspace. */
+export interface StoredBillingProjection {
+  version: number
+  effectivePlan: string
+  trialStartedAt: string | null
+  trialExpiresAt: string | null
+  subscriptionStatus: string | null
+  entitlements: Record<string, boolean>
+  freeLimits: StoredProjectedLimits
+  planLimits: StoredProjectedLimits
+  planLimitsExpireAt: string | null
+  canUpgrade: boolean
+  canManageBilling: boolean
+  renewalAt: string | null
+  cancellationAt: string | null
+}
+
+export interface StoredCloudConfig {
+  enabled: boolean
+  /** Signed, monotonic commercial state projected by the control plane. */
+  projection?: StoredBillingProjection | null
+}
+
+export interface StoredCloudCustomDomain {
+  hostname: string
+  readiness: 'pending' | 'ready' | 'failed'
+  isPrimary: boolean
+  updatedAt: string
+}
+
+/** Customer-safe cloud identity; provider ids and validation secrets never cross. */
+export interface StoredCloudIdentityProjection {
+  version: number
+  displayName: string
+  canonicalOrigin: string
+  /** Friendly Quackback hostname, null until the owner chooses one. */
+  platformHostname: string | null
+  customDomains: StoredCloudCustomDomain[]
+  updatedAt: string
 }
 
 /**
@@ -283,7 +340,7 @@ export const oneTimeToken = pgTable('one_time_token', {
 /**
  * Settings table - Application settings and branding configuration
  *
- * For single-tenant OSS deployments, this table has one row containing
+ * For single-workspace OSS deployments, this table has one row containing
  * all application settings. The id, name, and slug are kept for display
  * and branding purposes.
  */
@@ -363,6 +420,7 @@ export const settings = pgTable('settings', {
             documents: true,
             status: false,
           },
+          toolRules: {},
         },
         copilot: {
           capabilities: { qa: true },
@@ -371,11 +429,12 @@ export const settings = pgTable('settings', {
             posts: true,
             pastConversations: true,
             internalNotes: true,
-            tickets: false,
-            changelog: false,
+            tickets: true,
+            changelog: true,
             documents: true,
             status: true,
           },
+          toolRules: {},
         },
       },
     }),
@@ -397,6 +456,8 @@ export const settings = pgTable('settings', {
   widgetInstalledLastSeenAt: timestamp('widget_installed_last_seen_at', { withTimezone: true }),
   /** Normalized external Origin hostname only (no path, query, port, or scheme). */
   widgetInstalledOriginHost: text('widget_installed_origin_host'),
+  /** Last SDK version reported on an install ping (`?sdk=` or instance-served sdk.js). */
+  widgetInstalledSdkVersion: text('widget_installed_sdk_version'),
   /** Feature flags for experimental features (JSON) */
   featureFlags: text('feature_flags'),
   /**
@@ -418,6 +479,28 @@ export const settings = pgTable('settings', {
    * on).
    */
   tierLimits: text('tier_limits'),
+  /**
+   * Optional cloud configuration block (see {@link StoredCloudConfig}):
+   * A signed, versioned billing projection from the control plane. It contains
+   * only customer-safe UI and enforcement state, never provider references.
+   *
+   * NULL — the default, and the only value a self-hosted install ever has —
+   * means no cloud config, which resolves to `enabled: false`: no plan, no
+   * entitlement gating, no upsell.
+   *
+   * `tierLimits` above remains the persisted numeric baseline. Projected limits
+   * are overlaid at read time and are never written into that baseline.
+   */
+  cloud: jsonb('cloud').$type<StoredCloudConfig>(),
+  /**
+   * Local change token incremented whenever a newer projection is accepted.
+   * Projection monotonicity itself is enforced by `projection.version`.
+   */
+  cloudRevision: integer('cloud_revision').notNull().default(0),
+  /** Signed cloud identity projection. NULL on self-hosted installs. */
+  cloudIdentity: jsonb('cloud_identity').$type<StoredCloudIdentityProjection>(),
+  /** Local write token, deliberately separate from cloudRevision/billing. */
+  cloudIdentityRevision: integer('cloud_identity_revision').notNull().default(0),
   /**
    * JSON array of dot-paths whose values are managed by the
    * declarative config file (`/etc/quackback/config.yaml`). When a
@@ -491,6 +574,8 @@ export type IdentityProviderClaimMapping = {
   attributes?: {
     map?: Array<{ claimPath: string; attributeKey: string }>
     overrideExisting?: boolean
+    /** When true, a disappeared claim clears the stored attribute. */
+    syncOnSignIn?: boolean
   }
 }
 
@@ -505,6 +590,18 @@ export type IdentityProviderClaimMapping = {
  * migration. Discovery-doc installs leave the manual endpoint columns
  * null; manual installs leave `discoveryUrl` null.
  */
+export type IdentityProviderTestCapture = {
+  registrationId: string
+  capturedAt: string
+  identity: {
+    id: string
+    email?: string
+    name?: string
+    sources: Partial<Record<'id' | 'email' | 'name', string>>
+  }
+  claims: Record<string, unknown>
+}
+
 export const identityProvider = pgTable(
   'identity_provider',
   {
@@ -552,6 +649,7 @@ export const identityProvider = pgTable(
     /** Bumped when redirect-affecting details change; freshness baseline. */
     detailsChangedAt: timestamp('details_changed_at', { withTimezone: true }),
     lastSuccessfulTestAt: timestamp('last_successful_test_at', { withTimezone: true }),
+    lastTestCapture: jsonb('last_test_capture').$type<IdentityProviderTestCapture>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -570,7 +668,7 @@ export const identityProvider = pgTable(
  *  - `enforced=true` = hard-binds emails at this domain to SSO (blocks
  *    password / magic-link / non-SSO OAuth).
  *
- * Single-tenant per deployment so no settings_id FK is needed. The
+ * Single-workspace per deployment so no settings_id FK is needed. The
  * UNIQUE constraint on `name` keeps each domain on one row regardless
  * of pending/verified state.
  */
@@ -621,8 +719,12 @@ export type ServiceMetadata =
  * - 'user': Portal user access only, can vote/comment on public portal
  *
  * Principal types:
- * - 'user': Human user with a userId pointing to the user table
+ * - 'user': Identified customer human with a userId pointing to the user table
+ * - 'anonymous': Unidentified visitor
  * - 'service': Integration or API key actor (userId is null)
+ * - 'support': Cloud platform-support admin with a user row (can hold a session)
+ *   that is not a customer human — omitted from seats, membership sync, and
+ *   customer directories. Role still governs /admin privilege.
  *
  * The role determines access level: admin/member can access /admin dashboard,
  * while 'user' role can only interact with the public portal.
@@ -638,7 +740,7 @@ export const principal = pgTable(
     // Unified roles: 'admin' | 'member' | 'user'
     // 'user' role = portal users (public portal access only, no admin dashboard)
     role: text('role').default('member').notNull(),
-    // Principal type: 'user' (human), 'anonymous' (unidentified visitor), or 'service' (integration/API key)
+    // Principal type: 'user' | 'anonymous' | 'service' | 'support'
     type: text('type').default('user').notNull(),
     // Display name — always populated (humans synced from user.name, service principals set on creation)
     displayName: text('display_name'),
@@ -952,7 +1054,7 @@ export const accountRelations = relations(account, ({ one }) => ({
   }),
 }))
 
-// Settings is a singleton table in single-tenant mode, no relations needed
+// Settings is a singleton table in single-workspace mode, no relations needed
 export const settingsRelations = relations(settings, () => ({}))
 
 export const principalRelations = relations(principal, ({ one, many }) => ({

@@ -13,6 +13,16 @@ import { logger } from '@/lib/server/logger'
 
 const log = logger.child({ component: 'ai-config' })
 
+/**
+ * Deliberately process-wide, not per-workspace.
+ *
+ * The client is constructed from the API key and base URL alone, both of which
+ * come from the environment; no workspace value reaches it, and no request
+ * attaches per-caller headers to it. Partitioning it would open one upstream
+ * connection pool per workspace for a client every workspace would configure
+ * identically. Whether a workspace may use AI at all is a separate decision
+ * belonging to the caller, not to whether a client object exists.
+ */
 let openai: OpenAI | null = null
 
 /**
@@ -117,5 +127,22 @@ export function structuredOutputProviderOptions(): {
 } {
   return config.openaiBaseUrl?.includes('openrouter.ai') && config.aiRequireParameters !== false
     ? { provider: { require_parameters: true } }
+    : {}
+}
+
+/**
+ * Hide reasoning tokens on the OpenRouter wire.
+ *
+ * Same shape as {@link structuredOutputProviderOptions}: an explicit boolean
+ * on an OpenRouter-only extra. Unset is off — `require_parameters` 404s
+ * models whose providers do not advertise `reasoning` (GLM 5.3 Flash). Set
+ * `AI_REASONING_EXCLUDE=true` for reasoning models such as DeepSeek v4 Flash,
+ * whose json_schema streams otherwise prefix thinking as whitespace and kill
+ * Ask AI. Callers that must round-trip `reasoning_details` (Quinn's tool loop)
+ * should skip this helper.
+ */
+export function reasoningExcludeProviderOptions(): { reasoning?: { exclude: true } } {
+  return config.openaiBaseUrl?.includes('openrouter.ai') && config.aiReasoningExclude === true
+    ? { reasoning: { exclude: true } }
     : {}
 }

@@ -23,6 +23,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { listPendingPostsFn, approvePostFn, rejectPostFn } from '@/lib/server/functions/moderation'
 import { publicPostsKeys } from '@/lib/client/hooks/use-portal-posts-query'
+import { adminQueries } from '@/lib/client/queries/admin'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
@@ -131,6 +132,7 @@ export function PortalModerationSection({
           defaultMessage: 'Post rejected',
         })
       )
+      queryClient.invalidateQueries({ queryKey: adminQueries.boardsWithCounts().queryKey })
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: pendingPostsKey }),
   })
@@ -190,6 +192,7 @@ export function PortalModerationSection({
           </button>
           <Link
             to="/admin/moderation"
+            search={{}}
             className="inline-flex items-center gap-1 font-medium text-amber-700 underline-offset-2 hover:underline dark:text-amber-300"
           >
             <FormattedMessage

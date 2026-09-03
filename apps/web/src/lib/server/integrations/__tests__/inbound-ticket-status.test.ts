@@ -50,7 +50,7 @@ vi.mock('@/lib/server/domains/tickets/ticket.webhooks', () => ({
   emitTicketExternalStatusChanged: vi.fn().mockResolvedValue(undefined),
 }))
 
-// Neutralize the real Redis-backed realtime publish.
+// Neutralize the real Postgres-backed realtime publish.
 vi.mock('@/lib/server/realtime/conversation-channels', () => ({ publishTicketEvent: vi.fn() }))
 
 import { handleInboundWebhook } from '../inbound-webhook-handler'
@@ -392,6 +392,20 @@ describe.skipIf(!fixture.available)('inbound webhook ticket branch (real DB, rol
     expect(vi.mocked(changeStatus).mock.calls[0][0]).toBe(postId)
     expect(vi.mocked(changeStatus).mock.calls[0][1]).toBe(postStatusId)
     expect((await ticketState(ticketId)).statusId).toBe(closed)
+  })
+
+  it('acknowledges a malformed body with 200 not 500', async () => {
+    await seedSettings()
+    await seedGitHubIntegration({})
+    const body = '{not-json'
+    const signature = 'sha256=' + createHmac('sha256', WEBHOOK_SECRET).update(body).digest('hex')
+    const request = new Request('http://localhost/api/integrations/github/webhook', {
+      method: 'POST',
+      headers: { 'X-Hub-Signature-256': signature, 'Content-Type': 'application/json' },
+      body,
+    })
+    const response = await handleInboundWebhook(request, 'github')
+    expect(response.status).toBe(200)
   })
 
   it('rejects a bad signature', async () => {

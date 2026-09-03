@@ -44,7 +44,7 @@ export const events = pgTable(
     entityType: text('entity_type').notNull(),
     /** Branded TypeID of the subject aggregate. */
     entityId: text('entity_id').notNull(),
-    /** 'user' | 'anonymous' | 'service' | 'system'. */
+    /** 'user' | 'anonymous' | 'service' | 'support' | 'system'. */
     actorType: text('actor_type').notNull(),
     actorId: text('actor_id'),
     /** Validated against the catalogue zod schema before insert. Minimal snapshot. */
@@ -57,6 +57,12 @@ export const events = pgTable(
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
     /** NULL = outbox-pending; set by the relay once fanned out. */
     publishedAt: timestamp('published_at', { withTimezone: true }),
+    /**
+     * Who may drain this unpublished row. New rows default to `job`.
+     * Leftover `relay` rows are converted onto the job path at job-worker /
+     * scheduler start.
+     */
+    dispatchOwner: text('dispatch_owner').notNull().default('job'),
   },
   (table) => [
     uniqueIndex('events_event_id_idx').on(table.eventId),

@@ -22,8 +22,7 @@ import { readAttributeValue } from '@/lib/shared/conversation/attribute-values'
 
 /** The dual target this editor writes to — mirrors SetAttributeTarget. */
 export type ConversationAttributesEditorTarget =
-  | { conversationId: ConversationId }
-  | { ticketId: TicketId }
+  { conversationId: ConversationId } | { ticketId: TicketId }
 import { Badge } from '@/components/ui/badge'
 import { MENU_LABEL } from '@/components/ui/menu'
 import { Input } from '@/components/ui/input'

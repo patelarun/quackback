@@ -20,7 +20,7 @@ import {
   redirectResponse,
   clearCookie,
   createCookie,
-  isValidTenantDomain,
+  isValidWorkspaceDomain,
 } from './oauth'
 import { logger } from '@/lib/server/logger'
 
@@ -37,6 +37,8 @@ interface OAuthState {
   ts: number
   /** Pre-auth fields collected before OAuth (e.g. Zendesk subdomain) */
   preAuthFields?: Record<string, string>
+  /** Allowlisted path to return to after connect (GitHub channel page). */
+  returnPath?: string
 }
 
 function buildSettingsUrl(
@@ -122,8 +124,8 @@ export async function handleOAuthCallback(
   }
 
   const settingsPath = definition.catalog.settingsPath
-  const errorUrl = (base: string, reason: string) =>
-    buildSettingsUrl(base, settingsPath, integrationType, 'error', reason)
+  const errorUrl = (base: string, reason: string, path = settingsPath) =>
+    buildSettingsUrl(base, path, integrationType, 'error', reason)
 
   const url = new URL(request.url)
   const code = url.searchParams.get('code')
@@ -141,40 +143,43 @@ export async function handleOAuthCallback(
   }
 
   const { returnDomain, principalId } = stateData
-  const tenantUrl = `https://${returnDomain}`
+  const workspaceUrl = `https://${returnDomain}`
+  const returnPath =
+    stateData.returnPath === '/admin/settings/channels/github' ? stateData.returnPath : settingsPath
+  const fail = (reason: string) => errorUrl(workspaceUrl, reason, returnPath)
 
-  if (!isValidTenantDomain(returnDomain)) {
-    return redirectResponse(errorUrl(FALLBACK_URL, 'invalid_tenant'))
+  if (!isValidWorkspaceDomain(returnDomain)) {
+    return redirectResponse(errorUrl(FALLBACK_URL, 'invalid_workspace'))
   }
 
   if (providerError) {
-    return redirectResponse(errorUrl(tenantUrl, `${integrationType}_denied`))
+    return redirectResponse(fail(`${integrationType}_denied`))
   }
 
   if (!code) {
-    return redirectResponse(errorUrl(tenantUrl, 'invalid_request'))
+    return redirectResponse(fail('invalid_request'))
   }
 
   const cookieName = getStateCookieName(integrationType, request)
   const cookies = parseCookies(request.headers.get('cookie') || '')
   if (cookies[cookieName] !== state) {
-    return redirectResponse(errorUrl(tenantUrl, 'state_mismatch'))
+    return redirectResponse(fail('state_mismatch'))
   }
 
   // Verify the current session matches the member who initiated the flow
   try {
     const session = await auth.api.getSession({ headers: request.headers })
     if (!session?.user) {
-      return redirectResponse(errorUrl(tenantUrl, 'auth_required'))
+      return redirectResponse(fail('auth_required'))
     }
     const principalRecord = await db.query.principal.findFirst({
       where: eq(principal.userId, session.user.id as UserId),
     })
     if (!principalRecord || (principalRecord.id as PrincipalId) !== principalId) {
-      return redirectResponse(errorUrl(tenantUrl, 'session_mismatch'))
+      return redirectResponse(fail('session_mismatch'))
     }
   } catch {
-    return redirectResponse(errorUrl(tenantUrl, 'auth_required'))
+    return redirectResponse(fail('auth_required'))
   }
 
   // Fetch platform credentials from DB for exchange
@@ -184,7 +189,7 @@ export async function handleOAuthCallback(
       await import('@/lib/server/domains/platform-credentials/platform-credential.service')
     const creds = await getPlatformCredentials(integrationType)
     if (!creds) {
-      return redirectResponse(errorUrl(tenantUrl, 'credentials_not_configured'))
+      return redirectResponse(fail('credentials_not_configured'))
     }
     credentials = creds
   }
@@ -203,7 +208,7 @@ export async function handleOAuthCallback(
     const { saveIntegration } = await import('./save')
     await saveIntegration(integrationType, { principalId, ...exchangeResult })
 
-    const successUrl = buildSettingsUrl(tenantUrl, settingsPath, integrationType, 'connected')
+    const successUrl = buildSettingsUrl(workspaceUrl, returnPath, integrationType, 'connected')
     return redirectResponse(successUrl, [clearCookie(cookieName, isSecureRequest(request))])
   } catch (err) {
     log.error({ err, integration_type: integrationType }, 'oauth exchange/save failed')
@@ -220,6 +225,6 @@ export async function handleOAuthCallback(
       }
     }
 
-    return redirectResponse(errorUrl(tenantUrl, 'exchange_failed'))
+    return redirectResponse(fail('exchange_failed'))
   }
 }

@@ -20,6 +20,7 @@ import { NotFoundError, ValidationError, ForbiddenError } from '@/lib/shared/err
 import { Role } from '@/lib/shared/roles'
 import { PERMISSIONS, type PermissionKey } from '@/lib/shared/permissions'
 import { resolveActorPermissions } from '@/lib/server/policy/permissions'
+import { adjustCanonicalCommentCount } from '@/lib/server/domains/posts/post.merge-ids'
 
 /**
  * Minimal actor shape the comment policy consumes. `permissions` is the
@@ -39,8 +40,11 @@ function actorHolds(actor: CommentActor, permission: PermissionKey): boolean {
 }
 import { createActivity } from '@/lib/server/domains/activity/activity.service'
 import { dispatchCommentUpdated, buildEventActor } from '@/lib/server/events/dispatch'
-import { commentMarkdownToTiptapJson } from '@/lib/server/markdown-tiptap'
-import { sanitizeTiptapContent } from '@/lib/server/sanitize-tiptap'
+import { getPortalConfig } from '@/lib/server/domains/settings/settings.service'
+import { recordAuditEvent } from '@/lib/server/audit/log'
+import { isTeamMember as roleIsTeamMember } from '@/lib/shared/roles'
+import { prepareCommentContent } from './comment-content'
+import { contentHoldReason } from '@/lib/server/content/content-holds'
 import type { TiptapContent } from '@/lib/shared/db-types'
 import type { CommentPermissionCheckResult } from './comment.types'
 import { logger } from '@/lib/server/logger'
@@ -220,12 +224,21 @@ export async function userEditComment(
   }
 
   const trimmed = content.trim()
-  // Sanitize caller-supplied JSON before storage so the render fast-path
-  // can trust it. See resolveContentJson in comment.service.ts for the
-  // same policy on creates.
-  const nextContentJson = options?.contentJson
-    ? sanitizeTiptapContent(options.contentJson)
-    : commentMarkdownToTiptapJson(trimmed)
+  const authorIsTeamMember = roleIsTeamMember(actor.role)
+  const prepared = await prepareCommentContent({
+    content: trimmed,
+    contentJson: options?.contentJson,
+    authorIsTeamMember,
+    principalId: actor.principalId,
+  })
+
+  const portalConfig = await getPortalConfig()
+  const holdReason = authorIsTeamMember
+    ? null
+    : contentHoldReason(portalConfig.moderationDefault, prepared.contentJson, prepared.content)
+  const wasPublished = existingComment.moderationState === 'published'
+  const nextModerationState =
+    holdReason && wasPublished ? ('pending' as const) : existingComment.moderationState
 
   const updatedComment = await db.transaction(async (tx) => {
     if (actor.principalId) {
@@ -239,7 +252,14 @@ export async function userEditComment(
 
     const [result] = await tx
       .update(postComments)
-      .set({ content: trimmed, contentJson: nextContentJson, updatedAt: new Date() })
+      .set({
+        content: prepared.content,
+        contentJson: prepared.contentJson,
+        updatedAt: new Date(),
+        ...(nextModerationState !== existingComment.moderationState
+          ? { moderationState: nextModerationState }
+          : {}),
+      })
       .where(eq(postComments.id, commentId))
       .returning()
 
@@ -247,8 +267,30 @@ export async function userEditComment(
       throw new NotFoundError('COMMENT_NOT_FOUND', `Comment with ID ${commentId} not found`)
     }
 
+    if (wasPublished && nextModerationState === 'pending' && !result.isPrivate) {
+      await tx
+        .update(posts)
+        .set({ commentCount: sql`GREATEST(${posts.commentCount} - 1, 0)` })
+        .where(eq(posts.id, existingComment.postId))
+      await adjustCanonicalCommentCount(existingComment.postId, -1, tx)
+    }
+
     return result
   })
+
+  if (wasPublished && nextModerationState === 'pending') {
+    await recordAuditEvent({
+      event: 'comment.moderation.held',
+      actor: { role: actor.role, type: 'user' },
+      target: { type: 'comment', id: commentId },
+      after: { moderationState: 'pending' },
+      metadata: {
+        postId: existingComment.postId,
+        reason: holdReason,
+        previouslyPublished: true,
+      },
+    })
+  }
 
   dispatchCommentUpdated(
     buildEventActor({ principalId: actor.principalId }),
@@ -336,6 +378,9 @@ export async function softDeleteComment(
           ...(shouldUnpin ? { pinnedCommentId: null } : {}),
         })
         .where(eq(posts.id, comment.postId))
+    }
+    if (shouldDecrementCount) {
+      await adjustCanonicalCommentCount(comment.postId, -1, tx)
     }
 
     return true

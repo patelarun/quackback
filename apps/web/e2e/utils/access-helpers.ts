@@ -20,8 +20,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 function runScript(scriptRelPath: string, args: string[]): string {
   const scriptPath = resolve(__dirname, scriptRelPath)
-  // execFileSync (no shell) so test args can't be interpreted as shell syntax.
-  return execFileSync('dotenv', ['-e', '../../.env', '--', 'bun', scriptPath, ...args], {
+  // bun --env-file, not the dotenv CLI: GitHub runners ship a Ruby dotenv
+  // first on PATH that rejects -e. execFileSync so args stay uninterpreted.
+  return execFileSync('bun', ['--env-file=../../.env', scriptPath, ...args], {
     encoding: 'utf-8',
     cwd: resolve(__dirname, '../..'), // apps/web
   }).trim()
@@ -67,21 +68,21 @@ export function setWorkspaceAnon(enabled: boolean): void {
  * public sign-in methods. Always call `setPortalAuthMethods('restore')` in a
  * `finally` block so subsequent tests/dev aren't left with a broken portal.
  *
- * Busts the tenant-settings cache for the same reason `setPortalVisibility`
+ * Busts the workspace-settings cache for the same reason `setPortalVisibility`
  * does: `portal_config` is written as raw SQL, so a running server keeps
  * serving the sign-in methods it cached until the key is dropped.
  */
 export function setPortalAuthMethods(action: 'disable' | 'restore' | 'enable-magic-link'): void {
   runScript('../scripts/set-portal-auth-methods.ts', [action])
-  runScript('../scripts/bust-caches.ts', ['settings:tenant'])
+  runScript('../scripts/bust-caches.ts', ['settings:workspace'])
 }
 
 /**
- * Flush the magic-link per-email rate-limit keys from Redis/Dragonfly so that
- * repeated e2e runs on the same email addresses don't hit the sign-in limiter.
- * No-op when no keys exist. Delegates to db-helpers' script-backed
- * implementation (the single owner of the signin:magiclink:* key prefix),
- * which uses ioredis directly and so also works in CI.
+ * Flush the magic-link per-email rate-limit buckets so that repeated e2e runs
+ * on the same email addresses don't hit the sign-in limiter. No-op when no rows
+ * exist. Delegates to db-helpers' script-backed implementation (the single
+ * owner of the signin:magiclink:* key prefix), which goes straight to the
+ * database and so also works in CI.
  */
 export function flushMagicLinkRateLimit(): void {
   clearSigninRateLimit()
@@ -100,7 +101,7 @@ export interface SeedIdpConfig {
 }
 
 /**
- * Drop the tenant-settings + configured-integration-types Redis caches so the
+ * Drop the workspace-settings + configured-integration-types caches so the
  * running dev server immediately reflects a raw-SQL provider mutation (these
  * caches normally only invalidate via the app's own write paths).
  *
@@ -110,7 +111,7 @@ export interface SeedIdpConfig {
  * compares the version before it will rebuild.
  */
 function invalidateAuthCaches(): void {
-  runScript('../scripts/bust-caches.ts', ['settings:tenant', 'platform-cred:configured-types'])
+  runScript('../scripts/bust-caches.ts', ['settings:workspace', 'platform-cred:configured-types'])
 }
 
 /**
@@ -131,7 +132,7 @@ export function removeIdentityProvider(registrationId: string): void {
 }
 
 /**
- * Set the portal visibility to 'private' or 'public' and bust the tenant-settings
+ * Set the portal visibility to 'private' or 'public' and bust the workspace-settings
  * cache so the running dev server sees the change immediately.
  *
  * Always restore to 'public' in a `finally` block so subsequent tests and dev
@@ -139,9 +140,9 @@ export function removeIdentityProvider(registrationId: string): void {
  */
 export function setPortalVisibility(visibility: 'private' | 'public'): void {
   runScript('../scripts/set-portal-visibility.ts', [visibility])
-  // The portal-access decision is cached under 'settings:tenant'. Drop it so
+  // The portal-access decision is cached under 'settings:workspace'. Drop it so
   // the dev server evaluates the new visibility on the next request.
-  runScript('../scripts/bust-caches.ts', ['settings:tenant'])
+  runScript('../scripts/bust-caches.ts', ['settings:workspace'])
 }
 
 /**

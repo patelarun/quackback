@@ -7,6 +7,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'happy-dom',
+    maxWorkers: process.env.CI ? 4 : undefined,
+    fileParallelism: true,
+    pool: 'forks',
     // The default 5s is too tight for a ~590-file suite run fully in parallel:
     // a test's first `await import()` of a heavy module graph pays that graph's
     // esbuild transform inside the timed body, and under CPU saturation that
@@ -16,15 +19,13 @@ export default defineConfig({
     testTimeout: 15_000,
     include: ['src/**/*.test.tsx', 'src/**/*.test.ts'],
     setupFiles: [path.resolve(__dirname, '../../vitest.setup.ts')],
-    exclude: [
-      '**/node_modules/**',
-      '**/.output/**',
-      '**/e2e/**',
-      // TanStack route for /admin/automation/test, not a Vitest suite.
-      'src/routes/admin/automation.test.tsx',
-    ],
+    exclude: ['**/node_modules/**', '**/.output/**', '**/e2e/**'],
     env: {
-      DATABASE_URL: 'postgresql://postgres:password@localhost:5432/quackback_test',
+      // Overridable, because `quackback_test` is shared with every other
+      // checkout on the machine and a branch mid-rename needs a schema the
+      // others would fail against. Default unchanged.
+      DATABASE_URL:
+        process.env.DATABASE_URL ?? 'postgresql://postgres:password@localhost:5432/quackback_test',
     },
   },
   resolve: {

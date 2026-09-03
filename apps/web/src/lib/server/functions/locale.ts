@@ -1,4 +1,5 @@
 import { createServerFn } from '@tanstack/react-start'
+import { z } from 'zod'
 import {
   loadPortalMessages,
   readVisitorLocaleCookie,
@@ -56,3 +57,35 @@ export async function loadPortalIntl(): Promise<{
   const messages = await loadPortalMessages(locale)
   return { locale, messages }
 }
+
+/**
+ * Resolve the widget locale on the server so SSR and hydration agree.
+ *
+ * Precedence matches the rest of the customer-facing surfaces: the host page's
+ * `?locale=` init option or the visitor's own switcher choice first, then the
+ * workspace's configured default language, then Accept-Language. All of it is
+ * read server-side because navigator/URL access during render would diverge
+ * from SSR and trigger React hydration error #418 (issue #133).
+ *
+ * Lives here rather than in `routes/widget.tsx` because route files are
+ * client-bundled: reaching into `settings.service` from one trips the
+ * `no-restricted-imports` policy.
+ */
+export const getWidgetLocaleFn = createServerFn({ method: 'GET' })
+  .validator(z.object({ explicitLocale: z.string().optional() }))
+  .handler(async ({ data }) => {
+    const { getRequestHeaders } = await import('@tanstack/react-start/server')
+    const { getPortalConfig } = await import('@/lib/server/domains/settings/settings.service')
+    const headers = getRequestHeaders()
+    const workspaceDefault = await getPortalConfig()
+      .then((config) => config.defaultLocale ?? null)
+      .catch(() => null)
+
+    return resolveCustomerFacingLocale({
+      // The host page's explicit option outranks the visitor cookie: an
+      // embedder that pins a language means it for that embed.
+      visitorChoice: data.explicitLocale ?? readVisitorLocaleCookie(headers.get('cookie')),
+      workspaceDefault,
+      acceptLanguage: headers.get('accept-language'),
+    })
+  })

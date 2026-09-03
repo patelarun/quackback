@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useIntl } from 'react-intl'
+import { Link } from '@tanstack/react-router'
 import { ConfirmDialog } from '@/components/shared/confirm-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -93,7 +94,7 @@ export function AssistantDeploymentCard({
                 ? intl.formatMessage({
                     id: 'automation.agent.deployment.unavailable',
                     defaultMessage:
-                      'Enable the support inbox to use automatic replies in Messenger.',
+                      'Turn on Support in Settings → General to use automatic replies in Messenger.',
                   })
                 : live
                   ? intl.formatMessage({
@@ -125,7 +126,21 @@ export function AssistantDeploymentCard({
                     defaultMessage: 'Enable automatic replies',
                   })}
             </Button>
-          ) : null}
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 w-full sm:min-h-9 sm:w-auto"
+              asChild
+            >
+              <Link to="/admin/settings/general">
+                {intl.formatMessage({
+                  id: 'automation.agent.deployment.openGeneral',
+                  defaultMessage: 'Open product settings',
+                })}
+              </Link>
+            </Button>
+          )}
         </div>
         {message && (
           <p
@@ -163,7 +178,7 @@ export function AssistantDeploymentCard({
             ? intl.formatMessage({
                 id: 'automation.agent.deployment.enableConfirmDescription',
                 defaultMessage:
-                  'The AI agent will begin answering customers using your saved settings. Test the agent before enabling it.',
+                  'The AI agent will start answering new customer messages in Messenger using your saved settings.',
               })
             : intl.formatMessage({
                 id: 'automation.agent.deployment.pauseConfirmDescription',

@@ -1,5 +1,12 @@
 import { db, settings, eq } from '@/lib/server/db'
 import { invalidateSettingsCache } from '@/lib/server/domains/settings/settings.helpers'
+import {
+  DEFAULT_PORTAL_CONFIG,
+  DEFAULT_WIDGET_CONFIG,
+  featureFlagsForUseCase,
+} from '@/lib/server/domains/settings/settings.types'
+import { DEFAULT_ASSISTANT_CONFIG } from '@/lib/shared/assistant/config'
+import { getSetupState } from '@/lib/shared/db-types'
 import { invalidateTierLimitsCache } from '@/lib/server/domains/settings/tier-limits.service'
 import { bumpAuthConfigVersionInTx } from '@/lib/server/auth/config-version'
 import { generateId } from '@quackback/ids'
@@ -10,10 +17,10 @@ import { mergeSetupState } from './reconciler'
 
 /** Production wiring of `ReconcileDeps`. The reconciler is db-agnostic
  *  to keep its tests fast; this is the only place that touches Drizzle
- *  + Redis. */
+ *  + the cache. */
 export function makeReconcileDeps(): ReconcileDeps {
   return {
-    readSettings: async () => {
+    getSettings: async () => {
       const row = await db.query.settings.findFirst()
       if (!row) return null
       return {
@@ -32,7 +39,7 @@ export function makeReconcileDeps(): ReconcileDeps {
       // Bump auth_config_version atomically with the settings write so
       // other pods drop their stale Better-Auth instance on next
       // request. invalidateSettingsCache (called by the reconciler
-      // after this returns) handles the Redis cross-pod broadcast.
+      // after this returns) drops the shared cache rows every pod reads.
       if (setupWorkspace) {
         await mutateSetupStateAtomic(async (current, lockedRow, tx) => {
           await tx.update(settings).set(columnUpdate).where(eq(settings.id, lockedRow.id))
@@ -74,8 +81,19 @@ export function makeReconcileDeps(): ReconcileDeps {
           tierLimits: insert.tierLimits,
           managedFieldPaths: insert.managedFieldPaths,
           authConfigVersion: 1,
+          portalConfig: JSON.stringify(DEFAULT_PORTAL_CONFIG),
+          widgetConfig: JSON.stringify(DEFAULT_WIDGET_CONFIG),
+          assistantConfig: DEFAULT_ASSISTANT_CONFIG,
+          featureFlags: JSON.stringify(
+            featureFlagsForUseCase(getSetupState(insert.setupState ?? null)?.useCase)
+          ),
         })
         .onConflictDoNothing({ target: settings.slug })
+    },
+    applyTierLimits: async (limits) => {
+      const { writeTierLimits } = await import('@/lib/server/domains/settings/tier-limits.write')
+      const result = await writeTierLimits(limits as never, { writer: 'config' })
+      return result.changed
     },
     invalidateSettingsCache: async () => {
       await invalidateSettingsCache()

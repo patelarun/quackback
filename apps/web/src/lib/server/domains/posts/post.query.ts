@@ -23,7 +23,7 @@ import {
   isNull,
   count,
 } from '@/lib/server/db'
-import { getPublicUrlOrNull } from '@/lib/server/storage/s3'
+import { loadAuthors } from '@/lib/server/domains/principals/principal-display'
 import { realEmail } from '@/lib/shared/anonymous-email'
 import { type PostId, type PostCommentId, type PrincipalId } from '@quackback/ids'
 import { NotFoundError } from '@/lib/shared/errors'
@@ -32,6 +32,7 @@ import type { PostWithDetails, PinnedComment } from './post.types'
 import { hydrateMentions } from './hydrate-mentions'
 import type { JSONContent } from '@tiptap/core'
 import type { TiptapContent } from '@/lib/shared/db-types'
+import { contentJsonForClient } from '@/lib/server/content/storage-read-urls'
 
 /**
  * Get a post with full details including board, tags, and comment count.
@@ -121,20 +122,17 @@ export async function getPostWithDetails(postId: PostId): Promise<PostWithDetail
 
   let pinnedComment: PinnedComment | null = null
   if (pinnedCommentData && !pinnedCommentData.deletedAt) {
-    let avatarUrl: string | null = null
-    if (pinnedCommentData.author) {
-      if (pinnedCommentData.author.avatarKey) {
-        avatarUrl = getPublicUrlOrNull(pinnedCommentData.author.avatarKey)
-      }
-      if (!avatarUrl && pinnedCommentData.author.avatarUrl) {
-        avatarUrl = pinnedCommentData.author.avatarUrl
-      }
-    }
+    const author = (await loadAuthors([pinnedCommentData.principalId])).get(
+      pinnedCommentData.principalId
+    )
+    const avatarUrl = author?.avatarUrl ?? null
 
     const pinnedRawContentJson = pinnedCommentData.contentJson ?? null
-    const pinnedHydratedContentJson = pinnedRawContentJson
-      ? ((await hydrateMentions(pinnedRawContentJson as JSONContent)) as TiptapContent | null)
-      : null
+    const pinnedHydratedContentJson = contentJsonForClient(
+      pinnedRawContentJson
+        ? ((await hydrateMentions(pinnedRawContentJson as JSONContent)) as TiptapContent | null)
+        : null
+    )
     pinnedComment = {
       id: pinnedCommentData.id,
       content: pinnedCommentData.content,
@@ -148,9 +146,13 @@ export async function getPostWithDetails(postId: PostId): Promise<PostWithDetail
   }
 
   // Hydrate mention labels on the post body so renamed users render correctly.
-  const hydratedPostContentJson = post.contentJson
-    ? ((await hydrateMentions(post.contentJson as JSONContent)) as TiptapContent | null)
-    : post.contentJson
+  // Remint storage read tokens after that: persist stays unsigned, and posts
+  // created before private-object tokens existed still have to render.
+  const hydratedPostContentJson = contentJsonForClient(
+    post.contentJson
+      ? ((await hydrateMentions(post.contentJson as JSONContent)) as TiptapContent | null)
+      : post.contentJson
+  )
 
   // Cast needed: columns selection omits heavy internal fields (embedding, searchVector,
   // etc.) that no caller reads, but PostWithDetails extends the full Post type.

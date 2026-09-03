@@ -107,7 +107,7 @@ export async function requireHelpCenter(): Promise<CallToolResult | null> {
     content: [
       {
         type: 'text',
-        text: 'Error: Help center is not enabled. Enable it in Settings > Features.',
+        text: 'Error: Help center is not enabled. Enable it in Settings → General.',
       },
     ],
   }
@@ -170,9 +170,10 @@ export function registerTool<TArgs>(
     } catch (err) {
       return errorResult(err)
     }
-  }) as unknown as ToolCallback<z.ZodRawShape>
+  }) as unknown as ToolCallback<never>
 
-  server.tool(def.name, def.description, def.schema, def.annotations, wrapped)
+  // MCP SDK still types against an older Zod shape; the runtime schema is ours.
+  server.tool(def.name, def.description, def.schema as never, def.annotations, wrapped)
 }
 
 // ============================================================================

@@ -38,6 +38,15 @@ interface WidgetUser {
 interface WidgetAuthContextValue {
   user: WidgetUser | null
   isIdentified: boolean
+  /**
+   * Whether the widget knows yet who this visitor is. False from mount until
+   * the portal session hydrates or the SDK's first `quackback:identify`
+   * (named, anonymous, or clear) has been handled — the SDK always sends one
+   * right after `quackback:ready`. While false, `isIdentified === false` means
+   * "not yet", not "anonymous"; identity-dependent chrome (the Tickets tab)
+   * should hold its initial state rather than commit to the anonymous shape.
+   */
+  identityResolved: boolean
   /** Whether verified identity is required (inline email capture disabled) */
   hmacRequired: boolean
   /** Ensures a session exists (identified or anonymous). Returns true if ready. */
@@ -51,6 +60,9 @@ interface WidgetAuthContextValue {
   metadata: WidgetMetadata | null
   /** Increments when the session token changes — use in query keys to trigger refetch */
   sessionVersion: number
+  /** Latest sessionVersion, readable inside async handlers after ensureSession()
+   *  may have bumped it (the rendered `sessionVersion` closure would be stale). */
+  getSessionVersion: () => number
 }
 
 const WidgetAuthContext = createContext<WidgetAuthContextValue | null>(null)
@@ -91,6 +103,7 @@ export function WidgetAuthProvider({
   const queryClient = useQueryClient()
   const [user, setUser] = useState<WidgetUser | null>(null)
   const [sessionVersion, setSessionVersion] = useState(0)
+  const [identityResolved, setIdentityResolved] = useState(false)
   const isIdentified = user !== null
   const sessionReadyRef = useRef(false)
   const sessionSourceRef = useRef<SessionSource>(null)
@@ -133,6 +146,7 @@ export function WidgetAuthProvider({
   }, [locale])
 
   const sessionVersionRef = useRef(0)
+  const getSessionVersion = useCallback(() => sessionVersionRef.current, [])
   const storeToken = useCallback((token: string) => {
     setWidgetToken(token)
     sessionReadyRef.current = true
@@ -276,6 +290,7 @@ export function WidgetAuthProvider({
       sendToHost({ type: 'quackback:identify-result', success: true, user: portalUser })
       sendToHost({ type: 'quackback:auth-change', user: portalUser })
     }
+    setIdentityResolved(true)
   }, [portalSessionToken, portalUser, storeToken])
 
   // Restore a persisted anonymous session on mount so a returning visitor's
@@ -339,6 +354,11 @@ export function WidgetAuthProvider({
         applyIdentifyResult(await response.json())
       } catch {
         sendToHost({ type: 'quackback:identify-result', success: false, error: 'NETWORK_ERROR' })
+      } finally {
+        // Resolved only once the round trip settles: between the message and
+        // the response `user` is still null, and consumers must not read that
+        // window as "this visitor is anonymous".
+        setIdentityResolved(true)
       }
     }
 
@@ -346,6 +366,7 @@ export function WidgetAuthProvider({
       // Don't eagerly create anonymous session — it will be created lazily
       // on first write action (vote, comment, post) via ensureSessionThen.
       setUser(null)
+      setIdentityResolved(true)
       sendToHost({ type: 'quackback:identify-result', success: true, user: null })
       sendToHost({ type: 'quackback:auth-change', user: null })
     }
@@ -389,6 +410,7 @@ export function WidgetAuthProvider({
             sessionVersionRef.current += 1
             setSessionVersion(sessionVersionRef.current)
             setUser(null)
+            setIdentityResolved(true)
             sendToHost({ type: 'quackback:identify-result', success: true, user: null })
             sendToHost({ type: 'quackback:auth-change', user: null })
             break
@@ -401,6 +423,7 @@ export function WidgetAuthProvider({
             break
           case 'skip':
             // Portal session takes precedence — ack without changing state
+            setIdentityResolved(true)
             sendToHost({ type: 'quackback:identify-result', success: true, user: user ?? null })
             sendToHost({ type: 'quackback:auth-change', user: user ?? null })
             break
@@ -418,6 +441,7 @@ export function WidgetAuthProvider({
     () => ({
       user,
       isIdentified,
+      identityResolved,
       hmacRequired: hmacRequired ?? false,
       ensureSession,
       ensureSessionThen,
@@ -425,16 +449,19 @@ export function WidgetAuthProvider({
       emitEvent,
       metadata: widgetMetadata,
       sessionVersion,
+      getSessionVersion,
     }),
     [
       user,
       isIdentified,
+      identityResolved,
       ensureSession,
       ensureSessionThen,
       closeWidget,
       emitEvent,
       widgetMetadata,
       sessionVersion,
+      getSessionVersion,
     ]
   )
 

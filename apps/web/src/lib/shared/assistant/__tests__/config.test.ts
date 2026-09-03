@@ -77,6 +77,7 @@ describe('assistantConfigSchema', () => {
             documents: true,
             status: false,
           },
+          toolRules: {},
         },
         copilot: {
           capabilities: { qa: true },
@@ -85,11 +86,12 @@ describe('assistantConfigSchema', () => {
             posts: true,
             pastConversations: true,
             internalNotes: true,
-            tickets: false,
-            changelog: false,
+            tickets: true,
+            changelog: true,
             documents: true,
             status: true,
           },
+          toolRules: {},
         },
       },
     })
@@ -171,6 +173,7 @@ describe('avatar URL policy', () => {
       ' http://example.com/avatar.png ',
       'https://cdn.example.com/avatar.webp?size=80',
       'HTTPS://EXAMPLE.COM/avatar.png',
+      '/api/storage/assistant-avatars/2026/08/face.png',
     ]) {
       const config = validConfig()
       config.identity.avatarUrl = avatarUrl
@@ -400,8 +403,8 @@ describe('v3 per-agent sub-config', () => {
       posts: true,
       pastConversations: true,
       internalNotes: true,
-      tickets: false,
-      changelog: false,
+      tickets: true,
+      changelog: true,
       documents: true,
       status: true,
     })

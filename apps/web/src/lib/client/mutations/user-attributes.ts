@@ -42,17 +42,7 @@ export function useUpdateUserAttribute() {
       description?: string | null
       type?: 'string' | 'number' | 'boolean' | 'date' | 'currency'
       currencyCode?:
-        | 'USD'
-        | 'EUR'
-        | 'GBP'
-        | 'JPY'
-        | 'CAD'
-        | 'AUD'
-        | 'CHF'
-        | 'CNY'
-        | 'INR'
-        | 'BRL'
-        | null
+        'USD' | 'EUR' | 'GBP' | 'JPY' | 'CAD' | 'AUD' | 'CHF' | 'CNY' | 'INR' | 'BRL' | null
       externalKey?: string | null
     }) => updateUserAttributeFn({ data: input }),
     onSuccess: () => {

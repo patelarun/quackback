@@ -1,15 +1,20 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { SSO_OAUTH_CALLBACK_PREFIX } from '@/lib/shared/sso-test-keys'
+import { WorkspaceKeyedCache } from '@/lib/server/workspaces/workspace-keyed'
 
 /**
  * Simple rate limiter for OAuth client registration.
  * Limits to 10 registrations per IP per hour to prevent spam/abuse.
+ *
+ * Per workspace: the budget is a per-workspace resource, so a shared counter lets
+ * one address exhaust every workspace's registration allowance at once, and
+ * lets a legitimate registration be refused because of traffic aimed elsewhere.
  */
-const registrationAttempts = new Map<string, { count: number; windowStart: number }>()
+const registrationAttempts = new WorkspaceKeyedCache<{ count: number; windowStart: number }>()
 const REG_WINDOW_MS = 60 * 60 * 1000 // 1 hour
 const REG_MAX = 10
 
-function isRegistrationRateLimited(request: Request): boolean {
+export function isRegistrationRateLimited(request: Request): boolean {
   const ip =
     request.headers.get('cf-connecting-ip') ??
     request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
@@ -38,7 +43,7 @@ export const Route = createFileRoute('/api/auth/$')({
       GET: async ({ request }) => {
         const url = new URL(request.url)
         // Intercept any genericOAuth callback before Better-Auth: a hit on
-        // `sso-test:<state>` in Redis means this is an admin test sign-in;
+        // `sso-test:<state>` in the KV store means this is an admin test sign-in;
         // a miss returns null and falls through to the real OAuth handler.
         if (url.pathname.startsWith(SSO_OAUTH_CALLBACK_PREFIX)) {
           const { handleSsoTestCallback, renderSsoTestCallbackHtml } =

@@ -36,8 +36,10 @@ interface AuthCommentsSectionProps {
   currentStatusId?: string | null
   /** Whether the current user is a team member */
   isTeamMember?: boolean
-  /** Link comment authors to their public profile (portal only). */
+  /** Link comment authors to a profile behind a hover card. */
   linkAuthors?: boolean
+  /** Destination for author links. Admin uses the enriched hover card. */
+  authorLinkTo?: 'portal' | 'admin'
   /** Hide the comment form area entirely (for readonly previews) */
   hideCommentForm?: boolean
   /** Callback when a comment is deleted */
@@ -48,6 +50,8 @@ interface AuthCommentsSectionProps {
   onRestoreComment?: (commentId: PostCommentId) => void
   /** ID of the comment currently being restored */
   restoringCommentId?: PostCommentId | null
+  onImageUpload?: (file: File) => Promise<string>
+  canModerate?: boolean
 }
 
 /**
@@ -72,11 +76,14 @@ export function AuthCommentsSection({
   currentStatusId,
   isTeamMember,
   linkAuthors = false,
+  authorLinkTo = 'portal',
   hideCommentForm,
   onDeleteComment,
   deletingCommentId,
   onRestoreComment,
   restoringCommentId,
+  onImageUpload,
+  canModerate = false,
 }: AuthCommentsSectionProps) {
   const router = useRouter()
   const queryClient = useQueryClient()
@@ -164,11 +171,14 @@ export function AuthCommentsSection({
       currentStatusId={currentStatusId}
       isTeamMember={isTeamMember}
       linkAuthors={linkAuthors}
+      authorLinkTo={authorLinkTo}
       hideCommentForm={hideCommentForm}
       onDeleteComment={onDeleteComment}
       deletingCommentId={deletingCommentId}
       onRestoreComment={onRestoreComment}
       restoringCommentId={restoringCommentId}
+      onImageUpload={onImageUpload}
+      canModerate={canModerate}
     />
   )
 }

@@ -13,7 +13,7 @@
 # ============================================================================
 
 # Base image with Bun
-FROM oven/bun:1.3.11 AS base
+FROM oven/bun:1.4.0 AS base
 WORKDIR /app
 
 # ============================================================================
@@ -77,10 +77,26 @@ RUN bun build packages/db/src/migrate.ts \
     --bundle \
     --outfile=/tmp/switch-help-center-base-locale.mjs
 
+# The fleet migrator, bundled the same way and for a stronger reason: under
+# pooled tenancy it is a role of this image, not a developer script. It reads
+# the control registry, claims the workspaces behind their target version and
+# migrates each one, and a release rollout invokes it between the schema step
+# and the deploy step. Left out of the image, `QUACKBACK_ROLE=migrator` is a
+# role nothing can actually run, and the migrate-then-deploy gate has no first
+# half — the whole point of building one artifact is that it carries every role
+# the fleet needs.
+#
+# It pulls in `apps/web/src/lib/server/**`, so it is bundled from the repo root
+# where the `@/` tsconfig path resolves.
+RUN bun build apps/web/scripts/fleet-migrator.ts \
+    --target=bun \
+    --bundle \
+    --outfile=/tmp/fleet-migrator.mjs
+
 # ============================================================================
 # Production runner
 # ============================================================================
-FROM oven/bun:1.3.11-alpine AS runner
+FROM oven/bun:1.4.0-alpine AS runner
 
 WORKDIR /app
 
@@ -103,6 +119,7 @@ COPY --from=builder --chown=quackback:nodejs /tmp/seed.mjs ./seed.mjs
 # language the help center is authored in, so an operator invokes it by hand
 # (`docker compose exec app bun /app/switch-help-center-base-locale.mjs`).
 COPY --from=builder --chown=quackback:nodejs /tmp/switch-help-center-base-locale.mjs ./switch-help-center-base-locale.mjs
+COPY --from=builder --chown=quackback:nodejs /tmp/fleet-migrator.mjs ./fleet-migrator.mjs
 COPY --from=builder --chown=quackback:nodejs /app/packages/db/drizzle ./drizzle
 
 # Copy entrypoint script

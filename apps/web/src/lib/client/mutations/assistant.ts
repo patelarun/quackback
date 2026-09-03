@@ -9,6 +9,7 @@ import {
   reorderGuidanceRulesFn,
 } from '@/lib/server/functions/assistant-guidance'
 import {
+  updateAssistantToolRulesFn,
   getAssistantSettingsFn,
   updateAssistantIdentityFn,
   updateAssistantVoiceFn,
@@ -39,7 +40,6 @@ function setAssistantConfig(
   queryClient.setQueryData<AssistantSettings>(assistantKeys.settings(), (current) =>
     current ? { ...current, ...result } : current
   )
-  void queryClient.invalidateQueries({ queryKey: assistantKeys.configChangelog() })
 }
 
 export function useCreateGuidanceRule() {
@@ -48,7 +48,6 @@ export function useCreateGuidanceRule() {
     mutationFn: (input: GuidanceRuleInput) => createGuidanceRuleFn({ data: input }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: assistantKeys.guidanceRules() })
-      void queryClient.invalidateQueries({ queryKey: assistantKeys.configChangelog() })
     },
   })
 }
@@ -60,7 +59,6 @@ export function useUpdateGuidanceRule() {
       updateGuidanceRuleFn({ data: { id, ...input } }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: assistantKeys.guidanceRules() })
-      void queryClient.invalidateQueries({ queryKey: assistantKeys.configChangelog() })
     },
   })
 }
@@ -71,7 +69,6 @@ export function useDeleteGuidanceRule() {
     mutationFn: (id: AssistantGuidanceRuleId) => deleteGuidanceRuleFn({ data: { id } }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: assistantKeys.guidanceRules() })
-      void queryClient.invalidateQueries({ queryKey: assistantKeys.configChangelog() })
     },
   })
 }
@@ -82,7 +79,6 @@ export function useReorderGuidanceRules() {
     mutationFn: (ids: AssistantGuidanceRuleId[]) => reorderGuidanceRulesFn({ data: { ids } }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: assistantKeys.guidanceRules() })
-      void queryClient.invalidateQueries({ queryKey: assistantKeys.configChangelog() })
     },
   })
 }
@@ -114,6 +110,15 @@ export function useUpdateAssistantAgentKnowledge() {
   })
 }
 
+export function useUpdateAssistantToolRules() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (data: Parameters<typeof updateAssistantToolRulesFn>[0]['data']) =>
+      updateAssistantToolRulesFn({ data }),
+    onSuccess: (result) => setAssistantConfig(queryClient, result),
+  })
+}
+
 export function useUpdateAssistantCopilotKnowledge() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -139,7 +144,6 @@ export function useUpdateWidgetAssistantDeployment() {
       updateWidgetAssistantDeploymentFn({ data }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: settingsQueries.widgetConfig().queryKey })
-      void queryClient.invalidateQueries({ queryKey: assistantKeys.configChangelog() })
     },
   })
 }

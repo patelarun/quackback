@@ -10,10 +10,15 @@ import {
   redirect,
   useRouterState,
 } from '@tanstack/react-router'
-import { getSetupState, isOnboardingComplete } from '@/lib/shared/db-types'
+import {
+  getSetupState,
+  isOnboardingComplete,
+  needsCloudOnboardingWizard,
+} from '@/lib/shared/db-types'
+import { isAdmin } from '@/lib/shared/roles'
 import appCss from '../globals.css?url'
 import { getBootstrapData, type BootstrapData } from '@/lib/server/functions/bootstrap'
-import type { TenantSettings } from '@/lib/shared/types/settings'
+import type { WorkspaceSettings } from '@/lib/shared/types/settings'
 import { redactSettingsForClient } from '@/lib/shared/redact-portal-config'
 import { ThemeProvider } from '@/components/theme-provider'
 import { resolveDocumentTheme } from '@/lib/shared/theme'
@@ -28,7 +33,7 @@ export interface RouterContext {
   queryClient: QueryClient
   baseUrl?: string
   session?: BootstrapData['session']
-  settings?: TenantSettings | null
+  settings?: WorkspaceSettings | null
   userRole?: Role | null
   themeCookie?: BootstrapData['themeCookie']
   prefersColorScheme?: BootstrapData['prefersColorScheme']
@@ -37,6 +42,8 @@ export interface RouterContext {
   acceptLanguageLocale?: SupportedLocale
   visitorLocale?: SupportedLocale
   updateBannerDismissedVersion?: BootstrapData['updateBannerDismissedVersion']
+  billingEnabled?: boolean
+  cloudEnabled?: boolean
 }
 
 // Paths that are allowed before onboarding is complete
@@ -70,6 +77,8 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       acceptLanguageLocale,
       visitorLocale,
       updateBannerDismissedVersion,
+      billingEnabled,
+      cloudEnabled,
     } = await getBootstrapData()
 
     if (!isOnboardingExempt(location.pathname)) {
@@ -77,25 +86,32 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       if (!isOnboardingComplete(setupState)) {
         throw redirect({ to: '/onboarding' })
       }
+      // A provisioned workspace can look complete while the owner has not
+      // chosen a name, URL, or goal. Visitors stay on the portal; only a
+      // signed-in admin is sent into the wizard.
+      if (session?.user && isAdmin(userRole) && needsCloudOnboardingWizard(setupState)) {
+        throw redirect({ to: '/onboarding' })
+      }
     }
 
     // Redact server-only material from the settings placed into the router
     // context — everything returned here is dehydrated into the SSR HTML.
     // redactSettingsForClient strips the widgetSecret/tier/setup columns from
-    // the raw row and the access policy fields (allowedDomains, widgetSignIn,
-    // allowedSegmentIds) from portalConfig, recursively covering both the
-    // parsed TenantSettings shape and the raw DB row riding on `.settings`.
+    // the raw row, the access policy fields (allowedDomains, widgetSignIn,
+    // allowedSegmentIds) from portalConfig, and non-public statusConfig fields
+    // (segment ids, email kill-switch), recursively covering both the
+    // parsed WorkspaceSettings shape and the raw DB row riding on `.settings`.
     // Nothing on the client legitimately reads any of it — the admin
     // Security → Portal tab fetches the full config via its own
     // settingsQueries.portalConfig() query, which is unaffected, and the
     // domain gate runs server-side via evaluateMyPortalAccessFn.
-    const redactedSettings: TenantSettings | null = settings
-      ? (redactSettingsForClient(settings) as TenantSettings)
+    const redactedSettings: WorkspaceSettings | null = settings
+      ? (redactSettingsForClient(settings) as WorkspaceSettings)
       : settings
 
     // Drop the raw DB row entirely from the client-bound context. Redaction
     // already stripped its secrets, but the row is a full duplicate of the
-    // parsed TenantSettings fields (name, slug, portalConfig, brandingConfig,
+    // parsed WorkspaceSettings fields (name, slug, portalConfig, brandingConfig,
     // …) that no client code reads — every consumer reads the parsed top-level
     // fields instead. Emptying it removes one whole settings copy per SSR
     // document. The only server-side readers of `settings.settings.*` are the
@@ -118,6 +134,8 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       acceptLanguageLocale,
       visitorLocale,
       updateBannerDismissedVersion,
+      billingEnabled,
+      cloudEnabled,
     }
   },
   // `match.context` carries the `settings` resolved in beforeLoad, so admin and
@@ -239,7 +257,7 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
   // structuralSharing keeps the array reference stable across store updates that
   // don't change the matched routes, so RootDocument doesn't re-render every tick.
   const routeIds = useRouterState({
-    select: (s) => s.matches.map((m) => m.routeId),
+    select: (s): string[] => s.matches.map((m) => m.routeId),
     structuralSharing: true,
   })
   // The widget honors a `?locale=` override (its SDK appends it); read it so the

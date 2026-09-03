@@ -54,9 +54,10 @@ export const clearSsoClientSecretFn = createServerFn({ method: 'POST' }).handler
       // domain is verified at all: those emails are routed to SSO by
       // default; without the secret, the redirect would 4xx. Force the
       // admin to explicitly remove the affected domains first.
-      const { getTenantSettings } = await import('@/lib/server/domains/settings/settings.service')
-      const tenant = await getTenantSettings()
-      const enforcedRow = tenant?.verifiedDomains.find((d) => d.enforced)
+      const { getWorkspaceSettings } =
+        await import('@/lib/server/domains/settings/settings.service')
+      const workspace = await getWorkspaceSettings()
+      const enforcedRow = workspace?.verifiedDomains.find((d) => d.enforced)
       if (enforcedRow) {
         const { ValidationError } = await import('@/lib/shared/errors')
         throw new ValidationError(
@@ -64,7 +65,7 @@ export const clearSsoClientSecretFn = createServerFn({ method: 'POST' }).handler
           `Disable SSO enforcement on ${enforcedRow.name} before removing the client secret.`
         )
       }
-      const verifiedRow = tenant?.verifiedDomains.find((d) => d.verifiedAt !== null)
+      const verifiedRow = workspace?.verifiedDomains.find((d) => d.verifiedAt !== null)
       if (verifiedRow) {
         const { ValidationError } = await import('@/lib/shared/errors')
         throw new ValidationError(
@@ -102,14 +103,14 @@ export const clearSsoClientSecretFn = createServerFn({ method: 'POST' }).handler
 // =============================================================================
 
 /**
- * Per-domain Redis rate-limit (SET-NX-EX, 10s window). Throws when
- * throttled. Keyed on tenant+domain so admins can verify multiple
+ * Per-domain rate-limit (set-if-absent, 10s window). Throws when
+ * throttled. Keyed on workspace+domain so admins can verify multiple
  * pending domains in parallel without throttling each other.
  */
-async function assertVerifyDomainRateLimit(tenantId: string, domainId: string): Promise<void> {
-  const { getRedis } = await import('@/lib/server/redis')
-  const took = await getRedis().set(`verify-domain:${tenantId}:${domainId}`, '1', 'EX', 10, 'NX')
-  if (took !== 'OK') {
+async function assertVerifyDomainRateLimit(workspaceKey: string, domainId: string): Promise<void> {
+  const { kvSetNx } = await import('@/lib/server/kv/pg-kv')
+  const took = await kvSetNx(`verify-domain:${workspaceKey}:${domainId}`, 1, 10)
+  if (!took) {
     throw new ConflictError(
       'VERIFY_RATE_LIMITED',
       'Slow down — wait a few seconds before retrying.'
@@ -136,9 +137,9 @@ export type VerifyDomainResult =
 /** Read-only listing of the workspace's verified-domain rows. */
 export const getVerifiedDomainsFn = createServerFn({ method: 'GET' }).handler(async () => {
   await requireAuth({ permission: PERMISSIONS.AUTH_MANAGE })
-  const { getTenantSettings } = await import('@/lib/server/domains/settings/settings.service')
-  const tenant = await getTenantSettings()
-  return tenant?.verifiedDomains ?? []
+  const { getWorkspaceSettings } = await import('@/lib/server/domains/settings/settings.service')
+  const workspace = await getWorkspaceSettings()
+  return workspace?.verifiedDomains ?? []
 })
 
 // =============================================================================
@@ -181,6 +182,7 @@ const claimMappingSchema = z.object({
     .object({
       map: z.array(z.object({ claimPath: z.string(), attributeKey: z.string() })).optional(),
       overrideExisting: z.boolean().optional(),
+      syncOnSignIn: z.boolean().optional(),
     })
     .optional(),
 })
@@ -250,6 +252,23 @@ export const upsertIdentityProviderFn = createServerFn({ method: 'POST' })
     const prior = data.id
       ? existing.find((p) => p.id === data.id)
       : existing.find((p) => p.registrationId === data.registrationId)
+
+    // Plan gate. The carve-out is exactly one shape — taking a currently-enabled
+    // provider out of service — so a workspace that loses the entitlement can
+    // still switch SSO off. It deliberately mirrors the lockout check below
+    // rather than the looser `data.enabled !== false`: that form also let a
+    // caller CREATE a provider, persisting a full set of connection details and
+    // an idp.created audit event, merely by sending `enabled: false`. Editing an
+    // already-disabled provider is a reconfiguration, not a take-out-of-service,
+    // and needs the entitlement like any other write.
+    //
+    // No-op on any install without a cloud config.
+    const isTakingProviderOutOfService = data.enabled === false && prior?.enabled === true
+    if (!isTakingProviderOutOfService) {
+      const { requireEntitlement } =
+        await import('@/lib/server/domains/settings/cloud/entitlements')
+      await requireEntitlement('sso')
+    }
 
     // Refuse to disable the workspace's only working sign-in method (lockout).
     // Only a true→false transition on a currently-usable provider can do it.
@@ -416,19 +435,19 @@ export const verifyProviderDomainFn = createServerFn({ method: 'POST' })
   .handler(async ({ data }): Promise<VerifyDomainResult> => {
     await requireAuth({ permission: PERMISSIONS.AUTH_MANAGE })
 
-    const { getTenantSettings, stampVerifiedDomain } =
+    const { getWorkspaceSettings, stampVerifiedDomain } =
       await import('@/lib/server/domains/settings/settings.service')
-    const tenant = await getTenantSettings()
-    if (!tenant?.settings?.id) {
+    const workspace = await getWorkspaceSettings()
+    if (!workspace?.settings?.id) {
       return { verified: false, reason: 'no-pending-domain' }
     }
-    const dom = tenant.verifiedDomains.find(
+    const dom = workspace.verifiedDomains.find(
       (d) => d.id === data.id && d.providerId === data.providerId
     )
     if (!dom) {
       return { verified: false, reason: 'no-pending-domain' }
     }
-    await assertVerifyDomainRateLimit(tenant.settings.id, dom.id)
+    await assertVerifyDomainRateLimit(workspace.settings.id, dom.id)
 
     const { lookupVerificationTxt } = await import('@/lib/server/auth/dns-verify')
     const expected = `qb-domain-verify=${dom.verificationToken}`
