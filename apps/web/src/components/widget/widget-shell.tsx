@@ -108,9 +108,6 @@ interface WidgetShellProps {
    *  desktop hosts only). Collapsing is sticky — it turns auto-expansion off. */
   expandControl?: { expanded: boolean; onToggle: () => void }
   /** Self-hosted always shows the badge. Cloud hides it only after purchase. */
-  /** Workspace slug, for the attribution link's UTM campaign. */
-  orgSlug: string
-  showPoweredBy?: boolean
   children: ReactNode
 }
 
@@ -128,8 +125,6 @@ export function WidgetShell({
   hideTabBar = false,
   panelExpanded = false,
   expandControl,
-  orgSlug,
-  showPoweredBy = true,
   children,
 }: WidgetShellProps) {
   const intl = useIntl()
@@ -480,34 +475,6 @@ export function WidgetShell({
             </motion.div>
           )}
         </AnimatePresence>
-
-        {showPoweredBy ? (
-          /* Right-aligned and set smaller than body copy so the attribution
-             reads as a footnote rather than a call to action. The link, its
-             target and the tracking parameters are unchanged. */
-          <div className="border-t border-border/20 px-4 py-1.5 flex items-center justify-end">
-            <a
-              href={`https://quackback.io?utm_campaign=${encodeURIComponent(orgSlug || 'unknown')}&utm_content=widget&utm_medium=referral&utm_source=powered-by`}
-              target="_blank"
-              className="group inline-flex items-center gap-1 text-[11px] leading-none text-muted-foreground/70 hover:text-foreground transition-all"
-            >
-              <img
-                src="/logo.png"
-                alt=""
-                width={10}
-                height={10}
-                className="opacity-50 group-hover:opacity-100 transition-opacity"
-              />
-              <span>
-                <FormattedMessage
-                  id="widget.shell.poweredBy"
-                  defaultMessage="Powered by {brand}"
-                  values={{ brand: <span className="font-medium">Quackback</span> }}
-                />
-              </span>
-            </a>
-          </div>
-        ) : null}
       </div>
     </div>
   )

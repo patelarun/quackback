@@ -37,7 +37,6 @@ import { portalQueries } from '@/lib/client/queries/portal'
 import { publicChangelogQueries } from '@/lib/client/queries/changelog'
 import { publicHelpCenterQueries } from '@/lib/client/queries/help-center'
 import { fetchBoardCapabilitiesFn } from '@/lib/server/functions/portal'
-import { getShowPoweredByFn } from '@/lib/server/functions/powered-by'
 import { listPublicArticlesFn } from '@/lib/server/functions/help-center'
 import { getWidgetAuthHeaders } from '@/lib/client/widget-auth'
 import { sendToHost } from '@/lib/client/widget-bridge'
@@ -219,8 +218,6 @@ export const Route = createFileRoute('/widget/')({
       new Set(portalData.votedPostIds)
     )
 
-    const showPoweredBy = await getShowPoweredByFn()
-
     return {
       posts: portalData.posts.items.map((p) => ({
         id: p.id,
@@ -299,8 +296,6 @@ export const Route = createFileRoute('/widget/')({
       // widget handoff URL always points at the portal host — not at the widget
       // iframe origin, which may differ in self-hosted deployments.
       portalOrigin: getBaseUrl(),
-      orgSlug: settings?.slug ?? '',
-      showPoweredBy,
     }
   },
   component: WidgetRoute,
@@ -395,8 +390,6 @@ function WidgetPage() {
     assistant,
     team,
     messengerEnabled,
-    orgSlug,
-    showPoweredBy,
   } = Route.useLoaderData()
   const { ensureSession, sessionVersion } = useWidgetAuth()
   const intl = useIntl()
@@ -835,8 +828,6 @@ function WidgetPage() {
       portalAccess={portalAccess}
       portalOrigin={portalOrigin}
       team={team}
-      orgSlug={orgSlug}
-      showPoweredBy={showPoweredBy}
       logoUrl={(home?.showLogo ?? true) ? logoUrl : null}
       headerContent={messengerHeader}
       // The hero backdrop belongs to Home only; detail views keep a plain panel.
