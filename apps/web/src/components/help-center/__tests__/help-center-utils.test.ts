@@ -162,3 +162,23 @@ describe('buildCategoryBreadcrumbs (hierarchical)', () => {
     expect(items[0].label).toBe('Help Center')
   })
 })
+
+describe('buildCategoryBreadcrumbs rootLabel', () => {
+  const flat = [{ id: 'a', parentId: null, slug: 'root', name: 'Root' }]
+
+  // The portal passes the translated help-center name; this module stays
+  // React-free, so it can't reach the IntlProvider itself.
+  it('uses the supplied root label for the first crumb', () => {
+    const items = buildCategoryBreadcrumbs({
+      allCategories: flat,
+      categoryId: 'a',
+      rootLabel: 'Hjälpcenter',
+    })
+    expect(items.map((i) => i.label)).toEqual(['Hjälpcenter', 'Root'])
+  })
+
+  it('defaults to Help Center when no label is supplied', () => {
+    const items = buildCategoryBreadcrumbs({ allCategories: flat, categoryId: 'a' })
+    expect(items[0]).toEqual({ label: 'Help Center', href: '/hc' })
+  })
+})

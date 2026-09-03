@@ -1,5 +1,5 @@
 import { createFileRoute, getRouteApi, notFound } from '@tanstack/react-router'
-import { formatDistanceToNow } from 'date-fns'
+import { FormattedMessage, useIntl } from 'react-intl'
 import {
   getPublicArticleBySlugFn,
   getRelatedPublicArticlesFn,
@@ -19,6 +19,7 @@ import {
 import { JsonLd } from '@/components/json-ld'
 import { buildArticleJsonLd, buildBreadcrumbJsonLd } from '@/lib/shared/json-ld'
 import { stripMarkdownPreview } from '@/lib/shared/utils'
+import { formatRelativeToNow } from '@/lib/shared/relative-time'
 import type { JSONContent } from '@tiptap/react'
 
 const helpCenterApi = getRouteApi('/_portal/hc')
@@ -74,6 +75,7 @@ export const Route = createFileRoute('/_portal/hc/articles/$categorySlug/$articl
 })
 
 function ArticleDetailPage() {
+  const intl = useIntl()
   const { article, related } = Route.useLoaderData()
   const { categorySlug } = Route.useParams()
   const { category, articles, allCategories } = categoryApi.useLoaderData()
@@ -82,10 +84,16 @@ function ArticleDetailPage() {
   const supportEnabled =
     !!settings?.featureFlags?.supportInbox && !!settings?.portalConfig?.support?.enabled
 
+  const helpCenterLabel = intl.formatMessage({
+    id: 'portal.hc.breadcrumbs.helpCenter',
+    defaultMessage: 'Help Center',
+  })
+
   const breadcrumbs = buildCategoryBreadcrumbs({
     allCategories,
     categoryId: category.id,
     articleTitle: article.title,
+    rootLabel: helpCenterLabel,
   })
 
   const headings = extractHeadings(article.contentJson)
@@ -114,7 +122,7 @@ function ArticleDetailPage() {
           />
           <JsonLd
             data={buildBreadcrumbJsonLd([
-              { name: 'Help Center', url: resolvedBaseUrl || '/' },
+              { name: helpCenterLabel, url: resolvedBaseUrl || '/' },
               {
                 name: category.name,
                 url: `${resolvedBaseUrl}/hc/categories/${category.slug}`,
@@ -160,16 +168,32 @@ function ArticleDetailPage() {
                 <div className="flex flex-col gap-0.5">
                   {article.author && (
                     <span className="text-sm text-muted-foreground">
-                      Written By{' '}
-                      <span className="font-semibold text-foreground">{article.author.name}</span>
+                      <FormattedMessage
+                        id="portal.hc.article.writtenBy"
+                        defaultMessage="Written by {author}"
+                        values={{
+                          author: (
+                            <span className="font-semibold text-foreground">
+                              {article.author.name}
+                            </span>
+                          ),
+                        }}
+                      />
                     </span>
                   )}
                   {article.updatedAt && (
                     <span className="text-sm text-muted-foreground">
-                      Last updated{' '}
-                      <span className="font-semibold text-foreground">
-                        {formatDistanceToNow(new Date(article.updatedAt), { addSuffix: true })}
-                      </span>
+                      <FormattedMessage
+                        id="portal.hc.article.lastUpdated"
+                        defaultMessage="Last updated {time}"
+                        values={{
+                          time: (
+                            <span className="font-semibold text-foreground">
+                              {formatRelativeToNow(intl, article.updatedAt)}
+                            </span>
+                          ),
+                        }}
+                      />
                     </span>
                   )}
                 </div>

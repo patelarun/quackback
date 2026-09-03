@@ -68,14 +68,21 @@ function buildAncestorChain<T extends CategoryLikeWithSlug>(flat: T[], id: strin
  * Builds breadcrumb items walking the full ancestor chain of a category.
  * Each non-final crumb links to its category page; the final crumb (article
  * title if provided, otherwise the category name) has no href.
+ *
+ * `rootLabel` is the translated name of the help center itself; callers inside
+ * the portal pass the localized string, since this module stays React-free and
+ * has no access to the IntlProvider.
  */
 export function buildCategoryBreadcrumbs<T extends CategoryLikeWithSlug>(params: {
   allCategories: T[]
   categoryId: string
   articleTitle?: string
+  rootLabel?: string
 }): Array<{ label: string; href?: string }> {
   const chain = buildAncestorChain(params.allCategories, params.categoryId)
-  const items: Array<{ label: string; href?: string }> = [{ label: 'Help Center', href: '/hc' }]
+  const items: Array<{ label: string; href?: string }> = [
+    { label: params.rootLabel ?? 'Help Center', href: '/hc' },
+  ]
 
   if (chain.length === 0) {
     // Unknown id — return just Help Center. The article fallback is

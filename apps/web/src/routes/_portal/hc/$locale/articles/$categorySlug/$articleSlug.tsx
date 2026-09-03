@@ -1,5 +1,5 @@
 import { createFileRoute, getRouteApi, notFound } from '@tanstack/react-router'
-import { formatDistanceToNow } from 'date-fns'
+import { FormattedMessage, useIntl } from 'react-intl'
 import { getPublicArticleBySlugFn } from '@/lib/server/functions/help-center'
 import { RichTextContent, isRichTextContent } from '@/components/ui/rich-text-editor'
 import { EmbedHydration } from '@/components/shared/embed-hydration'
@@ -12,6 +12,7 @@ import {
   computePrevNext,
 } from '@/components/help-center/help-center-article-utils'
 import { prefixHcPath } from '@/lib/shared/help-center-url'
+import { formatRelativeToNow } from '@/lib/shared/relative-time'
 import type { JSONContent } from '@tiptap/react'
 
 const categoryApi = getRouteApi('/_portal/hc/$locale/articles/$categorySlug')
@@ -38,12 +39,19 @@ export const Route = createFileRoute('/_portal/hc/$locale/articles/$categorySlug
 })
 
 function LocaleArticleDetailPage() {
+  const intl = useIntl()
   const { article } = Route.useLoaderData()
   const { locale, categorySlug } = Route.useParams()
   const { category, articles } = categoryApi.useLoaderData()
 
   const breadcrumbs = [
-    { label: 'Help Center', href: prefixHcPath(locale, '/hc') },
+    {
+      label: intl.formatMessage({
+        id: 'portal.hc.breadcrumbs.helpCenter',
+        defaultMessage: 'Help Center',
+      }),
+      href: prefixHcPath(locale, '/hc'),
+    },
     { label: category.name, href: prefixHcPath(locale, `/hc/categories/${category.slug}`) },
     { label: article.title },
   ]
@@ -69,10 +77,17 @@ function LocaleArticleDetailPage() {
 
           {article.updatedAt && (
             <p className="mt-6 mb-8 text-sm text-muted-foreground">
-              Last updated{' '}
-              <span className="font-semibold text-foreground">
-                {formatDistanceToNow(new Date(article.updatedAt), { addSuffix: true })}
-              </span>
+              <FormattedMessage
+                id="portal.hc.article.lastUpdated"
+                defaultMessage="Last updated {time}"
+                values={{
+                  time: (
+                    <span className="font-semibold text-foreground">
+                      {formatRelativeToNow(intl, article.updatedAt)}
+                    </span>
+                  ),
+                }}
+              />
             </p>
           )}
 

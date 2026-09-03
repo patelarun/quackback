@@ -1,6 +1,7 @@
 import { createFileRoute, getRouteApi, Link } from '@tanstack/react-router'
 import { DocumentTextIcon, ChevronRightIcon } from '@heroicons/react/24/outline'
 import { useMemo } from 'react'
+import { FormattedMessage, useIntl } from 'react-intl'
 import { HelpCenterBreadcrumbs } from '@/components/help-center/help-center-breadcrumbs'
 import { buildCategoryBreadcrumbs } from '@/components/help-center/help-center-utils'
 import { JsonLd } from '@/components/json-ld'
@@ -78,7 +79,11 @@ function ArticleRow({
       </div>
       {readingTimeMinutes != null && (
         <span className="text-xs text-muted-foreground/50 shrink-0 tabular-nums mt-0.5">
-          {readingTimeMinutes} min read
+          <FormattedMessage
+            id="portal.hc.category.readingTime"
+            defaultMessage="{minutes} min read"
+            values={{ minutes: readingTimeMinutes }}
+          />
         </span>
       )}
       <ChevronRightIcon className="h-4 w-4 shrink-0 text-muted-foreground/40 group-hover:text-primary transition-colors mt-0.5" />
@@ -87,14 +92,21 @@ function ArticleRow({
 }
 
 function CategoryIndexPage() {
+  const intl = useIntl()
   const { categorySlug } = Route.useParams()
   const { category, articles, allCategories, subcategories } = categoryApi.useLoaderData()
   const { helpCenterConfig } = helpCenterApi.useLoaderData()
   const { baseUrl } = Route.useRouteContext()
 
+  const helpCenterLabel = intl.formatMessage({
+    id: 'portal.hc.breadcrumbs.helpCenter',
+    defaultMessage: 'Help Center',
+  })
+
   const breadcrumbs = buildCategoryBreadcrumbs({
     allCategories,
     categoryId: category.id,
+    rootLabel: helpCenterLabel,
   })
 
   const seoEnabled = helpCenterConfig?.seo?.structuredDataEnabled !== false
@@ -128,7 +140,7 @@ function CategoryIndexPage() {
           />
           <JsonLd
             data={buildBreadcrumbJsonLd([
-              { name: 'Help Center', url: resolvedBaseUrl || '/' },
+              { name: helpCenterLabel, url: resolvedBaseUrl || '/' },
               {
                 name: category.name,
                 url: `${resolvedBaseUrl}/categories/${category.slug}`,
@@ -161,16 +173,37 @@ function CategoryIndexPage() {
                   ))}
                 </div>
                 <span>
-                  By <span className="font-semibold text-foreground">{editors[0].name}</span>
-                  {editors.length > 1 && (
-                    <>
-                      {' '}
-                      and {editors.length - 1} other{editors.length > 2 ? 's' : ''}
-                    </>
+                  {editors.length > 1 ? (
+                    <FormattedMessage
+                      id="portal.hc.category.editorsWithOthers"
+                      defaultMessage="By {author} and {otherCount, plural, one {# other} other {# others}}"
+                      values={{
+                        author: (
+                          <span className="font-semibold text-foreground">{editors[0].name}</span>
+                        ),
+                        otherCount: editors.length - 1,
+                      }}
+                    />
+                  ) : (
+                    <FormattedMessage
+                      id="portal.hc.category.editors"
+                      defaultMessage="By {author}"
+                      values={{
+                        author: (
+                          <span className="font-semibold text-foreground">{editors[0].name}</span>
+                        ),
+                      }}
+                    />
                   )}
                 </span>
                 <span className="text-muted-foreground/40">·</span>
-                <span>{totalArticles} articles</span>
+                <span>
+                  <FormattedMessage
+                    id="portal.hc.articleCount"
+                    defaultMessage="{count, plural, one {# article} other {# articles}}"
+                    values={{ count: totalArticles }}
+                  />
+                </span>
               </div>
             )}
           </div>
@@ -204,13 +237,20 @@ function CategoryIndexPage() {
                               to={`/hc/categories/${sub.slug}` as '/hc'}
                               className="flex items-center justify-center px-5 py-3 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
                             >
-                              View all {sub.articles.length} articles
+                              <FormattedMessage
+                                id="portal.hc.category.viewAllArticles"
+                                defaultMessage="View all {count} articles"
+                                values={{ count: sub.articles.length }}
+                              />
                             </Link>
                           )}
                         </>
                       ) : (
                         <p className="px-5 py-3.5 text-sm text-muted-foreground">
-                          No articles yet.
+                          <FormattedMessage
+                            id="portal.hc.category.noArticles"
+                            defaultMessage="No articles yet."
+                          />
                         </p>
                       )}
                     </div>
@@ -222,7 +262,12 @@ function CategoryIndexPage() {
 
           {/* Direct articles */}
           {articles.length === 0 && (!subcategories || subcategories.length === 0) ? (
-            <p className="text-muted-foreground">No articles in this category yet.</p>
+            <p className="text-muted-foreground">
+              <FormattedMessage
+                id="portal.hc.category.noArticlesInCategory"
+                defaultMessage="No articles in this category yet."
+              />
+            </p>
           ) : articles.length > 0 ? (
             <div className="rounded-xl border border-border/50 overflow-hidden divide-y divide-border/50 bg-card">
               {articles.map((article) => (

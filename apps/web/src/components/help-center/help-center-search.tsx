@@ -25,9 +25,15 @@ interface HelpCenterHeroSearchProps {
    *  widget passes its own UI locale here; portal /hc routes pass the
    *  route's locale param. */
   locale?: string
+  /** Admin-authored per-locale placeholder; overrides the translated default. */
+  placeholder?: string
 }
 
-export function HelpCenterHeroSearch({ askAiEnabled = false, locale }: HelpCenterHeroSearchProps) {
+export function HelpCenterHeroSearch({
+  askAiEnabled = false,
+  locale,
+  placeholder,
+}: HelpCenterHeroSearchProps) {
   const intl = useIntl()
   const [query, setQuery] = useState('')
   const [showResults, setShowResults] = useState(false)
@@ -103,12 +109,17 @@ export function HelpCenterHeroSearch({ askAiEnabled = false, locale }: HelpCente
     },
   })
 
-  const placeholderText = askAiAvailable
-    ? intl.formatMessage({
-        id: 'helpAskAi.searchPlaceholder',
-        defaultMessage: 'Ask AI or search our help articles to find an answer',
-      })
-    : 'Search articles...'
+  const placeholderText =
+    placeholder ||
+    (askAiAvailable
+      ? intl.formatMessage({
+          id: 'helpAskAi.searchPlaceholder',
+          defaultMessage: 'Ask AI or search our help articles to find an answer',
+        })
+      : intl.formatMessage({
+          id: 'portal.hc.search.placeholder',
+          defaultMessage: 'Search articles...',
+        }))
 
   return (
     <div ref={containerRef} role="search" className="relative w-full">

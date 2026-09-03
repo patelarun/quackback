@@ -66,7 +66,13 @@ export function HelpCenterArticleFeedback({
     }
   }
 
-  const subtitle =
+  const subtitleId =
+    feedback === null
+      ? 'portal.hc.articleFeedback.subtitlePrompt'
+      : feedback === 'helpful'
+        ? 'portal.hc.articleFeedback.subtitleHelpful'
+        : 'portal.hc.articleFeedback.subtitleNotHelpful'
+  const subtitleDefault =
     feedback === null
       ? 'Your feedback shapes what we write next.'
       : feedback === 'helpful'
@@ -78,8 +84,15 @@ export function HelpCenterArticleFeedback({
   return (
     <div className="mt-10 rounded-xl border border-border/50 bg-card px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
       <div>
-        <p className="text-sm font-semibold text-foreground">Was this helpful?</p>
-        <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
+        <p className="text-sm font-semibold text-foreground">
+          <FormattedMessage
+            id="portal.hc.articleFeedback.question"
+            defaultMessage="Was this helpful?"
+          />
+        </p>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          <FormattedMessage id={subtitleId} defaultMessage={subtitleDefault} />
+        </p>
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <button
@@ -92,7 +105,7 @@ export function HelpCenterArticleFeedback({
               : 'bg-muted/60 border border-border/60 text-foreground hover:bg-muted'
           }`}
         >
-          👍 Yes
+          👍 <FormattedMessage id="portal.hc.articleFeedback.yes" defaultMessage="Yes" />
         </button>
         <button
           type="button"
@@ -104,7 +117,7 @@ export function HelpCenterArticleFeedback({
               : 'bg-muted/60 border border-border/60 text-foreground hover:bg-muted'
           }`}
         >
-          👎 No
+          👎 <FormattedMessage id="portal.hc.articleFeedback.no" defaultMessage="No" />
         </button>
       </div>
       {showReasonBox && (

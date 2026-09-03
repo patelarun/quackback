@@ -1,5 +1,6 @@
 import { createFileRoute, getRouteApi, Link } from '@tanstack/react-router'
 import { DocumentTextIcon, ChevronRightIcon } from '@heroicons/react/24/outline'
+import { FormattedMessage } from 'react-intl'
 import { CategoryIcon } from '@/components/help-center/category-icon'
 import { prefixHcPath } from '@/lib/shared/help-center-url'
 
@@ -27,7 +28,12 @@ function LocaleCategoryIndexPage() {
         </div>
 
         {articles.length === 0 ? (
-          <p className="text-muted-foreground">No articles in this category yet.</p>
+          <p className="text-muted-foreground">
+            <FormattedMessage
+              id="portal.hc.category.noArticlesInCategory"
+              defaultMessage="No articles in this category yet."
+            />
+          </p>
         ) : (
           <div className="rounded-xl border border-border/50 overflow-hidden divide-y divide-border/50 bg-card">
             {articles.map((article) => (

@@ -1,4 +1,5 @@
 import { GlobeAltIcon } from '@heroicons/react/24/outline'
+import { useIntl } from 'react-intl'
 import {
   Select,
   SelectContent,
@@ -44,6 +45,8 @@ export function HelpCenterLocaleSwitcher({
   additionalLocales,
   canonicalPath,
 }: HelpCenterLocaleSwitcherProps) {
+  const intl = useIntl()
+
   if (additionalLocales.length === 0) return null
 
   const locales = [defaultLocale, ...additionalLocales]
@@ -66,7 +69,14 @@ export function HelpCenterLocaleSwitcher({
 
   return (
     <Select value={currentLocale} onValueChange={handleChange}>
-      <SelectTrigger size="sm" className="h-8 gap-1.5 rounded-full text-xs" aria-label="Language">
+      <SelectTrigger
+        size="sm"
+        className="h-8 gap-1.5 rounded-full text-xs"
+        aria-label={intl.formatMessage({
+          id: 'portal.hc.localeSwitcher.label',
+          defaultMessage: 'Language',
+        })}
+      >
         <GlobeAltIcon className="h-3.5 w-3.5" />
         <SelectValue>{LOCALE_LABELS[currentLocale] ?? currentLocale}</SelectValue>
       </SelectTrigger>

@@ -1,4 +1,5 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
+import { FormattedMessage, useIntl } from 'react-intl'
 import { createIsomorphicFn } from '@tanstack/react-start'
 import { getRequestHeaders } from '@tanstack/react-start/server'
 import { HelpCenterHero } from '@/components/help-center/help-center-hero'
@@ -12,11 +13,21 @@ import {
 } from '@/lib/server/functions/help-center'
 import { resolveHcLandingLocale } from '@/lib/shared/help-center-url'
 import { HC_LOCALE_COOKIE } from '@/components/help-center/help-center-locale-switcher'
+import { portalHeadMessage } from '@/lib/shared/portal-head-message'
 import type { HelpCenterConfig } from '@/lib/shared/types/settings'
 
-const DEFAULT_TITLE = 'How can we help?'
-const DEFAULT_DESCRIPTION =
-  'Search our guides or ask AI for an instant answer. Real answers, fast, no ticket required.'
+/** Shown only when the workspace has cleared its own homepage copy; both are
+ *  translated at render time, so these are the English fallbacks react-intl
+ *  uses when a catalog is missing the key. */
+const DEFAULT_TITLE_MESSAGE = {
+  id: 'portal.hc.home.defaultTitle',
+  defaultMessage: 'How can we help?',
+}
+const DEFAULT_DESCRIPTION_MESSAGE = {
+  id: 'portal.hc.home.defaultDescription',
+  defaultMessage:
+    'Search our guides or ask AI for an instant answer. Real answers, fast, no ticket required.',
+}
 
 /**
  * SSR-only request context for browser-locale detection. The isomorphic split
@@ -76,12 +87,15 @@ export const Route = createFileRoute('/_portal/hc/')({
       logoUrl: settings?.brandingData?.logoUrl || '/logo.png',
     }
   },
-  head: ({ loaderData }) => {
+  head: ({ loaderData, matches }) => {
     if (!loaderData) return {}
 
     const { helpCenterConfig, workspaceName, logoUrl } = loaderData
-    const title = helpCenterConfig?.homepageTitle ?? DEFAULT_TITLE
-    const description = helpCenterConfig?.homepageDescription ?? DEFAULT_DESCRIPTION
+    const title =
+      helpCenterConfig?.homepageTitle || portalHeadMessage(matches, DEFAULT_TITLE_MESSAGE)
+    const description =
+      helpCenterConfig?.homepageDescription ||
+      portalHeadMessage(matches, DEFAULT_DESCRIPTION_MESSAGE)
 
     const pageTitle = `${title} - ${workspaceName}`
 
@@ -101,12 +115,14 @@ export const Route = createFileRoute('/_portal/hc/')({
 })
 
 function HelpCenterLandingPage() {
+  const intl = useIntl()
   const { categories, popularArticles, helpCenterConfig } = Route.useLoaderData()
   const { settings } = Route.useRouteContext()
   const askAiEnabled = !!settings?.featureFlags?.helpCenterAiAnswers
 
-  const title = helpCenterConfig?.homepageTitle ?? DEFAULT_TITLE
-  const description = helpCenterConfig?.homepageDescription ?? DEFAULT_DESCRIPTION
+  const title = helpCenterConfig?.homepageTitle || intl.formatMessage(DEFAULT_TITLE_MESSAGE)
+  const description =
+    helpCenterConfig?.homepageDescription || intl.formatMessage(DEFAULT_DESCRIPTION_MESSAGE)
   const collectionCount = getTopLevelCategories(categories).length
 
   return (
@@ -122,11 +138,15 @@ function HelpCenterLandingPage() {
       >
         <div className="mb-6 flex items-baseline justify-between gap-4">
           <h2 id="hc-topics" className="text-2xl font-semibold tracking-tight text-foreground">
-            Browse by topic
+            <FormattedMessage id="portal.hc.home.browseByTopic" defaultMessage="Browse by topic" />
           </h2>
           {collectionCount > 0 && (
             <span className="shrink-0 text-sm text-muted-foreground">
-              {collectionCount} {collectionCount === 1 ? 'collection' : 'collections'}
+              <FormattedMessage
+                id="portal.hc.home.collectionCount"
+                defaultMessage="{count, plural, one {# collection} other {# collections}}"
+                values={{ count: collectionCount }}
+              />
             </span>
           )}
         </div>

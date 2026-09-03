@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import { FormattedMessage } from 'react-intl'
 import { DocumentTextIcon, ChevronRightIcon } from '@heroicons/react/24/outline'
 
 export interface PopularArticle {
@@ -19,7 +20,7 @@ export function HelpCenterPopularArticles({ articles }: HelpCenterPopularArticle
   return (
     <section aria-labelledby="hc-popular" className="mx-auto max-w-6xl px-4 pb-20 sm:px-6">
       <h2 id="hc-popular" className="mb-5 text-2xl font-semibold tracking-tight text-foreground">
-        Popular articles
+        <FormattedMessage id="portal.hc.home.popularArticles" defaultMessage="Popular articles" />
       </h2>
       <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card">
         {articles.map((article) => (
