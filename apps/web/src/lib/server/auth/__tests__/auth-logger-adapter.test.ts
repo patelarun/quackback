@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import pino from 'pino'
 import { redactLogArgs, createAuthLogger } from '../auth-logger-adapter'
 
 describe('redactLogArgs', () => {
@@ -60,5 +61,68 @@ describe('createAuthLogger', () => {
     expect(sink.info).toHaveBeenCalledTimes(1)
     logger.log?.('debug', 'noisy')
     expect(sink.debug).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('createAuthLogger against a real pino sink', () => {
+  // The vi.fn() sink above cannot catch this class of bug: plain functions
+  // ignore their receiver, so a detached method reference works fine there.
+  // Pino's level methods are prototype methods that read `this[msgPrefixSym]`,
+  // and passing Better-Auth an unbound `sink.error` made the first line the
+  // library logged throw `TypeError: undefined is not an object`. Because
+  // Better-Auth logs from inside its own error handler, that throw replaced
+  // the real error and returned 500 from POST /api/auth/sign-in/email with a
+  // stack pointing at pino instead of the cause.
+  function pinoSinkCapturing(lines: string[]) {
+    return pino({ level: 'debug' }, { write: (line: string) => lines.push(line) }).child({
+      component: 'auth-config',
+    })
+  }
+
+  it('writes through a pino sink without losing its receiver', () => {
+    const lines: string[] = []
+    const logger = createAuthLogger(pinoSinkCapturing(lines), 'debug')
+
+    expect(() =>
+      logger.log?.('error', 'Unable to get user info', { email: 'x@example.com' })
+    ).not.toThrow()
+
+    expect(lines).toHaveLength(1)
+    const record = JSON.parse(lines[0])
+    expect(record.msg).toBe('Unable to get user info')
+    expect(record.component).toBe('auth-config')
+    expect(lines[0]).not.toContain('x@example.com')
+  })
+
+  it.each(['error', 'warn', 'info', 'debug'] as const)('binds the %s level', (level) => {
+    const lines: string[] = []
+    const logger = createAuthLogger(pinoSinkCapturing(lines), 'debug')
+
+    expect(() => logger.log?.(level, `${level} line`)).not.toThrow()
+    expect(JSON.parse(lines[0]).msg).toBe(`${level} line`)
+  })
+
+  // A logging fault must degrade to a console line, never bubble into the
+  // caller: Better-Auth would surface it as the request's failure.
+  it('swallows a throwing sink instead of failing the auth request', () => {
+    const boom = new Error('sink exploded')
+    const sink = {
+      error: () => {
+        throw boom
+      },
+      warn: vi.fn(),
+      info: vi.fn(),
+      debug: vi.fn(),
+    }
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const logger = createAuthLogger(sink)
+
+    expect(() => logger.log?.('error', 'the real cause')).not.toThrow()
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining('[auth-logger]'),
+      'the real cause',
+      boom
+    )
+    consoleError.mockRestore()
   })
 })
