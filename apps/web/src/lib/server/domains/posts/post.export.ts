@@ -84,24 +84,22 @@ export async function listPostsForExport(boardId: BoardId | undefined): Promise<
   const statusMap = new Map(statusDetails.map((s) => [s.id, { name: s.name, color: s.color }]))
 
   // Transform to export format
-  return rawPosts.map(
-    (post): PostForExport => ({
-      id: post.id,
-      title: post.title,
-      content: post.content,
-      statusId: post.statusId,
-      voteCount: post.voteCount,
-      authorName: post.author?.displayName ?? null,
-      authorEmail: realEmail(post.author?.user?.email),
-      createdAt: post.createdAt,
-      updatedAt: post.updatedAt,
-      board: {
-        id: post.board.id,
-        name: post.board.name,
-        slug: post.board.slug,
-      },
-      tags: post.tags.map((pt) => pt.tag),
-      statusDetails: post.statusId ? statusMap.get(post.statusId) : undefined,
-    })
-  )
+  return rawPosts.map((post): PostForExport => ({
+    id: post.id,
+    title: post.title,
+    content: post.content,
+    statusId: post.statusId,
+    voteCount: post.voteCount,
+    authorName: post.author?.displayName ?? null,
+    authorEmail: realEmail(post.author?.user?.email),
+    createdAt: post.createdAt,
+    updatedAt: post.updatedAt,
+    board: {
+      id: post.board.id,
+      name: post.board.name,
+      slug: post.board.slug,
+    },
+    tags: post.tags.map((pt) => pt.tag),
+    statusDetails: post.statusId ? statusMap.get(post.statusId) : undefined,
+  }))
 }

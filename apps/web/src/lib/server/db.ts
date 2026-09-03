@@ -10,6 +10,12 @@
 
 import { createDb, type Database as PostgresDatabase } from '@quackback/db/client'
 import { config } from '@/lib/server/config'
+import { isPooledTenancy } from '@/lib/server/workspaces/mode'
+import {
+  getScopedDatabase,
+  WorkspaceScopeMissingError,
+} from '@/lib/server/workspaces/workspace-context'
+import { wrapDbTransaction } from '@/lib/server/workspaces/after-commit'
 
 // Import drizzle-orm operators explicitly to work around Nitro bundler issues
 // with nested barrel exports. If we use `export { asc } from 'drizzle-orm'`,
@@ -77,10 +83,34 @@ declare global {
 }
 
 /**
- * Get the database instance.
- * Returns a singleton connection using DATABASE_URL.
+ * Get the database instance for the caller's scope.
+ *
+ * Two modes, decided by `QUACKBACK_TENANCY`:
+ *
+ * - **`single`** (the default, and every self-hosted install): one memoized
+ *   connection from `DATABASE_URL`. Byte-for-byte the behaviour this function
+ *   has always had.
+ * - **`pooled`**: the connection belongs to whichever workspace the request
+ *   resolved to, and there is no fleet-wide fallback. A missing scope throws.
+ *   That is deliberate and it is the point — SAAS-HOSTING-STACK.md §3 is the
+ *   observation that a *wrong* pool passes every RBAC and permission check,
+ *   because that database's own rows are self-consistent. A silent default
+ *   would be the same failure with a friendlier name.
  */
 function getDatabase(): Database {
+  const scoped = getScopedDatabase()
+  if (scoped) return scoped
+
+  // Read from the environment rather than through `config`. `config` validates
+  // the whole application configuration, and making the first `db` access
+  // anywhere do that would turn an unrelated missing variable into a database
+  // error — including inside unit tests that mock `db` and never wanted a
+  // config. `tenancy/mode.ts` documents the pairing, and a test pins the two
+  // readings together.
+  if (isPooledTenancy()) {
+    throw new WorkspaceScopeMissingError('A `db` call was made with no workspace resolved.')
+  }
+
   if (!globalThis.__db) {
     globalThis.__db = createDb(config.databaseUrl, {
       max: config.dbPoolMax,
@@ -92,12 +122,34 @@ function getDatabase(): Database {
 
 /**
  * Database instance.
- * Uses a Proxy to lazily resolve the database on first access.
+ *
+ * A Proxy, so 537 importing files never learn that the connection became
+ * per-request. The trap resolves the handle on every property access; the call
+ * sites are unchanged.
+ *
+ * **`this` matters here, and it did not used to.** The previous trap returned
+ * the raw property, so `db.select(...)` ran with `this === proxy`. That was a
+ * latent bug that only worked because `getDatabase()` returned one memoized
+ * singleton, which made `this.session` re-derive the same object anyway. Once
+ * the trap can resolve *different* handles, an unbound method called on the
+ * proxy would re-enter the trap for its own internals and could pick up a
+ * different workspace's session part-way through a statement. So functions are
+ * bound to the handle they came from, and `Reflect.get` is given that same
+ * handle as the receiver so getters resolve against the real object rather than
+ * the proxy. The pattern is not new to the codebase —
+ * `__tests__/db-test-fixture.ts` already binds function properties for exactly
+ * this reason.
  */
 export const db: Database = new Proxy({} as Database, {
-  get(_, prop) {
+  get(_target, prop) {
     const database = getDatabase()
-    return (database as unknown as Record<string | symbol, unknown>)[prop]
+    const value = Reflect.get(database as object, prop, database)
+    if (typeof value !== 'function') return value
+    const bound = value.bind(database)
+    // Every domain transaction participates in after-commit workspace
+    // signaling. Nested calls are savepoints; only the outer commit flushes.
+    if (prop === 'transaction') return wrapDbTransaction(bound)
+    return bound
   },
 })
 
@@ -193,6 +245,7 @@ export {
   DEFAULT_TICKET_STATUSES,
   // Schema tables - email channel (support platform §4.8)
   channelAccounts,
+  channelThreads,
   emailSendingDomains,
   // Schema tables - office hours + SLA (support platform §4.6)
   officeHoursSchedules,
@@ -331,6 +384,7 @@ export {
   postActivityRelations,
   // Schema tables - ai usage log
   aiUsageLog,
+  emailLog,
   // Schema tables - analytics
   analyticsDailyStats,
   analyticsTopPosts,
@@ -386,11 +440,17 @@ export {
   ASSISTANT_MODEL_HANDOFF_REASONS,
   // Schema tables - assistant guidance rules
   assistantGuidanceRules,
-  // Schema tables - assistant custom actions (Phase 5 library)
-  assistantActions,
-  assistantActionsRelations,
-  type StoredAssistantActionHeader,
-  type StoredAssistantActionVariable,
+  connectors,
+  connectorsRelations,
+  type CachedConnectorTool,
+  type ConnectorToolPolicies,
+  type ConnectorAssignments,
+  type ConnectorAuthMode,
+  type ConnectorStatus,
+  type ConnectorToolPolicy,
+  agentSkills,
+  agentSkillsRelations,
+  type SkillAssignments,
   // Schema tables - assistant snippets
   assistantSnippets,
   assistantSnippetsRelations,
@@ -455,6 +515,7 @@ export type {
   EmailSendingDomain,
   ChannelAccountConfig,
   SendingDomainDnsRecord,
+  SendingDomainOwnershipRecord,
 } from '@quackback/db'
 export type { OfficeHoursSchedule, OfficeHoursInterval } from '@quackback/db'
 export type { ChangelogSubscriptionSource } from '@quackback/db'

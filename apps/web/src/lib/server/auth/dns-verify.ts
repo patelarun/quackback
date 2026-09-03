@@ -3,8 +3,7 @@ import { resolveTxt } from 'node:dns/promises'
 const DNS_TIMEOUT_MS = 5_000
 
 export type LookupResult =
-  | { ok: true; values: string[] }
-  | { ok: false; reason: 'no-record' | 'lookup-failed' }
+  { ok: true; values: string[] } | { ok: false; reason: 'no-record' | 'lookup-failed' }
 
 /**
  * Resolve TXT records at `name` and return concatenated string values.

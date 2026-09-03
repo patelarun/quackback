@@ -40,6 +40,7 @@ import {
   conversationSummaries,
   postSubscriptions,
   inAppNotifications,
+  emailLog,
   pageViews,
   visitorDevices,
   userSegments,
@@ -95,7 +96,7 @@ export interface RepointStep {
  * Loosely-typed drizzle table handle for the factories: the column set varies
  * per table, and the factories address columns by their TS key.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// oxlint-disable-next-line @typescript-eslint/no-explicit-any
 type RepointTable = any
 
 /** `principal_id` -> `principalId`: derive the drizzle TS key from the SQL name. */
@@ -239,6 +240,12 @@ export const REPOINT_STEPS: RepointStep[] = [
   },
   simpleRepoint('post_comments', postComments, 'principal_id', 'Comment authorship.'),
   simpleRepoint('posts', posts, 'principal_id', 'Post authorship.'),
+  simpleRepoint(
+    'email_log',
+    emailLog,
+    'principal_id',
+    'Who the logged email concerned. A visitor is emailable before they identify (auto-ack, cold inbound), so anonymous rows exist and the ledger has to follow the surviving identity rather than point at a torn-down one.'
+  ),
   simpleRepoint(
     'post_edit_history',
     postEditHistory,
@@ -491,6 +498,8 @@ export const REPOINT_EXEMPTIONS: Record<string, string> = {
     'derived preference state; cascades with the anon principal by design (target keeps its own)',
   'unsubscribe_tokens.principal_id':
     'derived token state; cascades with the anon principal by design',
+  'presence_stream.principal_id':
+    'one row per live SSE stream, not a fact about the principal row (hence text, not an FK). Re-pointing it would be incoherent: the stream is a live request still authenticated as the source principal, so its next heartbeat (20s) would simply re-insert the row under the old id. Nothing is stranded either — rows are swept by heartbeat age (PRESENCE_TTL_SECONDS), never by principal. The whole cost of skipping it is that isPrincipalOnline() reads false for the target for up to 45s, whose only effect is an offline-reply notification the visitor may not have needed; that is the direction presence already fails in deliberately.',
   'conversation_views.created_by_principal_id':
     'saved views are created by team members; the merge source is always anonymous',
   'post_views.created_by_principal_id':
@@ -503,8 +512,10 @@ export const REPOINT_EXEMPTIONS: Record<string, string> = {
     'guidance rule authors are team members, never anonymous',
   'assistant_snippets.created_by_id':
     'snippet authors are team members with assistant.manage, never anonymous',
-  'assistant_actions.created_by_id':
-    'custom-action authors are team members with assistant.manage, never anonymous',
+  'connectors.created_by_principal_id':
+    'connector authors are team members with assistant.manage, never anonymous',
+  'agent_skills.created_by_principal_id':
+    'skill authors are team members with assistant.manage, never anonymous',
   'assistant_pending_actions.decided_by_id':
     'the agent who approves/rejects a pending action is a team member, never anonymous',
   'assistant_tool_calls.principal_id':

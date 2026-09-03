@@ -7,7 +7,7 @@ import {
   type Transaction,
 } from '@/lib/server/db'
 import type { IdentityProviderId } from '@quackback/ids'
-import { cacheGet, cacheSet, CACHE_KEYS } from '@/lib/server/redis'
+import { cacheGet, cacheSet, CACHE_KEYS } from '@/lib/server/cache'
 import { ValidationError, NotFoundError } from '@/lib/shared/errors'
 import { httpsUrl } from '@/lib/shared/schemas/auth'
 import {
@@ -16,6 +16,7 @@ import {
   type AssistantCopilotCapabilities,
 } from '@/lib/shared/assistant/config'
 import { assertNotManaged } from '@/lib/server/config-file/managed-guard'
+import { absolutizeOffHostAssetUrl } from '@/lib/server/storage/asset-url'
 import { getPublicUrlOrNull } from '@/lib/server/storage/s3'
 import { logger } from '@/lib/server/logger'
 import type {
@@ -29,29 +30,30 @@ import type {
   DeveloperConfig,
   UpdateDeveloperConfigInput,
   FeatureFlags,
-  TenantSettings,
+  WorkspaceSettings,
   SettingsBrandingData,
   HelpCenterConfig,
   HelpCenterLocalesConfig,
   HelpCenterLocaleChromeStrings,
   VerifiedDomain,
+  PortalWelcomeCard,
 } from './settings.types'
 import {
   DEFAULT_AUTH_CONFIG,
-  DEFAULT_PORTAL_CONFIG,
   DEFAULT_DEVELOPER_CONFIG,
-  DEFAULT_WIDGET_CONFIG,
-  DEFAULT_MESSENGER_CONFIG,
   DEFAULT_FEATURE_FLAGS,
   DEFAULT_HELP_CENTER_CONFIG,
   resolveFeatureFlags,
 } from './settings.types'
-import { publicHomeConfig, publicMessengerConfig } from './settings.widget'
-import { resolveChangelogSettings } from './settings.changelog'
+import { signupOpenFor } from '@/lib/shared/signup-open'
+import { projectPublicWidgetConfig, widgetActivationConfig } from './settings.widget'
+import { getSetupState, isOnboardingComplete } from '@/lib/shared/db-types'
 import { resolveStatusSettings } from './settings.status'
 import {
   parseJsonConfig,
   parseJsonOrNull,
+  parsePortalConfig,
+  parseWidgetConfig,
   deepMerge,
   requireSettings,
   wrapDbError,
@@ -60,8 +62,35 @@ import {
   mergeWelcomeCard,
   publicWelcomeCard,
 } from './settings.helpers'
+import { withCurrentStorageReadTokens } from '@/lib/server/content/storage-read-urls'
 
 const log = logger.child({ component: 'settings' })
+
+/** Mint current `?read=` tokens on a public welcome card. Persist stays unsigned. */
+function liveWelcomeCard(card: PortalWelcomeCard): PortalWelcomeCard {
+  return {
+    ...card,
+    body: withCurrentStorageReadTokens(card.body) as PortalWelcomeCard['body'],
+  }
+}
+
+function liveWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings {
+  const publicCfg = settings.publicPortalConfig
+  if (!publicCfg) return settings
+  const welcome = publicWelcomeCard(publicCfg.welcomeCard)
+  return {
+    ...settings,
+    publicPortalConfig: {
+      ...publicCfg,
+      welcomeCard: welcome ? liveWelcomeCard(welcome) : undefined,
+    },
+  }
+}
+
+function offHostPublicUrl(key: string | null | undefined): string | null {
+  const stored = getPublicUrlOrNull(key)
+  return stored ? absolutizeOffHostAssetUrl(stored) : stored
+}
 
 async function getConfiguredAuthTypes(): Promise<Set<string>> {
   const { getConfiguredIntegrationTypes } =
@@ -95,8 +124,8 @@ function filterOAuthByCredentials(
  *
  * `password` is always passthrough — the team and portal both use
  * stored credential hashes, not SMTP. `magicLink` only renders when
- * SMTP/Resend is wired so we don't surface a button that would
- * silently fail.
+ * an outbound transport is wired so we don't surface a button that
+ * would silently fail.
  */
 async function getEmailDependentPassthroughKeys(): Promise<string[]> {
   const { isEmailConfigured } = await import('@quackback/email')
@@ -588,7 +617,7 @@ export async function listVerifiedDomains(): Promise<VerifiedDomain[]> {
 export async function getPortalConfig(): Promise<PortalConfig> {
   try {
     const org = await requireSettings()
-    return parseJsonConfig(org.portalConfig, DEFAULT_PORTAL_CONFIG)
+    return parsePortalConfig(org.portalConfig)
   } catch (error) {
     log.error({ err: error }, 'get portal config failed')
     wrapDbError('fetch portal config', error)
@@ -602,7 +631,7 @@ export async function updatePortalConfig(input: UpdatePortalConfigInput): Promis
     const inputWithoutWelcome: UpdatePortalConfigInput = { ...input }
     delete inputWithoutWelcome.welcomeCard
     const org = await requireSettings()
-    const existing = parseJsonConfig(org.portalConfig, DEFAULT_PORTAL_CONFIG)
+    const existing = parsePortalConfig(org.portalConfig)
     const updated = deepMerge(existing, inputWithoutWelcome as Partial<PortalConfig>)
     // welcomeCard.body must replace, not deep-merge — see mergeWelcomeCard.
     if (normalizedWelcome) {
@@ -636,9 +665,12 @@ export async function updateDeveloperConfig(
 ): Promise<DeveloperConfig> {
   log.info('update developer config')
   try {
-    // Tier gate: refuse mcpEnabled=true when mcpServer feature is off.
-    // No-op in OSS. Disabling MCP is always allowed (no upgrade required).
+    // Plan first (names Growth), then the operator-cap overlay. Disabling MCP
+    // stays open so a downgraded workspace can turn the endpoint off.
     if (input.mcpEnabled === true) {
+      const { requireEntitlement } =
+        await import('@/lib/server/domains/settings/cloud/entitlements')
+      await requireEntitlement('mcpServer')
       const { assertTierFeature } = await import('@/lib/server/domains/settings/tier-enforce')
       await assertTierFeature('mcpServer', 'MCP server')
     }
@@ -807,11 +839,13 @@ export async function getPublicAuthConfig(): Promise<PublicAuthConfig> {
 export async function getPublicPortalConfig(): Promise<PublicPortalConfig> {
   try {
     const org = await requireSettings()
-    const portalConfig = parseJsonConfig(org.portalConfig, DEFAULT_PORTAL_CONFIG)
+    const portalConfig = parsePortalConfig(org.portalConfig)
 
     const oidcProviders = await getPublicOidcProviders()
     const welcome = publicWelcomeCard(portalConfig.welcomeCard)
+    const authConfig = parseJsonConfig(org.authConfig, DEFAULT_AUTH_CONFIG)
     return {
+      openSignup: signupOpenFor({ authConfig, portalConfig }, 'portal'),
       features: {
         allowAnonymous: portalConfig.features.allowAnonymous,
         allowEditAfterEngagement: portalConfig.features.allowEditAfterEngagement,
@@ -819,7 +853,7 @@ export async function getPublicPortalConfig(): Promise<PublicPortalConfig> {
         showPublicEditHistory: portalConfig.features.showPublicEditHistory,
       },
       ...(oidcProviders.length > 0 && { oidcProviders }),
-      ...(welcome && { welcomeCard: welcome }),
+      ...(welcome && { welcomeCard: liveWelcomeCard(welcome) }),
       portalAccess: {
         isPrivate: portalConfig.access?.visibility === 'private',
         widgetSignIn: portalConfig.access?.widgetSignIn ?? false,
@@ -831,32 +865,44 @@ export async function getPublicPortalConfig(): Promise<PublicPortalConfig> {
   }
 }
 
-// TenantSettings and SettingsBrandingData are defined in settings.types.ts
+// WorkspaceSettings and SettingsBrandingData are defined in settings.types.ts
 // to prevent client-side barrel imports from pulling in this server-only module.
 
-export async function getTenantSettings(): Promise<TenantSettings | null> {
+export async function getWorkspaceSettings(): Promise<WorkspaceSettings | null> {
   try {
-    const cached = await cacheGet<TenantSettings>(CACHE_KEYS.TENANT_SETTINGS)
+    const cached = await cacheGet<WorkspaceSettings>(CACHE_KEYS.WORKSPACE_SETTINGS)
     if (cached) {
-      log.debug('tenant settings cache hit')
-      return cached
+      const rawSetup = (cached.settings as { setupState?: string | null } | undefined)?.setupState
+      // A request during provision can cache settings before bootstrap stamps
+      // setup_state. That row lives an hour. Trusting it keeps a finished
+      // workspace on the OSS wizard. An incomplete cache is the only hit we
+      // refuse: once setup is complete it is mutated through this service,
+      // which already busts the key.
+      if (isOnboardingComplete(getSetupState(rawSetup ?? null))) {
+        log.debug('workspace settings cache hit')
+        // The same repair resolveFeatureFlags applies. This path returns flags
+        // that were resolved when the entry was written, so an entry from
+        // before that rule existed still carries feedback:false and would keep
+        // the portal dark for the hour the entry has left to live.
+        if (cached.featureFlags) cached.featureFlags.feedback = true
+        return liveWorkspaceSettings(cached)
+      }
     }
 
     const org = await db.query.settings.findFirst()
     if (!org) return null
 
     const authConfig = parseJsonConfig(org.authConfig, DEFAULT_AUTH_CONFIG)
-    const portalConfig = parseJsonConfig(org.portalConfig, DEFAULT_PORTAL_CONFIG)
+    const portalConfig = parsePortalConfig(org.portalConfig)
     const brandingConfig = parseJsonOrNull<BrandingConfig>(org.brandingConfig) ?? {}
     const developerConfig = parseJsonConfig(org.developerConfig, DEFAULT_DEVELOPER_CONFIG)
 
-    const widgetConfig = parseJsonConfig(org.widgetConfig, DEFAULT_WIDGET_CONFIG)
+    const widgetConfig = parseWidgetConfig(org.widgetConfig)
     const assistantConfig = assistantConfigSchema.safeParse(org.assistantConfig)
     const assistantIdentity = assistantConfig.success
       ? assistantConfig.data.identity
       : DEFAULT_ASSISTANT_CONFIG.identity
     const helpCenterConfig = parseJsonConfig(org.helpCenterConfig, DEFAULT_HELP_CENTER_CONFIG)
-    const changelogConfig = resolveChangelogSettings(org.metadata)
     const statusConfig = resolveStatusSettings(org.metadata)
 
     const featureFlags = resolveFeatureFlags(org.featureFlags)
@@ -877,15 +923,15 @@ export async function getTenantSettings(): Promise<TenantSettings | null> {
 
     const brandingData: SettingsBrandingData = {
       name: org.name,
-      logoUrl: getPublicUrlOrNull(org.logoKey),
+      logoUrl: offHostPublicUrl(org.logoKey),
       faviconUrl: getPublicUrlOrNull(org.faviconKey),
       headerLogoUrl: getPublicUrlOrNull(org.headerLogoKey),
-      ogImageUrl: getPublicUrlOrNull(org.portalOgImageKey),
+      ogImageUrl: null,
       headerDisplayMode: org.headerDisplayMode,
       headerDisplayName: org.headerDisplayName,
     }
 
-    const result: TenantSettings = {
+    const result: WorkspaceSettings = {
       settings: org,
       name: org.name,
       slug: org.slug,
@@ -894,7 +940,6 @@ export async function getTenantSettings(): Promise<TenantSettings | null> {
       brandingConfig,
       developerConfig,
       helpCenterConfig,
-      changelogConfig,
       statusConfig,
       customCss: org.customCss ?? '',
       publicAuthConfig: {
@@ -905,6 +950,7 @@ export async function getTenantSettings(): Promise<TenantSettings | null> {
       publicPortalConfig: (() => {
         const welcome = publicWelcomeCard(portalConfig.welcomeCard)
         return {
+          openSignup: signupOpenFor({ authConfig, portalConfig }, 'portal'),
           features: portalConfig.features,
           ...(portalOidcProviders.length > 0 && { oidcProviders: portalOidcProviders }),
           ...(welcome && { welcomeCard: welcome }),
@@ -914,34 +960,7 @@ export async function getTenantSettings(): Promise<TenantSettings | null> {
           },
         }
       })(),
-      publicWidgetConfig: {
-        enabled: widgetConfig.enabled,
-        defaultBoard: widgetConfig.defaultBoard,
-        position: widgetConfig.position,
-        tabs: {
-          ...widgetConfig.tabs,
-          feedback: (widgetConfig.tabs?.feedback ?? true) && featureFlags.feedback,
-          changelog: (widgetConfig.tabs?.changelog ?? false) && featureFlags.changelog,
-          help: (widgetConfig.tabs?.help ?? false) && featureFlags.helpCenter,
-          messenger: (widgetConfig.tabs?.messenger ?? false) && featureFlags.supportInbox,
-          // Fail-closed like its siblings: the Tickets tab is only ever exposed
-          // publicly when the experimental supportTickets flag is on (gate (a) of
-          // the triple gate), so no consumer can surface it with the flag off.
-          tickets: (widgetConfig.tabs?.tickets ?? false) && featureFlags.supportTickets,
-        },
-        // Identify is verified-only (backend-signed ssoToken; GH issue #300).
-        hmacRequired: true,
-        // Home customisation is client-safe (greeting, hero style, quick links);
-        // the stored hero-image key is resolved to a public URL.
-        home: publicHomeConfig(widgetConfig.home),
-        // Client-safe messenger config — the widget gates its messenger tab on
-        // messenger.enabled, so this must be projected here (routing stays
-        // agent-only).
-        messenger: publicMessengerConfig(
-          widgetConfig.messenger ?? DEFAULT_MESSENGER_CONFIG,
-          assistantIdentity
-        ),
-      },
+      publicWidgetConfig: projectPublicWidgetConfig(widgetConfig, featureFlags, assistantIdentity),
       featureFlags,
       brandingData,
       faviconData: brandingData.faviconUrl ? { url: brandingData.faviconUrl } : null,
@@ -952,11 +971,11 @@ export async function getTenantSettings(): Promise<TenantSettings | null> {
 
     // 1h TTL: settings change rarely and every mutation in this file
     // calls invalidateSettingsCache(), so a long TTL is safe and keeps
-    // the per-request cost of getTenantSettings to a single Redis GET.
-    await cacheSet(CACHE_KEYS.TENANT_SETTINGS, result, 3600)
-    return result
+    // the per-request cost of getWorkspaceSettings to a single Redis GET.
+    await cacheSet(CACHE_KEYS.WORKSPACE_SETTINGS, result, 3600)
+    return liveWorkspaceSettings(result)
   } catch (error) {
-    log.error({ err: error }, 'get tenant settings failed')
+    log.error({ err: error }, 'get workspace settings failed')
     wrapDbError('fetch settings with all configs', error)
   }
 }
@@ -969,7 +988,7 @@ export async function getTenantSettings(): Promise<TenantSettings | null> {
  * Get current feature flags, merged with defaults
  */
 export async function getFeatureFlags(): Promise<FeatureFlags> {
-  const settings = await getTenantSettings()
+  const settings = await getWorkspaceSettings()
   return settings?.featureFlags ?? DEFAULT_FEATURE_FLAGS
 }
 
@@ -983,7 +1002,7 @@ export async function isFeatureEnabled(flag: keyof FeatureFlags): Promise<boolea
 
 /**
  * Whether the Copilot Q&A capability is enabled in the v3 assistant config.
- * Reads the cached tenant settings (`getTenantSettings`) — the same
+ * Reads the cached workspace settings (`getWorkspaceSettings`) — the same
  * single-Redis-GET path `isFeatureEnabled` uses — so gating the copilot route
  * on its hot path costs no extra DB round-trip; every config mutation calls
  * `invalidateSettingsCache()`. Fails OPEN to the v3 default (on): a
@@ -993,8 +1012,8 @@ export async function isFeatureEnabled(flag: keyof FeatureFlags): Promise<boolea
 export async function isCopilotCapabilityEnabled(
   capability: keyof AssistantCopilotCapabilities
 ): Promise<boolean> {
-  const tenant = await getTenantSettings()
-  const parsed = assistantConfigSchema.safeParse(tenant?.settings.assistantConfig)
+  const workspace = await getWorkspaceSettings()
+  const parsed = assistantConfigSchema.safeParse(workspace?.settings.assistantConfig)
   const capabilities = parsed.success
     ? parsed.data.agents.copilot.capabilities
     : DEFAULT_ASSISTANT_CONFIG.agents.copilot.capabilities
@@ -1006,14 +1025,45 @@ export async function isCopilotCapabilityEnabled(
  */
 export async function updateFeatureFlags(input: Partial<FeatureFlags>): Promise<FeatureFlags> {
   const org = await requireSettings()
-  // resolveFeatureFlags drops legacy pre-consolidation keys (after coalescing
-  // them into their umbrella flag), so this write persists a clean shape.
+  // Unknown stored keys (retired Labs flags) drop here; the next write
+  // persists a clean shape.
   const current = resolveFeatureFlags(org.featureFlags)
-  const updated = { ...current, ...input }
-  await db
-    .update(settings)
-    .set({ featureFlags: JSON.stringify(updated) })
-    .where(eq(settings.id, org.id))
+  const updated = { ...current, ...input, feedback: true }
+  const turningSupportOn = current.supportInbox !== true && updated.supportInbox === true
+  const turningHelpOn = current.helpCenter !== true && updated.helpCenter === true
+  // General Status ON is the single publish control: clear a legacy
+  // unpublished bit so the page actually goes live. OFF only flips the flag;
+  // workspaces that stored statusPage:true with enabled:false stay unpublished
+  // until that toggle is flipped on. Written with the flags so a crash
+  // between the two cannot leave one side published and the other not.
+  const patch: {
+    featureFlags: string
+    metadata?: string
+    widgetConfig?: string
+    portalConfig?: string
+  } = {
+    featureFlags: JSON.stringify(updated),
+  }
+  if (input.statusPage === true) {
+    const existing = resolveStatusSettings(org.metadata)
+    const meta = parseJsonOrNull<Record<string, unknown>>(org.metadata) ?? {}
+    meta.statusSettings = { ...existing, enabled: true }
+    patch.metadata = JSON.stringify(meta)
+  }
+  if (turningSupportOn || turningHelpOn) {
+    let widget = parseWidgetConfig(org.widgetConfig)
+    if (turningSupportOn) widget = widgetActivationConfig(widget, 'messenger')
+    if (turningHelpOn) widget = { ...widget, tabs: { ...widget.tabs, help: true } }
+    patch.widgetConfig = JSON.stringify(widget)
+  }
+  if (turningSupportOn) {
+    const portal = parsePortalConfig(org.portalConfig)
+    patch.portalConfig = JSON.stringify({
+      ...portal,
+      support: { ...portal.support, enabled: true },
+    })
+  }
+  await db.update(settings).set(patch).where(eq(settings.id, org.id))
   await invalidateSettingsCache()
   return updated
 }

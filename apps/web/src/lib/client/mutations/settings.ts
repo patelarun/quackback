@@ -2,7 +2,7 @@
  * Settings mutations
  *
  * Mutation hooks for workspace settings (logo, header, etc.)
- * Uses presigned URLs for direct S3 uploads.
+ * Uses same-origin `/api/storage` PUTs so a friendly URL rename cannot break uploads.
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -13,10 +13,7 @@ import {
   updateHeaderDisplayNameFn,
   saveLogoKeyFn,
   saveHeaderLogoKeyFn,
-  savePortalOgImageKeyFn,
-  deletePortalOgImageFn,
   saveFaviconKeyFn,
-  deleteFaviconFn,
   saveWidgetHeroImageKeyFn,
   deleteWidgetHeroImageFn,
   updatePortalConfigFn,
@@ -26,6 +23,8 @@ import {
   updateThemeFn,
   updateCustomCssFn,
   updateWorkflowAbandonedAutoCloseFn,
+  updateWorkflowCloseSpamFn,
+  updateDefaultSlaPolicyFn,
   updateSpamFilterConfigFn,
 } from '@/lib/server/functions/settings'
 import {
@@ -47,11 +46,12 @@ import {
 import {
   getLogoUploadUrlFn,
   getHeaderLogoUploadUrlFn,
-  getPortalOgImageUploadUrlFn,
   getWidgetHeroUploadUrlFn,
   getFaviconUploadUrlFn,
 } from '@/lib/server/functions/uploads'
 import { settingsQueries } from '@/lib/client/queries/settings'
+import { adminQueries } from '@/lib/client/queries/admin'
+import { downscaleSquareImage } from '@/lib/client/downscale-square-image'
 
 // ============================================================================
 // Logo Mutation Hooks
@@ -62,30 +62,45 @@ export function useUploadWorkspaceLogo() {
 
   return useMutation({
     mutationFn: async (file: Blob) => {
-      // 1. Get presigned URL from server
-      const { uploadUrl, key } = await getLogoUploadUrlFn({
-        data: {
-          filename: (file as File).name || 'logo.png',
-          contentType: file.type,
-          fileSize: file.size,
-        },
-      })
+      const logoType = file.type || 'image/png'
+      const faviconBlob = await downscaleSquareImage(file, 64)
 
-      // 2. Upload directly to S3
-      const uploadResponse = await fetch(uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: {
-          'Content-Type': file.type,
-        },
-      })
+      const [logoUpload, faviconUpload] = await Promise.all([
+        getLogoUploadUrlFn({
+          data: {
+            filename: (file as File).name || 'logo.png',
+            contentType: logoType,
+            fileSize: file.size,
+          },
+        }),
+        getFaviconUploadUrlFn({
+          data: {
+            filename: 'favicon.png',
+            contentType: 'image/png',
+            fileSize: faviconBlob.size,
+          },
+        }),
+      ])
 
-      if (!uploadResponse.ok) {
+      const [logoResponse, faviconResponse] = await Promise.all([
+        fetch(logoUpload.uploadUrl, {
+          method: 'PUT',
+          body: file,
+          headers: { 'Content-Type': logoType },
+        }),
+        fetch(faviconUpload.uploadUrl, {
+          method: 'PUT',
+          body: faviconBlob,
+          headers: { 'Content-Type': 'image/png' },
+        }),
+      ])
+
+      if (!logoResponse.ok || !faviconResponse.ok) {
         throw new Error('Failed to upload logo to storage')
       }
 
-      // 3. Save the S3 key to the database
-      await saveLogoKeyFn({ data: { key } })
+      await saveLogoKeyFn({ data: { key: logoUpload.key } })
+      await saveFaviconKeyFn({ data: { key: faviconUpload.key } })
     },
     onSuccess: () => {
       queryClient.refetchQueries({ queryKey: settingsQueries.logo().queryKey })
@@ -100,108 +115,6 @@ export function useDeleteWorkspaceLogo() {
     mutationFn: () => deleteLogoFn(),
     onSuccess: () => {
       queryClient.refetchQueries({ queryKey: settingsQueries.logo().queryKey })
-    },
-  })
-}
-
-// ============================================================================
-// Portal OG Image Mutation Hooks
-// ============================================================================
-
-export function useUploadPortalOgImage() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: async (file: Blob) => {
-      // 1. Get presigned URL from server
-      const { uploadUrl, key } = await getPortalOgImageUploadUrlFn({
-        data: {
-          filename: (file as File).name || 'og-image.png',
-          contentType: file.type,
-          fileSize: file.size,
-        },
-      })
-
-      // 2. Upload directly to S3
-      const uploadResponse = await fetch(uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: {
-          'Content-Type': file.type,
-        },
-      })
-
-      if (!uploadResponse.ok) {
-        throw new Error('Failed to upload social image to storage')
-      }
-
-      // 3. Save the S3 key to the database
-      await savePortalOgImageKeyFn({ data: { key } })
-    },
-    onSuccess: () => {
-      queryClient.refetchQueries({ queryKey: settingsQueries.portalOgImage().queryKey })
-    },
-  })
-}
-
-export function useDeletePortalOgImage() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: () => deletePortalOgImageFn(),
-    onSuccess: () => {
-      queryClient.refetchQueries({ queryKey: settingsQueries.portalOgImage().queryKey })
-    },
-  })
-}
-
-// ============================================================================
-// Favicon Mutation Hooks
-// ============================================================================
-
-export function useUploadFavicon() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: async (file: Blob) => {
-      // 1. Get presigned URL from server
-      const { uploadUrl, key } = await getFaviconUploadUrlFn({
-        data: {
-          filename: (file as File).name || 'favicon.png',
-          contentType: file.type,
-          fileSize: file.size,
-        },
-      })
-
-      // 2. Upload directly to S3
-      const uploadResponse = await fetch(uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: {
-          'Content-Type': file.type,
-        },
-      })
-
-      if (!uploadResponse.ok) {
-        throw new Error('Failed to upload favicon to storage')
-      }
-
-      // 3. Save the S3 key to the database
-      await saveFaviconKeyFn({ data: { key } })
-    },
-    onSuccess: () => {
-      queryClient.refetchQueries({ queryKey: settingsQueries.favicon().queryKey })
-    },
-  })
-}
-
-export function useDeleteFavicon() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: () => deleteFaviconFn(),
-    onSuccess: () => {
-      queryClient.refetchQueries({ queryKey: settingsQueries.favicon().queryKey })
     },
   })
 }
@@ -377,7 +290,10 @@ export function useUpdateWidgetConfig() {
     mutationFn: (data: Parameters<typeof updateWidgetConfigFn>[0]['data']) =>
       updateWidgetConfigFn({ data }),
     onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: settingsQueries.widgetConfig().queryKey }),
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: settingsQueries.widgetConfig().queryKey }),
+        queryClient.invalidateQueries({ queryKey: adminQueries.onboardingStatus().queryKey }),
+      ]),
   })
 }
 
@@ -528,15 +444,52 @@ export function useUpdateWorkflowAbandonedAutoClose() {
   })
 }
 
+export function useUpdateWorkflowCloseSpam() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (data: Parameters<typeof updateWorkflowCloseSpamFn>[0]['data']) =>
+      updateWorkflowCloseSpamFn({ data }),
+    onSuccess: (saved) =>
+      queryClient.setQueryData(settingsQueries.workflowCloseSpam().queryKey, saved),
+  })
+}
+
+export function useUpdateDefaultSlaPolicy() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (data: Parameters<typeof updateDefaultSlaPolicyFn>[0]['data']) =>
+      updateDefaultSlaPolicyFn({ data }),
+    onSuccess: (saved) =>
+      queryClient.setQueryData(settingsQueries.defaultSlaPolicy().queryKey, saved),
+  })
+}
+
 export function useSaveBrandingTheme() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (input: { brandingConfig: Record<string, unknown>; customCss: string }) =>
-      Promise.all([
-        updateThemeFn({ data: { brandingConfig: input.brandingConfig } }),
-        updateCustomCssFn({ data: { customCss: input.customCss } }),
-      ]),
+    mutationFn: async (input: {
+      brandingConfig: Record<string, unknown>
+      customCss: string
+      /**
+       * persist: Advanced CSS changed — write remainder (Pro-gated).
+       * clear: generated-only theme CSS — write empty so leftover CSS cannot override.
+       * rewrite: extra rules unchanged — write remainder-only so stale :root/.dark
+       *   theme vars cannot override the saved structured colours.
+       */
+      customCssWrite: 'persist' | 'clear' | 'rewrite'
+    }) => {
+      const { throwIfServerFnFailed } = await import('@/lib/shared/describe-upgrade')
+      const theme = await updateThemeFn({ data: { brandingConfig: input.brandingConfig } })
+      throwIfServerFnFailed(theme)
+      const css = await updateCustomCssFn({
+        data: { customCss: input.customCssWrite === 'clear' ? '' : input.customCss },
+      })
+      throwIfServerFnFailed(css)
+      return [theme, css] as const
+    },
     onSuccess: () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: settingsQueries.branding().queryKey }),

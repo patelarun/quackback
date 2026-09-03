@@ -152,14 +152,12 @@ export const listAssistantToolsFn = createServerFn({ method: 'GET' }).handler(as
   // appear in the admin surface.
   return specs
     .filter((spec) => spec.risk !== 'control')
-    .map(
-      (spec): AssistantToolSummary => ({
-        name: spec.name,
-        label: spec.label,
-        description: spec.description,
-        // The filter above removes control tools; spell the narrowing here
-        // because Array.filter does not refine an object property union.
-        risk: spec.risk === 'write' ? 'write' : 'read',
-      })
-    )
+    .map((spec): AssistantToolSummary => ({
+      name: spec.name,
+      label: spec.label,
+      description: spec.description,
+      // The filter above removes control tools; spell the narrowing here
+      // because Array.filter does not refine an object property union.
+      risk: spec.risk === 'write' ? 'write' : 'read',
+    }))
 })

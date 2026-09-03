@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
   DEFAULT_FEATURE_FLAGS,
-  LAB_SECTIONS,
   PRODUCT_DEFINITIONS,
-  FEATURE_FLAG_REGISTRY,
-  LEGACY_FLAG_MAP,
+  enableFlagsForUseCase,
+  flagsForGoal,
+  newlyEnabledProductLabels,
+  featureFlagsForUseCase,
   getFirstEnabledAdminProductPath,
   getProductFlagUpdate,
   isProductEnabled,
@@ -12,17 +13,10 @@ import {
 } from '../settings.types'
 
 describe('feature flag settings layout', () => {
-  it('surfaces every feature flag exactly once across General and Labs', () => {
+  it('places every remaining flag on exactly one product', () => {
     const productFlags = PRODUCT_DEFINITIONS.flatMap((product) => [...product.featureFlags])
-    const labFlags = LAB_SECTIONS.flatMap((s) =>
-      s.flags.flatMap((row) => [row.key, ...(row.subFlags ?? [])])
-    )
-    const surfaced = [...productFlags, ...labFlags]
-    // No flag appears twice...
-    expect(new Set(surfaced).size).toBe(surfaced.length)
-    // ...and the set of surfaced flags is exactly the full flag set, so a new
-    // flag can never silently go unsurfaced in settings.
-    expect([...surfaced].sort()).toEqual(Object.keys(DEFAULT_FEATURE_FLAGS).sort())
+    expect(new Set(productFlags).size).toBe(productFlags.length)
+    expect([...productFlags].sort()).toEqual(Object.keys(DEFAULT_FEATURE_FLAGS).sort())
   })
 
   it('shows the five workspace products in the expected order', () => {
@@ -33,9 +27,14 @@ describe('feature flag settings layout', () => {
       'Changelog',
       'Status',
     ])
-    for (const product of PRODUCT_DEFINITIONS) {
-      expect(isProductEnabled(DEFAULT_FEATURE_FLAGS, product.id)).toBe(true)
-    }
+    expect(isProductEnabled(DEFAULT_FEATURE_FLAGS, 'feedback')).toBe(true)
+    expect(isProductEnabled(DEFAULT_FEATURE_FLAGS, 'changelog')).toBe(true)
+    expect(isProductEnabled(DEFAULT_FEATURE_FLAGS, 'support')).toBe(false)
+    expect(isProductEnabled(DEFAULT_FEATURE_FLAGS, 'helpCenter')).toBe(false)
+    expect(isProductEnabled(DEFAULT_FEATURE_FLAGS, 'status')).toBe(false)
+    expect(PRODUCT_DEFINITIONS.find((product) => product.id === 'status')?.description).toBe(
+      'Publish a status page with live service status, incidents, maintenance, and uptime history.'
+    )
   })
 
   it('updates both Support capabilities from its single product toggle', () => {
@@ -65,18 +64,11 @@ describe('feature flag settings layout', () => {
       statusPage: false,
     }
     expect(getFirstEnabledAdminProductPath({ ...allOff, changelog: true })).toBe('/admin/changelog')
+    expect(getFirstEnabledAdminProductPath({ ...allOff, supportInbox: true })).toBe('/admin/inbox')
+    expect(getFirstEnabledAdminProductPath({ ...allOff, feedback: true, supportInbox: true })).toBe(
+      '/admin/feedback'
+    )
     expect(getFirstEnabledAdminProductPath(allOff)).toBe('/admin/analytics')
-  })
-
-  it('only references flags that exist in the registry', () => {
-    for (const section of LAB_SECTIONS) {
-      for (const row of section.flags) {
-        expect(FEATURE_FLAG_REGISTRY[row.key]).toBeDefined()
-        for (const sub of row.subFlags ?? []) {
-          expect(FEATURE_FLAG_REGISTRY[sub]).toBeDefined()
-        }
-      }
-    }
   })
 })
 
@@ -86,28 +78,72 @@ describe('resolveFeatureFlags', () => {
   })
 
   it('keeps stored values for current keys and drops unknown keys', () => {
-    const flags = resolveFeatureFlags(JSON.stringify({ helpCenter: false, notAFlag: true }))
+    const flags = resolveFeatureFlags(
+      JSON.stringify({ helpCenter: false, notAFlag: true, inboxAi: true })
+    )
     expect(flags.helpCenter).toBe(false)
     expect(flags).not.toHaveProperty('notAFlag')
+    expect(flags).not.toHaveProperty('inboxAi')
     expect(Object.keys(flags).sort()).toEqual(Object.keys(DEFAULT_FEATURE_FLAGS).sort())
-  })
-
-  it('coalesces every legacy key into its umbrella flag', () => {
-    for (const [legacyKey, umbrella] of Object.entries(LEGACY_FLAG_MAP)) {
-      const on = resolveFeatureFlags(JSON.stringify({ [legacyKey]: true }))
-      expect(on[umbrella], `${legacyKey} -> ${umbrella}`).toBe(true)
-      const off = resolveFeatureFlags(JSON.stringify({ [legacyKey]: false }))
-      expect(off[umbrella], `${legacyKey} (false) -> ${umbrella}`).toBe(false)
-    }
-  })
-
-  it('lets an explicit umbrella value win over legacy keys', () => {
-    const flags = resolveFeatureFlags(JSON.stringify({ inboxAi: false, assistantCopilot: true }))
-    expect(flags.inboxAi).toBe(false)
   })
 
   it('does not resurrect a disabled inbox from a stored linkPreviews value', () => {
     const flags = resolveFeatureFlags(JSON.stringify({ supportInbox: false, linkPreviews: true }))
     expect(flags.supportInbox).toBe(false)
+  })
+
+  it('forces feedback true even when stored false', () => {
+    const flags = resolveFeatureFlags(JSON.stringify({ feedback: false }))
+    expect(flags.feedback).toBe(true)
+  })
+})
+
+describe('featureFlagsForUseCase', () => {
+  it('keeps the core products on and extra modules off for feedback and internal', () => {
+    for (const useCase of ['product_feedback', 'internal'] as const) {
+      const flags = featureFlagsForUseCase(useCase)
+      expect(flags).toEqual(DEFAULT_FEATURE_FLAGS)
+      expect(isProductEnabled(flags, 'feedback')).toBe(true)
+      expect(isProductEnabled(flags, 'changelog')).toBe(true)
+      expect(isProductEnabled(flags, 'support')).toBe(false)
+      expect(isProductEnabled(flags, 'helpCenter')).toBe(false)
+      expect(isProductEnabled(flags, 'status')).toBe(false)
+    }
+  })
+
+  it('turns Support on for a support goal without enabling Help Center or Status', () => {
+    const flags = featureFlagsForUseCase('customer_support')
+    expect(isProductEnabled(flags, 'support')).toBe(true)
+    expect(isProductEnabled(flags, 'helpCenter')).toBe(false)
+    expect(isProductEnabled(flags, 'status')).toBe(false)
+  })
+
+  it('turns Help Center on as a product for a help-center goal', () => {
+    const flags = featureFlagsForUseCase('help_center')
+    expect(isProductEnabled(flags, 'helpCenter')).toBe(true)
+    expect(isProductEnabled(flags, 'support')).toBe(false)
+  })
+
+  it('enables a goal module without turning an already-on product off', () => {
+    const current = featureFlagsForUseCase('help_center')
+    const merged = enableFlagsForUseCase(current, 'customer_support')
+    expect(isProductEnabled(merged, 'helpCenter')).toBe(true)
+    expect(isProductEnabled(merged, 'support')).toBe(true)
+  })
+
+  it('names only the products that this goal change newly turned on', () => {
+    expect(flagsForGoal(DEFAULT_FEATURE_FLAGS, 'help_center')).toEqual({
+      flags: featureFlagsForUseCase('help_center'),
+      enabledModules: ['Help Center'],
+    })
+    expect(flagsForGoal(DEFAULT_FEATURE_FLAGS, 'customer_support').enabledModules).toEqual([
+      'Support',
+    ])
+    expect(
+      flagsForGoal(featureFlagsForUseCase('help_center'), 'help_center').enabledModules
+    ).toEqual([])
+    expect(
+      newlyEnabledProductLabels(DEFAULT_FEATURE_FLAGS, featureFlagsForUseCase('help_center'))
+    ).toEqual(['Help Center'])
   })
 })

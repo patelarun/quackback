@@ -105,8 +105,7 @@ async function resolvePostLinks(
     integrationType: r.integrationType,
     integrationPrincipalId: r.integrationPrincipalId ?? null,
     pushStatusMappings: (r.config as Record<string, unknown> | null)?.pushStatusMappings as
-      | Record<string, string>
-      | undefined,
+      Record<string, string> | undefined,
   }))
   return { statusId: post.statusId, links }
 }
@@ -146,8 +145,7 @@ async function resolveTicketLinks(
     integrationType: r.integrationType,
     integrationPrincipalId: r.integrationPrincipalId ?? null,
     pushStatusMappings: (r.config as Record<string, unknown> | null)?.ticketPushStatusMappings as
-      | Record<string, string>
-      | undefined,
+      Record<string, string> | undefined,
   }))
   return { statusId: ticket.statusId, links }
 }

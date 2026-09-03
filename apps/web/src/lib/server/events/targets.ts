@@ -44,7 +44,8 @@ import {
 } from '@/lib/server/domains/subscriptions/subscription.service'
 import { shouldNotify } from '@/lib/server/domains/subscriptions/notification-matrix'
 import type { HookTarget, EmailTarget, NoteMentionEmailConfig } from './hook-types'
-import { stripHtml, truncate } from './hook-utils'
+import { truncate } from './hook-utils'
+import { commentPlainText } from '@/lib/server/markdown-tiptap'
 import { type HookContext } from './hook-context'
 import type { EventData, EventActor, PostMergedPayload, PostUnmergedPayload } from './types'
 import { logger } from '@/lib/server/logger'
@@ -451,7 +452,7 @@ async function buildEmailEventConfig(
       postTitle: post.title,
       postUrl: `${buildPostUrl(rootUrl, post)}#comment-${comment.id}`,
       commenterName: resolveCommenterName(comment),
-      commentPreview: truncate(stripHtml(comment.content), 200),
+      commentPreview: truncate(commentPlainText(comment), 200),
       isTeamMember: await isActorTeamMember(event.actor),
     }
   }
@@ -507,7 +508,7 @@ async function buildNotificationConfig(
       postUrl: `${buildPostUrl(rootUrl, post)}#comment-${comment.id}`,
       commentId: comment.id,
       commenterName: resolveCommenterName(comment),
-      commentPreview: truncate(stripHtml(comment.content), 200),
+      commentPreview: truncate(commentPlainText(comment), 200),
       isTeamMember: await isActorTeamMember(event.actor),
     }
   }
@@ -1072,7 +1073,7 @@ export async function getTicketExternalStatusChangedTargets(
  * which additionally requires `type: 'user'` and would silently narrow the
  * recipient set. The anti-spam presence gate is NOT applied here — it runs
  * in the notification hook itself (events/handlers/notification.ts), since
- * `isAnyAgentOnline` is a single global Redis check, not a per-recipient one,
+ * `isAnyAgentOnline` is a single global presence-store check, not a per-recipient one,
  * and the hook is where the config's `isFirstMessage` flag is read back out.
  */
 export async function getMessageCreatedTargets(event: EventData): Promise<HookTarget | null> {
@@ -1097,7 +1098,7 @@ export async function getMessageCreatedTargets(event: EventData): Promise<HookTa
   const team = await db
     .select({ principalId: principal.id })
     .from(principal)
-    .where(inArray(principal.role, ['admin', 'member']))
+    .where(and(eq(principal.type, 'user'), inArray(principal.role, ['admin', 'member'])))
   if (team.length === 0) return null
 
   const authorName = event.data.message.authorName ?? 'A visitor'
@@ -1305,8 +1306,14 @@ async function requesterFacingConfig(
     await import('@/lib/server/domains/channel-accounts/channel-account.service')
   const { inboundTicketReplyToAddress } =
     await import('@/lib/server/domains/conversation/conversation.email-channel')
+  const { currentMailSlug } =
+    await import('@/lib/server/domains/conversation/conversation.mail-slug')
   const from = (await resolveSendingAddress(params.assignedTeamId, 'support')) ?? undefined
-  const replyTo = inboundTicketReplyToAddress(params.ticketId) ?? undefined
+  // The mail slug names this workspace in the address, which is what lets a
+  // shared inbound domain route the reply back. With none to mint under there is
+  // no routable address: the ticket email then carries no Reply-To and its
+  // footer points at the portal thread.
+  const replyTo = inboundTicketReplyToAddress(params.ticketId, currentMailSlug()) ?? undefined
   return { ...baseTicketConfig(params), from, replyTo }
 }
 

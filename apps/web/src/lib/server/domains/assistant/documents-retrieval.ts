@@ -172,23 +172,21 @@ export const documentsKnowledgeSource: KnowledgeSource = {
   sourceType: 'document',
   async retrieve(query, ceiling) {
     const rows = await retrieveAssistantDocuments(query, ceiling)
-    return rows.map(
-      (d): RetrievedItem => ({
+    return rows.map((d): RetrievedItem => ({
+      id: d.id,
+      sourceType: 'document' as const,
+      title: d.title,
+      excerpt: d.content.slice(0, KNOWLEDGE_SNIPPET_CHARS),
+      score: d.score,
+      updatedAt: d.updatedAt.toISOString(),
+      citation: {
+        type: 'document' as const,
         id: d.id,
-        sourceType: 'document' as const,
         title: d.title,
-        excerpt: d.content.slice(0, KNOWLEDGE_SNIPPET_CHARS),
-        score: d.score,
-        updatedAt: d.updatedAt.toISOString(),
-        citation: {
-          type: 'document' as const,
-          id: d.id,
-          title: d.title,
-          // No public page exists for an uploaded document: the citation
-          // carries its title with an empty URL and never trips the leak gate.
-          url: '',
-        },
-      })
-    )
+        // No public page exists for an uploaded document: the citation
+        // carries its title with an empty URL and never trips the leak gate.
+        url: '',
+      },
+    }))
   },
 }

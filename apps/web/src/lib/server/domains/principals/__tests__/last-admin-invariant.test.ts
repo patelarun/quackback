@@ -33,13 +33,17 @@ const hoisted = vi.hoisted(() => ({
   mockCacheDel: vi.fn(),
 }))
 
-vi.mock('@/lib/server/redis', () => ({
+vi.mock('@/lib/server/cache', () => ({
   cacheDel: hoisted.mockCacheDel,
   CACHE_KEYS: { PRINCIPAL_BY_USER: (id: string) => `principal:user:${id}` },
 }))
 
 vi.mock('@/lib/server/domains/teams', () => ({
   addPrincipalToDefaultTeam: vi.fn(),
+}))
+
+vi.mock('@/lib/server/domains/principals/membership-sync', () => ({
+  enqueueMembershipSync: vi.fn(async () => {}),
 }))
 
 vi.mock('@/lib/server/db', async () => {

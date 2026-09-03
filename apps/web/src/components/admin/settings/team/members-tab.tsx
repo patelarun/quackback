@@ -2,12 +2,15 @@ import { Fragment, useState, useEffect, useMemo } from 'react'
 import {
   type ColumnDef,
   type FilterFn,
-  flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  useReactTable,
+  columnFilteringFeature,
+  createFilteredRowModel,
+  globalFilteringFeature,
+  metaHelper,
+  tableFeatures,
+  useTable,
 } from '@tanstack/react-table'
 import { useSuspenseQuery, useQueryClient } from '@tanstack/react-query'
+import { useRouteContext } from '@tanstack/react-router'
 import { settingsQueries } from '@/lib/client/queries/settings'
 import { EnvelopeIcon, PlusIcon } from '@heroicons/react/24/solid'
 import { Avatar } from '@/components/ui/avatar'
@@ -27,6 +30,7 @@ import { CopyButton } from '@/components/shared/copy-button'
 import { SettingsCard } from '@/components/admin/settings/settings-card'
 import { Button } from '@/components/ui/button'
 import { InviteMemberDialog } from '@/components/auth/invite-member-dialog'
+import { AddSeatsDialog } from '@/components/admin/settings/billing/add-seats-dialog'
 import {
   type PendingInvitation,
   getExpiryText,
@@ -35,6 +39,8 @@ import {
   InviteLinkRow,
 } from '@/components/admin/settings/team/pending-invitations'
 import { MemberActions } from '@/components/admin/settings/team/member-actions'
+import { CloudOwnershipActions } from '@/components/admin/settings/team/cloud-ownership-actions'
+import { seatInviteBlocked, seatAddAvailable } from '@/components/admin/settings/team/seat-usage'
 import { CUSTOM_ROLE_BADGE } from '@/components/admin/settings/team/role-ui'
 import type { UserId, PrincipalId } from '@quackback/ids'
 import { isAdmin } from '@/lib/shared/roles'
@@ -68,6 +74,13 @@ type TeamRow =
       expiresAt: string
     }
 
+const features = tableFeatures({
+  columnFilteringFeature,
+  globalFilteringFeature,
+  filteredRowModel: createFilteredRowModel(),
+  columnMeta: metaHelper<{ className?: string }>(),
+})
+
 /**
  * One badge for both layouts: the resolved workspace assignment's name when
  * one exists (presets show Owner/Manager etc., matching the roles tab), the
@@ -95,7 +108,7 @@ function roleBadge(r: TeamRow, role: string, extra = '') {
   )
 }
 
-const teamFilterFn: FilterFn<TeamRow> = (row, _columnId, filterValue: string) => {
+const teamFilterFn: FilterFn<typeof features, TeamRow> = (row, _columnId, filterValue: string) => {
   const query = filterValue.toLowerCase()
   const r = row.original
   const name = r.type === 'member' ? r.name : r.name || ''
@@ -113,11 +126,13 @@ interface MembersTabProps {
 
 /** The teammate roster + pending invitations (the Members tab of Members & Teams). */
 export function MembersTab({ workspaceName, currentMember }: MembersTabProps) {
+  const { session } = useRouteContext({ from: '__root__' })
   const teamDataQuery = useSuspenseQuery(settingsQueries.teamMembersAndInvitations())
-  const { members, avatarMap, formattedInvitations } = teamDataQuery.data
+  const { members, avatarMap, formattedInvitations, seatUsage } = teamDataQuery.data
 
   const [search, setSearch] = useState('')
   const [showInviteDialog, setShowInviteDialog] = useState(false)
+  const [showAddSeats, setShowAddSeats] = useState(false)
   const queryClient = useQueryClient()
   const [error, setError] = useState<string | null>(null)
   const [inviteLinkMap, setInviteLinkMap] = useState<Record<string, string>>({})
@@ -127,6 +142,17 @@ export function MembersTab({ workspaceName, currentMember }: MembersTabProps) {
   useEffect(() => {
     setInvitations(formattedInvitations)
   }, [formattedInvitations])
+
+  const inviteBlocked = seatInviteBlocked(seatUsage)
+  const canAddSeat = seatAddAvailable(seatUsage)
+  const seatLine = seatUsage?.limit != null ? `${seatUsage.used} of ${seatUsage.limit} seats` : null
+  const seatDescription = seatLine
+    ? inviteBlocked
+      ? canAddSeat
+        ? `${seatLine}. Add a seat to invite more.`
+        : `${seatLine}. Upgrade to invite more.`
+      : seatLine
+    : `Manage who has access to ${workspaceName}`
 
   const adminCount = members.filter((m) => isAdmin(m.role)).length
   const isLastAdmin = adminCount <= 1
@@ -171,7 +197,7 @@ export function MembersTab({ workspaceName, currentMember }: MembersTabProps) {
     setInviteLinkMap((prev) => ({ ...prev, [id]: link }))
   }
 
-  const columns = useMemo<ColumnDef<TeamRow>[]>(
+  const columns = useMemo<ColumnDef<typeof features, TeamRow>[]>(
     () => [
       {
         id: 'name',
@@ -304,11 +330,10 @@ export function MembersTab({ workspaceName, currentMember }: MembersTabProps) {
     [avatarMap, currentMember.id, isCurrentUserAdmin, isLastAdmin]
   )
 
-  const table = useReactTable({
+  const table = useTable({
+    features,
     data,
     columns,
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
     globalFilterFn: teamFilterFn,
     state: { globalFilter: search },
     onGlobalFilterChange: setSearch,
@@ -319,9 +344,16 @@ export function MembersTab({ workspaceName, currentMember }: MembersTabProps) {
     <div className="space-y-6">
       {error && <FormError message={error} />}
 
+      <CloudOwnershipActions
+        sessionEmail={session?.user?.email ?? null}
+        memberEmails={members
+          .map((member) => member.userEmail)
+          .filter((email): email is string => Boolean(email))}
+      />
+
       <SettingsCard
         title="Members"
-        description={`Manage who has access to ${workspaceName}`}
+        description={seatDescription}
         action={
           <Button size="sm" onClick={() => setShowInviteDialog(true)}>
             <PlusIcon className="h-4 w-4" />
@@ -345,15 +377,8 @@ export function MembersTab({ workspaceName, currentMember }: MembersTabProps) {
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
-                    <TableHead
-                      key={header.id}
-                      className={
-                        (header.column.columnDef.meta as { className?: string })?.className
-                      }
-                    >
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(header.column.columnDef.header, header.getContext())}
+                    <TableHead key={header.id} className={header.column.columnDef.meta?.className}>
+                      {header.isPlaceholder ? null : <table.FlexRender header={header} />}
                     </TableHead>
                   ))}
                 </TableRow>
@@ -377,14 +402,12 @@ export function MembersTab({ workspaceName, currentMember }: MembersTabProps) {
                   return (
                     <Fragment key={row.id}>
                       <TableRow>
-                        {row.getVisibleCells().map((cell) => (
+                        {row.getAllCells().map((cell) => (
                           <TableCell
                             key={cell.id}
-                            className={
-                              (cell.column.columnDef.meta as { className?: string })?.className
-                            }
+                            className={cell.column.columnDef.meta?.className}
                           >
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            <table.FlexRender cell={cell} />
                           </TableCell>
                         ))}
                       </TableRow>
@@ -521,7 +544,9 @@ export function MembersTab({ workspaceName, currentMember }: MembersTabProps) {
         open={showInviteDialog}
         onClose={() => setShowInviteDialog(false)}
         onSuccess={() => queryClient.invalidateQueries({ queryKey: ['settings', 'team'] })}
+        onAddSeat={canAddSeat ? () => setShowAddSeats(true) : undefined}
       />
+      <AddSeatsDialog open={showAddSeats} onOpenChange={setShowAddSeats} />
     </div>
   )
 }

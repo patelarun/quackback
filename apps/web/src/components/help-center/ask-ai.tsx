@@ -23,8 +23,10 @@ import type {
 } from '@/lib/shared/help-center/kb-ask-contract'
 import { AssistantAnswer } from '@/components/shared/conversation/assistant-turn'
 import type { ConversationMessageCitation } from '@/lib/shared/conversation/types'
-import { extractHttpErrorMessage } from '@/lib/client/utils/http-error'
+import { aguiFetchClient } from '@/lib/client/utils/agui-fetch'
 import { splitByTerms } from './ask-ai-text'
+import { DEFAULT_LOCALE } from '@/lib/shared/i18n'
+import { hcArticlePath } from '@/lib/shared/help-center-url'
 
 // Existing importers keep the AskAiSourceMeta name.
 export type AskAiSourceMeta = KbAskSourceMeta
@@ -76,9 +78,13 @@ const IDLE_STATE: AskAiState = {
   related: [],
 }
 
-/** In-app two-segment help-center article path (category + article slug). */
+/** Public help-center article path. */
 function articleHref(source: AskAiSourceMeta): string {
-  return `/hc/articles/${source.categorySlug}/${source.slug}`
+  return hcArticlePath({
+    locale: DEFAULT_LOCALE,
+    urlId: source.urlId,
+    slug: source.slug,
+  })
 }
 
 /** Present cited sources as the shared assistant citation shape so the answer
@@ -94,18 +100,10 @@ function toCitations(sources: AskAiSourceMeta[]): ConversationMessageCitation[] 
 
 const KB_ASK_URL = '/api/widget/kb-ask'
 
-/** Non-2xx responses carry the widget `{error:{message}}` envelope (rate
- *  limits, flag gates, budget); surface that message on the thrown error so a
- *  transport failure isn't a generic one. fetchClient must satisfy
- *  `typeof fetch` (including `preconnect`), so copy it off the global. */
-const askAiFetch: typeof fetch = Object.assign(
-  async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const res = await fetch(input, init)
-    if (!res.ok) throw new Error(await extractHttpErrorMessage(res))
-    return res
-  },
-  { preconnect: fetch.preconnect }
-)
+/** Non-2xx widget envelopes (rate limits, flag gates, budget) become a
+ *  synthetic RUN_ERROR SSE frame. Throwing from fetchClient is wrong on AI
+ *  0.52+: the adapter wraps any rejection as StreamReadError. */
+const askAiFetch = aguiFetchClient()
 
 /** Drive one Ask AI question at a time; re-asking aborts the previous run. */
 export function useAskAi() {

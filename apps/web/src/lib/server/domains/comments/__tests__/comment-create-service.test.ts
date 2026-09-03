@@ -122,6 +122,10 @@ vi.mock('@/lib/server/domains/settings/settings.service', () => ({
   }),
 }))
 
+vi.mock('@/lib/server/content/rehost-images', () => ({
+  rehostExternalImages: vi.fn(async (json: unknown) => json),
+}))
+
 // A minimal team actor sufficient for all three tests (public board, published post)
 const teamActor: Actor = {
   principalId: 'principal_admin' as unknown as PrincipalId,
@@ -207,7 +211,7 @@ async function mockPostWithApproval(approvalComments: boolean) {
         },
       },
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- minimal fixture
+    // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal fixture
   } as any)
 }
 
@@ -419,7 +423,7 @@ describe('createComment — soft-deleted board is rejected as POST_NOT_FOUND', (
           moderation: { anonPosts: 'inherit', signedPosts: 'inherit', comments: 'inherit' },
         },
       },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- minimal fixture
+      // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal fixture
     } as any)
 
     const { createComment } = await import('../comment.service')
@@ -434,5 +438,57 @@ describe('createComment — soft-deleted board is rejected as POST_NOT_FOUND', (
 
     // And no comment is inserted.
     expect(insertedComments).toHaveLength(0)
+  })
+})
+
+describe('createComment content holds', () => {
+  beforeEach(() => {
+    insertedComments.length = 0
+  })
+
+  it('holds a comment with an image when holdImages is on', async () => {
+    const { getPortalConfig } = await import('@/lib/server/domains/settings/settings.service')
+    vi.mocked(getPortalConfig).mockResolvedValueOnce({
+      moderationDefault: { requireApproval: 'none', holdImages: true },
+    } as Awaited<ReturnType<typeof getPortalConfig>>)
+    await mockPostWithApproval(false)
+    const { createComment } = await import('../comment.service')
+    await createComment(
+      {
+        postId: 'post_p' as unknown as PostId,
+        content: 'screenshot',
+        contentJson: {
+          type: 'doc',
+          content: [{ type: 'image', attrs: { src: 'https://cdn.example.com/x.png' } }],
+        },
+      },
+      { principalId: 'principal_uv' as unknown as PrincipalId, role: 'user' },
+      portalActor,
+      { skipDispatch: true }
+    )
+    expect(insertedComments[0]).toMatchObject({ moderationState: 'pending' })
+  })
+
+  it('does not hold a team comment with an image when holdImages is on', async () => {
+    const { getPortalConfig } = await import('@/lib/server/domains/settings/settings.service')
+    vi.mocked(getPortalConfig).mockResolvedValueOnce({
+      moderationDefault: { requireApproval: 'none', holdImages: true },
+    } as Awaited<ReturnType<typeof getPortalConfig>>)
+    await mockPostWithApproval(false)
+    const { createComment } = await import('../comment.service')
+    await createComment(
+      {
+        postId: 'post_p' as unknown as PostId,
+        content: 'screenshot',
+        contentJson: {
+          type: 'doc',
+          content: [{ type: 'image', attrs: { src: 'https://cdn.example.com/x.png' } }],
+        },
+      },
+      { principalId: 'principal_admin' as unknown as PrincipalId, role: 'admin' },
+      teamActor,
+      { skipDispatch: true }
+    )
+    expect(insertedComments[0]).toMatchObject({ moderationState: 'published' })
   })
 })

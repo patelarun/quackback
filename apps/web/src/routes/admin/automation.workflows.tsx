@@ -1,20 +1,25 @@
 import { createFileRoute, Navigate } from '@tanstack/react-router'
-import { BoltIcon } from '@heroicons/react/24/solid'
+import { useIntl } from 'react-intl'
 import type { FeatureFlags } from '@/lib/shared/types/settings'
 import { BackLink } from '@/components/ui/back-link'
-import { PageHeader } from '@/components/shared/page-header'
 import { settingsQueries } from '@/lib/client/queries/settings'
-import { AgentPriorityBanner } from '@/components/admin/automation/agent-priority-banner'
+import { WhoRepliesFirstCard } from '@/components/admin/automation/who-replies-first-card'
 import { AbandonedJourneyAutoCloseCard } from '@/components/admin/automation/abandoned-journey-auto-close-card'
 import { WorkflowsManager } from '@/components/admin/automation/workflows-manager'
 
 export const Route = createFileRoute('/admin/automation/workflows')({
   loader: async ({ context }) => {
-    await Promise.all([
-      context.queryClient.ensureQueryData(settingsQueries.widgetConfig()),
-      context.queryClient.ensureQueryData(settingsQueries.workflowAbandonedAutoClose()),
+    const { hasEntitlementFn } = await import('@/lib/server/functions/entitlement-status')
+    const { ensureBillingCatalogue } = await import('@/lib/client/queries/billing')
+    const [, workflowsEntitled] = await Promise.all([
+      Promise.all([
+        context.queryClient.ensureQueryData(settingsQueries.widgetConfig()),
+        context.queryClient.ensureQueryData(settingsQueries.workflowAbandonedAutoClose()),
+      ]),
+      hasEntitlementFn({ data: { key: 'workflows' } }),
+      ensureBillingCatalogue(context.queryClient, context.billingEnabled),
     ])
-    return {}
+    return { workflowsEntitled }
   },
   component: WorkflowsPageRoute,
 })
@@ -30,19 +35,19 @@ function WorkflowsPageRoute() {
 }
 
 function WorkflowsPage() {
+  const intl = useIntl()
+  const { workflowsEntitled } = Route.useLoaderData()
   return (
     <div className="space-y-6 max-w-5xl">
       <div className="lg:hidden">
-        <BackLink to="/admin/automation">AI &amp; Automation</BackLink>
+        <BackLink to="/admin/automation">
+          {intl.formatMessage({ id: 'automation.nav.label', defaultMessage: 'AI & Automation' })}
+        </BackLink>
       </div>
-      <PageHeader
-        icon={BoltIcon}
-        title="Workflows"
-        description="Trigger-driven automation for conversations and tickets"
-      />
-      <AgentPriorityBanner />
+      <WorkflowsManager entitled={workflowsEntitled}>
+        <WhoRepliesFirstCard />
+      </WorkflowsManager>
       <AbandonedJourneyAutoCloseCard />
-      <WorkflowsManager />
     </div>
   )
 }

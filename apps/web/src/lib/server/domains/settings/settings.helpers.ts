@@ -3,19 +3,32 @@
  * NOT part of the public API — import from settings.service instead.
  */
 import { db, eq, settings } from '@/lib/server/db'
-import { cacheDel, CACHE_KEYS } from '@/lib/server/redis'
-import { NotFoundError, InternalError, ValidationError } from '@/lib/shared/errors'
+import { cacheDel, CACHE_KEYS } from '@/lib/server/cache'
+import { DomainException, InternalError, NotFoundError } from '@/lib/shared/errors'
 import { sanitizeTiptapContent } from '@/lib/server/sanitize-tiptap'
+import { isEmptyTiptapDoc } from '@/lib/shared/utils/is-empty-tiptap-doc'
 import { logger } from '@/lib/server/logger'
 import {
   DEFAULT_PORTAL_CONFIG,
-  PORTAL_WELCOME_CARD_TITLE_MAX,
+  DEFAULT_WIDGET_CONFIG,
+  EMPTY_WELCOME_BODY,
+  LEGACY_PORTAL_CONFIG,
+  LEGACY_WIDGET_CONFIG,
+  type PortalConfig,
   type PortalWelcomeCard,
+  type WidgetConfig,
 } from './settings.types'
+import type { TiptapContent } from '@/lib/shared/db-types'
 
 const log = logger.child({ component: 'settings-helpers' })
 
 export type SettingsRecord = NonNullable<Awaited<ReturnType<typeof db.query.settings.findFirst>>>
+
+function storedJsonIsBlank(json: string | null): boolean {
+  if (!json) return true
+  const trimmed = json.trim()
+  return trimmed === '' || trimmed === 'null'
+}
 
 /** @internal */
 export function parseJsonConfig<T extends object>(json: string | null, defaultValue: T): T {
@@ -25,6 +38,28 @@ export function parseJsonConfig<T extends object>(json: string | null, defaultVa
   } catch {
     return defaultValue
   }
+}
+
+/**
+ * Merge stored JSON over `legacyDefault` so missing nested keys keep their
+ * historical off values. Null/empty blobs use `currentDefault` (new installs).
+ */
+export function parseStoredConfig<T extends object>(
+  json: string | null,
+  currentDefault: T,
+  legacyDefault: T
+): T {
+  if (storedJsonIsBlank(json)) return currentDefault
+  try {
+    return deepMerge(legacyDefault, JSON.parse(json as string))
+  } catch {
+    return currentDefault
+  }
+}
+
+/** @internal */
+export function parseWidgetConfig(json: string | null): WidgetConfig {
+  return parseStoredConfig(json, DEFAULT_WIDGET_CONFIG, LEGACY_WIDGET_CONFIG)
 }
 
 /** @internal */
@@ -71,7 +106,7 @@ export async function requireSettings(): Promise<SettingsRecord> {
 
 /**
  * The raw settings row for READ-ONLY paths, served through the Redis-cached
- * tenant-settings blob (a single Redis GET when warm; the miss path is the
+ * workspace-settings blob (a single Redis GET when warm; the miss path is the
  * same DB read as {@link requireSettings}). Every settings mutation calls
  * invalidateSettingsCache(), so reads here are effectively fresh.
  *
@@ -84,15 +119,17 @@ export async function requireSettings(): Promise<SettingsRecord> {
 export async function requireSettingsCached(): Promise<SettingsRecord> {
   // Dynamic import: settings.service imports these helpers at module scope,
   // so a static import here would be a load-time cycle.
-  const { getTenantSettings } = await import('./settings.service')
-  const tenant = await getTenantSettings()
-  if (!tenant?.settings) throw new NotFoundError('SETTINGS_NOT_FOUND', 'Settings not found')
-  return tenant.settings as SettingsRecord
+  const { getWorkspaceSettings } = await import('./settings.service')
+  const workspace = await getWorkspaceSettings()
+  if (!workspace?.settings) throw new NotFoundError('SETTINGS_NOT_FOUND', 'Settings not found')
+  return workspace.settings as SettingsRecord
 }
 
 /** @internal */
 export function wrapDbError(operation: string, error: unknown): never {
-  if (error instanceof NotFoundError || error instanceof ValidationError) throw error
+  // Named refusals (402/403/404/…) must stay themselves. Wrapping a
+  // TierLimitError here turned branding custom-colour saves into 500s.
+  if (error instanceof DomainException) throw error
   const message = error instanceof Error ? error.message : 'Unknown error'
   throw new InternalError('DATABASE_ERROR', `Failed to ${operation}: ${message}`, error)
 }
@@ -100,10 +137,10 @@ export function wrapDbError(operation: string, error: unknown): never {
 /** @internal */
 export async function invalidateSettingsCache(): Promise<void> {
   log.info('invalidating settings cache')
-  // REGISTERED_AUTH_PROVIDERS is derived from authConfig.oauth (part of tenant
+  // REGISTERED_AUTH_PROVIDERS is derived from authConfig.oauth (part of workspace
   // settings) and the identity_provider list; every identity-provider write
   // funnels through here, so drop it alongside the settings row.
-  await cacheDel(CACHE_KEYS.TENANT_SETTINGS, CACHE_KEYS.REGISTERED_AUTH_PROVIDERS)
+  await cacheDel(CACHE_KEYS.WORKSPACE_SETTINGS, CACHE_KEYS.REGISTERED_AUTH_PROVIDERS)
 }
 
 /**
@@ -126,9 +163,70 @@ export async function writeMetadataKey(key: string, value: unknown): Promise<voi
 }
 
 /**
+ * Stored welcome card, including the legacy `{ enabled, title, body }`
+ * shape repaired by {@link resolveWelcomeCard} on read.
+ *
+ * @internal
+ */
+export type StoredWelcomeCard = {
+  enabled?: boolean
+  title?: string
+  body?: TiptapContent
+}
+
+/**
+ * Read-time repair of a stored welcome card to `{ body }`.
+ *
+ * - `enabled: true` and a non-empty title → prepend a level-2 heading
+ *   node to `body.content`, then drop `title` and `enabled`.
+ * - `enabled: false` → empty body (intentionally discards disabled drafts).
+ * - `enabled` absent (the post-simplification `{ body }` write) → body as stored.
+ *
+ * @internal
+ */
+export function resolveWelcomeCard(
+  card: StoredWelcomeCard | PortalWelcomeCard | undefined
+): PortalWelcomeCard {
+  if (!card) return { body: EMPTY_WELCOME_BODY }
+
+  const stored = card as StoredWelcomeCard
+  if (stored.enabled === false) return { body: EMPTY_WELCOME_BODY }
+
+  const body = stored.body ?? EMPTY_WELCOME_BODY
+  if (stored.enabled !== true) return { body }
+
+  const title = stored.title?.trim() ?? ''
+  if (!title) return { body }
+
+  const heading: TiptapContent = {
+    type: 'heading',
+    attrs: { level: 2 },
+    content: [{ type: 'text', text: title }],
+  }
+  return {
+    body: {
+      type: 'doc',
+      content: [heading, ...(body.content ?? [])],
+    },
+  }
+}
+
+/**
+ * Parse stored portalConfig and repair the welcome card to `{ body }`.
+ *
+ * @internal
+ */
+export function parsePortalConfig(json: string | null): PortalConfig {
+  const parsed = parseStoredConfig(json, DEFAULT_PORTAL_CONFIG, LEGACY_PORTAL_CONFIG)
+  return { ...parsed, welcomeCard: resolveWelcomeCard(parsed.welcomeCard) }
+}
+
+/**
  * Merge a partial `welcomeCard` update into the stored card. Unlike
  * {@link deepMerge}, the `body` field is replaced wholesale — a TipTap
  * doc with no `content` must clear the previous content, not retain it.
+ * The result is always the resolved `{ body }` shape (legacy enabled/title
+ * are dropped on write).
  *
  * @internal
  */
@@ -138,27 +236,27 @@ export function mergeWelcomeCard(
 ): PortalWelcomeCard {
   const base = existing ?? DEFAULT_PORTAL_CONFIG.welcomeCard!
   if (!input) return existing ?? base
-  return { ...base, ...input }
+  return { body: input.body ?? base.body }
 }
 
 /**
- * Project a stored welcome card for public consumption. Disabled cards
- * have draft title/body that must not leak through the public portal
- * config endpoint.
+ * Project a stored welcome card for public consumption. Empty bodies
+ * (including legacy disabled cards after {@link resolveWelcomeCard})
+ * are omitted so the portal renderer has nothing to show.
  *
  * @internal
  */
 export function publicWelcomeCard(
-  card: PortalWelcomeCard | undefined
+  card: StoredWelcomeCard | PortalWelcomeCard | undefined
 ): PortalWelcomeCard | undefined {
-  if (!card?.enabled) return undefined
-  return card
+  const resolved = resolveWelcomeCard(card)
+  if (isEmptyTiptapDoc(resolved.body)) return undefined
+  return resolved
 }
 
 /**
  * Normalize a partial `welcomeCard` update before it's merged into stored
- * portalConfig. Trims the title, enforces the length cap, and runs the
- * TipTap body through the standard sanitizer.
+ * portalConfig. Runs the TipTap body through the standard sanitizer.
  *
  * @internal
  */
@@ -167,16 +265,6 @@ export function normalizeWelcomeCardInput(
 ): Partial<PortalWelcomeCard> | undefined {
   if (!input) return input
   const normalized: Partial<PortalWelcomeCard> = { ...input }
-  if (typeof input.title === 'string') {
-    const trimmed = input.title.trim()
-    if (trimmed.length > PORTAL_WELCOME_CARD_TITLE_MAX) {
-      throw new ValidationError(
-        'WELCOME_CARD_TITLE_TOO_LONG',
-        `Welcome card title must be ${PORTAL_WELCOME_CARD_TITLE_MAX} characters or fewer`
-      )
-    }
-    normalized.title = trimmed
-  }
   if (input.body !== undefined) {
     normalized.body = sanitizeTiptapContent(input.body)
   }

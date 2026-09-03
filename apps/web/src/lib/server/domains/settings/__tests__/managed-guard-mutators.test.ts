@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ForbiddenError } from '@/lib/shared/errors'
 
 const hoisted = vi.hoisted(() => ({
-  mockGetTenantSettings: vi.fn(),
+  mockGetWorkspaceSettings: vi.fn(),
   mockRequireSettings: vi.fn(),
   mockUpdateChain: vi.fn(),
   mockDbUpdate: vi.fn(),
@@ -29,7 +29,7 @@ vi.mock('@/lib/server/db', async (importOriginal) => {
   }
 })
 
-vi.mock('@/lib/server/redis', () => ({
+vi.mock('@/lib/server/cache', () => ({
   cacheGet: vi.fn(),
   cacheSet: vi.fn(),
   cacheDel: vi.fn(),
@@ -48,9 +48,9 @@ vi.mock('../settings.helpers', () => ({
 }))
 
 // The gate dynamic-imports settings.service from inside its handler, so
-// we mock the top-level service and supply our own getTenantSettings.
+// we mock the top-level service and supply our own getWorkspaceSettings.
 vi.mock('../settings.service', () => ({
-  getTenantSettings: hoisted.mockGetTenantSettings,
+  getWorkspaceSettings: hoisted.mockGetWorkspaceSettings,
 }))
 
 import { updateWorkspaceName } from '../settings.media'
@@ -69,14 +69,14 @@ describe('updateWorkspaceName — managed-paths gate', () => {
   })
 
   it('throws ForbiddenError when workspace.name is managed', async () => {
-    hoisted.mockGetTenantSettings.mockResolvedValue({
+    hoisted.mockGetWorkspaceSettings.mockResolvedValue({
       managedFieldPaths: ['workspace.name'],
     })
     await expect(updateWorkspaceName('Acme')).rejects.toBeInstanceOf(ForbiddenError)
   })
 
   it('writes through when workspace.name is not managed', async () => {
-    hoisted.mockGetTenantSettings.mockResolvedValue({
+    hoisted.mockGetWorkspaceSettings.mockResolvedValue({
       managedFieldPaths: [],
     })
     await expect(updateWorkspaceName('Acme')).resolves.toBe('Acme')

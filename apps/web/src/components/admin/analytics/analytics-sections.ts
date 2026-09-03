@@ -10,13 +10,7 @@ import {
 } from '@heroicons/react/24/solid'
 
 export type Section =
-  | 'overview'
-  | 'visitors'
-  | 'feedback'
-  | 'support'
-  | 'ai'
-  | 'changelog'
-  | 'users'
+  'overview' | 'visitors' | 'feedback' | 'support' | 'ai' | 'changelog' | 'users'
 
 export interface SectionNavItem {
   key: Section

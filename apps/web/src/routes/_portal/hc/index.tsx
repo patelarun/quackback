@@ -15,6 +15,7 @@ import { resolveHcLandingLocale } from '@/lib/shared/help-center-url'
 import { HC_LOCALE_COOKIE } from '@/components/help-center/help-center-locale-switcher'
 import { portalHeadMessage } from '@/lib/shared/portal-head-message'
 import type { HelpCenterConfig } from '@/lib/shared/types/settings'
+import { resolvePortalOgImageUrl } from '@/lib/shared/portal-og-image'
 
 /** Shown only when the workspace has cleared its own homepage copy; both are
  *  translated at render time, so these are the English fallbacks react-intl
@@ -84,7 +85,10 @@ export const Route = createFileRoute('/_portal/hc/')({
       popularArticles,
       helpCenterConfig: helpCenterConfig ?? null,
       workspaceName: settings?.name ?? 'Help Center',
-      logoUrl: settings?.brandingData?.logoUrl || '/logo.png',
+      logoUrl: resolvePortalOgImageUrl(
+        { logoUrl: settings?.brandingData?.logoUrl },
+        context.baseUrl
+      ),
     }
   },
   head: ({ loaderData, matches }) => {
@@ -118,7 +122,7 @@ function HelpCenterLandingPage() {
   const intl = useIntl()
   const { categories, popularArticles, helpCenterConfig } = Route.useLoaderData()
   const { settings } = Route.useRouteContext()
-  const askAiEnabled = !!settings?.featureFlags?.helpCenterAiAnswers
+  const askAiEnabled = !!settings?.featureFlags?.helpCenter
 
   const title = helpCenterConfig?.homepageTitle || intl.formatMessage(DEFAULT_TITLE_MESSAGE)
   const description =

@@ -12,7 +12,7 @@ import type { BoardId, PostTagId, RoleId, UserTagId } from '@quackback/ids'
 import { getSetupState, isOnboardingComplete as checkComplete } from '@/lib/server/db'
 import type { TiptapContent } from '@/lib/shared/schemas/posts'
 import { requireAuth } from './auth-helpers'
-import { readSettings } from './workspace'
+import { getSettings } from './workspace'
 import { getSession } from '@/lib/server/auth/session'
 import {
   db,
@@ -26,11 +26,12 @@ import {
   inArray,
 } from '@/lib/server/db'
 import {
-  ensurePrincipalForUser,
-  setPrincipalRole,
-} from '@/lib/server/domains/principals/principal.factory'
+  findHumanAdmin,
+  isOpenToBootstrapClaim,
+} from '@/lib/server/domains/principals/bootstrap-admin'
 import { isAdmin } from '@/lib/shared/roles'
 import { PERMISSIONS } from '@/lib/shared/permissions'
+import { CURRENT_WIDGET_SDK_VERSION, widgetSdkNeedsUpdate } from '@/lib/shared/widget/sdk-version'
 import { listInboxPosts } from '@/lib/server/domains/posts/post.inbox'
 import { listPostTags } from '@/lib/server/domains/post-tags/post-tag.service'
 import { listStatuses } from '@/lib/server/domains/statuses/status.service'
@@ -349,8 +350,7 @@ export const fetchOnboardingStatus = createServerFn({ method: 'GET' }).handler(a
   const auth = await requireAuth({ permission: PERMISSIONS.MEMBER_VIEW })
 
   const { getWidgetConfig } = await import('@/lib/server/domains/settings/settings.widget')
-  const { boards, helpCenterArticles, statusComponents, isNull, isNotNull, lte } =
-    await import('@/lib/server/db')
+  const { boards, helpCenterArticles, isNull } = await import('@/lib/server/db')
   const { getSetupState } = await import('@/lib/shared/db-types')
   const { permissionsForLegacyRole } = await import('@/lib/server/policy/permissions')
   const { resolveFeatureFlags } = await import('@/lib/server/domains/settings/settings.types')
@@ -363,12 +363,10 @@ export const fetchOnboardingStatus = createServerFn({ method: 'GET' }).handler(a
     widgetConfig,
     connectedIntegration,
     helpArticle,
-    publishedHelpArticle,
-    statusComponent,
     tierLimits,
   ] = await Promise.all([
     db.query.boards.findMany({
-      columns: { id: true, access: true },
+      columns: { id: true, slug: true, access: true },
       where: isNull(boards.deletedAt),
     }),
     // Teammates only (admin/member) — portal role=user must not complete "invite"
@@ -376,7 +374,7 @@ export const fetchOnboardingStatus = createServerFn({ method: 'GET' }).handler(a
       .select({ id: principal.id })
       .from(principal)
       .where(and(eq(principal.type, 'user'), inArray(principal.role, ['admin', 'member']))),
-    readSettings(),
+    getSettings(),
     getWidgetConfig(),
     db.query.integrations.findFirst({
       columns: { id: true },
@@ -385,18 +383,6 @@ export const fetchOnboardingStatus = createServerFn({ method: 'GET' }).handler(a
     db.query.helpCenterArticles.findFirst({
       columns: { id: true },
       where: isNull(helpCenterArticles.deletedAt),
-    }),
-    db.query.helpCenterArticles.findFirst({
-      columns: { id: true },
-      where: and(
-        isNull(helpCenterArticles.deletedAt),
-        isNotNull(helpCenterArticles.publishedAt),
-        lte(helpCenterArticles.publishedAt, new Date())
-      ),
-    }),
-    db.query.statusComponents.findFirst({
-      columns: { id: true },
-      where: isNull(statusComponents.deletedAt),
     }),
     getTierLimits(),
   ])
@@ -407,14 +393,12 @@ export const fetchOnboardingStatus = createServerFn({ method: 'GET' }).handler(a
   const permissions = permissionsForLegacyRole(auth.principal.role)
   const hasBranding = Boolean(orgSettings?.logoKey)
   const hasWidgetEnabled = widgetConfig.enabled === true
-  // Messenger is "live" when the messenger surface is on and the widget is enabled
-  const hasMessengerEnabled =
-    hasWidgetEnabled &&
-    (widgetConfig.messenger?.enabled ?? false) &&
-    (widgetConfig.tabs?.messenger ?? false)
+  // Messenger is "live" when the widget is on and the Messages tab is shown.
+  const hasMessengerEnabled = hasWidgetEnabled && (widgetConfig.tabs?.messenger ?? true)
   const hasIntegration = Boolean(connectedIntegration)
   const hasInternalBoard = orgBoards.some((board) => board.access.view === 'team')
-  const hasPublicBoard = orgBoards.some((board) => board.access.view !== 'team')
+  const publicBoard = orgBoards.find((board) => board.access.view === 'anonymous')
+  const hasPublicBoard = Boolean(publicBoard)
 
   log.debug(
     {
@@ -424,7 +408,6 @@ export const fetchOnboardingStatus = createServerFn({ method: 'GET' }).handler(a
       has_widget: hasWidgetEnabled,
       has_messenger: hasMessengerEnabled,
       has_help_article: Boolean(helpArticle),
-      has_status_component: Boolean(statusComponent),
       use_case: setupState?.useCase,
     },
     'fetch onboarding status'
@@ -432,17 +415,26 @@ export const fetchOnboardingStatus = createServerFn({ method: 'GET' }).handler(a
   return {
     hasBoards: orgBoards.length > 0,
     hasPublicBoard,
+    publicBoardId: publicBoard?.id ?? null,
+    publicBoardSlug: publicBoard?.slug ?? null,
+    publicBoardPath: publicBoard ? `/?board=${encodeURIComponent(publicBoard.slug)}` : null,
+    publicBoardLinkCopiedAt: setupState?.activationMilestones?.publicBoardLinkCopiedAt ?? null,
     hasInternalBoard,
     memberCount: humanMembers.length,
     hasBranding,
-    hasWidgetEnabled,
     hasWidgetInstalled: Boolean(orgSettings?.widgetInstalledFirstSeenAt),
-    widgetLastSeenAt: orgSettings?.widgetInstalledLastSeenAt?.toISOString() ?? null,
     widgetOriginHost: orgSettings?.widgetInstalledOriginHost ?? null,
+    widgetLastDetectedAt: orgSettings?.widgetInstalledLastSeenAt
+      ? orgSettings.widgetInstalledLastSeenAt.toISOString()
+      : null,
+    widgetSdkVersion: orgSettings?.widgetInstalledSdkVersion ?? null,
+    currentWidgetSdkVersion: CURRENT_WIDGET_SDK_VERSION,
+    widgetSdkNeedsUpdate:
+      Boolean(orgSettings?.widgetInstalledFirstSeenAt) &&
+      widgetSdkNeedsUpdate(orgSettings?.widgetInstalledSdkVersion, CURRENT_WIDGET_SDK_VERSION),
+    hasWidgetEnabled,
     hasMessengerEnabled,
     hasHelpArticle: Boolean(helpArticle),
-    hasPublishedHelpArticle: Boolean(publishedHelpArticle),
-    hasStatusComponent: Boolean(statusComponent),
     hasIntegration,
     hasFirstWin: firstWin.reached,
     firstWinAt: firstWin.reachedAt,
@@ -473,8 +465,9 @@ export const fetchOnboardingStatus = createServerFn({ method: 'GET' }).handler(a
   }
 })
 
-/** Save or clear a launch-plan task preference. Required steps can be moved
- * later; only optional customisation can be hidden. */
+/** Save or clear a launch-plan skip. Any incomplete non-milestone task can
+ *  be skipped; storage is always `dismissed`. Legacy clients may still send
+ *  `deferred`, which is accepted and normalized. */
 const taskResolutionSchema = z.object({
   outcome: z.enum(['product_feedback', 'customer_support', 'help_center', 'internal']),
   taskId: z.string().min(1),
@@ -492,14 +485,14 @@ export const setLaunchTaskResolutionFn = createServerFn({ method: 'POST' })
       (candidate) => candidate.id === data.taskId
     )
     if (!task) throw new Error('Unknown launch task')
-    if (data.resolution === 'deferred' && task.classification !== 'prerequisite') {
-      throw new Error('Only setup steps can be moved later')
+    if (task.classification === 'first_win' && data.resolution) {
+      throw new Error('The milestone cannot be skipped')
     }
-    if (data.resolution === 'dismissed' && task.classification !== 'polish') {
-      throw new Error('Only optional customization can be skipped')
+    if (task.isCompleted && data.resolution) {
+      throw new Error('Completed tasks cannot be skipped')
     }
-    if (task.isCompleted && data.resolution)
-      throw new Error('Completed tasks cannot be deferred or dismissed')
+
+    const storedResolution = data.resolution === 'deferred' ? 'dismissed' : data.resolution
 
     const { mutateSetupStateAtomic } = await import('@/lib/server/setup-state')
     const { state } = await mutateSetupStateAtomic((current) => {
@@ -507,9 +500,9 @@ export const setLaunchTaskResolutionFn = createServerFn({ method: 'POST' })
         throw new Error('Task outcome does not match the workspace goal')
       const taskResolutions = { ...(current.taskResolutions ?? {}) }
       const outcomeTasks = { ...(taskResolutions[data.outcome] ?? {}) }
-      if (data.resolution) {
+      if (storedResolution) {
         outcomeTasks[data.taskId] = {
-          resolution: data.resolution,
+          resolution: storedResolution,
           resolvedAt: new Date().toISOString(),
         }
       } else {
@@ -526,7 +519,7 @@ export const setLaunchTaskResolutionFn = createServerFn({ method: 'POST' })
       }
     })
 
-    log.info({ task_id: data.taskId, resolution: data.resolution }, 'launch task resolution saved')
+    log.info({ task_id: data.taskId, resolution: storedResolution }, 'launch task resolution saved')
     return { taskResolutions: state.taskResolutions ?? {} }
   })
 
@@ -612,8 +605,7 @@ export const fetchIntegrationByType = createServerFn({ method: 'GET' })
       const targetKey = (m as { targetKey?: string }).targetKey || 'default'
       const actionConfig = (m.actionConfig as Record<string, unknown>) || {}
       const channelId = (actionConfig.channelId || integrationConfig.channelId) as
-        | string
-        | undefined
+        string | undefined
 
       if (!channelId) continue
 
@@ -675,7 +667,7 @@ export const fetchIntegrationByType = createServerFn({ method: 'GET' })
  * exists. Reading the registry (not the legacy `authConfig.ssoOidc` blob) means
  * the legacy-config cleanup can run without breaking the button. In practice
  * this is rarely true at first onboarding (no admin yet to configure SSO) — but
- * a re-onboard against an existing tenant DB will use SSO when it's registered.
+ * a re-onboard against an existing workspace DB will use SSO when it's registered.
  */
 export const getPublicAuthConfig = createServerFn({ method: 'GET' }).handler(async () => {
   const { getRegisteredOidcProviderIds } = await import('@/lib/server/auth/registered-providers')
@@ -684,15 +676,21 @@ export const getPublicAuthConfig = createServerFn({ method: 'GET' }).handler(asy
 })
 
 /**
- * Check onboarding state for the calling user
- * Returns member record, step, and whether boards exist
- * Note: This function is called during onboarding and may create member records
+ * Reports where the calling user stands in onboarding: their principal, the
+ * workspace's setup state, and whether somebody else already owns setup.
  *
- * The acting user is derived from the session, never from input: this fn
- * creates the bootstrap admin principal on the first-user path, so a
- * caller-supplied id would let anyone mint an admin for an arbitrary user.
- * Unauthenticated callers get the same empty state as pre-signup visitors
- * rather than a readout of the instance's setup progress.
+ * It reports and never writes. Every wizard loader calls it, so it runs on every
+ * page load — including one reached by typing the URL — and an earlier revision
+ * promoted the caller to admin right here, unlocked and outside a transaction.
+ * That made merely loading the page enough to become admin of a workspace with
+ * no human admin, and let two concurrent loads both observe an empty admin set.
+ * Promotion lives in exactly one place, `ensureBootstrapAdmin`, which the
+ * workspace step calls under the shared bootstrap lock when the caller has
+ * actually asked to set this workspace up.
+ *
+ * The acting user is derived from the session, never from input. Unauthenticated
+ * callers get the same empty state as pre-signup visitors rather than a readout
+ * of the instance's setup progress.
  */
 export const checkOnboardingState = createServerFn({ method: 'GET' }).handler(async () => {
   log.debug('check onboarding state')
@@ -703,57 +701,45 @@ export const checkOnboardingState = createServerFn({ method: 'GET' }).handler(as
     log.debug('check onboarding state no user id')
     return {
       principalRecord: null,
+      setupClaimedByOther: false,
+      // Null rather than a plausible default: nobody asked, because there is no
+      // caller to route. A boolean here would be a fact nobody checked, and the
+      // wrong one is the one that lets someone through.
+      setupOpenToClaim: null,
       hasSettings: false,
       setupState: null,
       isOnboardingComplete: false,
     }
   }
 
-  // Check if user has a principal record
-  let principalRecord = await db.query.principal.findFirst({
+  const principalRecord = await db.query.principal.findFirst({
     where: eq(principal.userId, userId as UserId),
   })
 
-  if (!principalRecord) {
-    // Check if any human admin exists (exclude service principals)
-    const existingAdmin = await db.query.principal.findFirst({
-      where: and(eq(principal.role, 'admin'), eq(principal.type, 'user')),
-    })
+  // Whether this caller is shut out of setup: somebody who is not them already
+  // holds it. Every account is created with a principal, so presence alone says
+  // nothing — the role does. A caller with no principal on an unclaimed
+  // workspace is the first user and may still claim it at the workspace step.
+  const setupClaimedByOther = !isAdmin(principalRecord?.role) && !!(await findHumanAdmin(db))
 
-    if (existingAdmin) {
-      // Not first user - they need an invitation
-      log.debug({ needs_invitation: true }, 'check onboarding state')
-      return {
-        principalRecord: null,
-        needsInvitation: true,
-        hasSettings: false,
-        setupState: null,
-        isOnboardingComplete: false,
-      }
-    }
-
-    // First user - create admin principal record (race-safe).
-    const { principal: newPrincipal, created } = await ensurePrincipalForUser({
-      userId: userId as UserId,
-      role: 'admin',
-    })
-    // A concurrent lazy create may have seeded role 'user'; promote so the
-    // first user still lands as admin.
-    if (!created && !isAdmin(newPrincipal.role)) {
-      await setPrincipalRole({ userId: userId as UserId }, 'admin')
-      newPrincipal.role = 'admin'
-    }
-    principalRecord = newPrincipal
-    log.info({ principal_id: principalRecord.id }, 'created admin principal')
-  }
+  // The second half of the same question. A workspace a control plane created
+  // reads unclaimed until its owner arrives, and arriving is not how its admin
+  // is decided — so a caller who is not already one has nothing to finish here.
+  // Reported, never acted on: the promoter decides again under its own lock.
+  const setupOpenToClaim = await isOpenToBootstrapClaim(db)
 
   // Get settings to check setup state
-  const currentSettings = await readSettings()
+  const currentSettings = await getSettings()
   const setupState = getSetupState(currentSettings?.setupState ?? null)
   const isOnboardingComplete = checkComplete(setupState)
 
   log.debug(
-    { setup_state: setupState, is_complete: isOnboardingComplete },
+    {
+      setup_state: setupState,
+      is_complete: isOnboardingComplete,
+      claimed_by_other: setupClaimedByOther,
+      open_to_claim: setupOpenToClaim,
+    },
     'check onboarding state'
   )
   return {
@@ -764,7 +750,8 @@ export const checkOnboardingState = createServerFn({ method: 'GET' }).handler(as
           role: principalRecord.role,
         }
       : null,
-    needsInvitation: false,
+    setupClaimedByOther,
+    setupOpenToClaim,
     hasSettings: !!currentSettings,
     setupState,
     isOnboardingComplete,
@@ -1071,10 +1058,6 @@ export const sendInvitationFn = createServerFn({ method: 'POST' })
     log.info({ role: data.role }, 'send invitation')
     const auth = await requireAuth({ permission: PERMISSIONS.MEMBER_MANAGE })
 
-    // Tier-limit gate (no-op in OSS).
-    const { enforceSeatLimit } = await import('@/lib/server/domains/principals/seat-limit')
-    await enforceSeatLimit()
-
     const email = data.email.toLowerCase()
 
     // Parallelize invitation and user validation queries
@@ -1130,18 +1113,24 @@ export const sendInvitationFn = createServerFn({ method: 'POST' })
     const minted = await generateInvitationMagicLink(email, callbackURL, portalUrl)
     const { url: inviteLink, token: magicLinkToken } = minted
 
-    await db.insert(invitation).values({
-      id: invitationId,
-      email,
-      name: data.name || null,
-      role: data.role,
-      roleId: (data.roleId as RoleId | undefined) ?? null,
-      status: 'pending',
-      expiresAt,
-      lastSentAt: now,
-      inviterId: auth.user.id,
-      createdAt: now,
-      magicLinkTokens: [magicLinkToken],
+    // Seat count and the pending-invite insert share one transaction and a
+    // settings-row lock so two concurrent invites cannot both take the last seat.
+    await db.transaction(async (tx) => {
+      const { enforceSeatLimit } = await import('@/lib/server/domains/principals/seat-limit')
+      await enforceSeatLimit({ executor: tx })
+      await tx.insert(invitation).values({
+        id: invitationId,
+        email,
+        name: data.name || null,
+        role: data.role,
+        roleId: (data.roleId as RoleId | undefined) ?? null,
+        status: 'pending',
+        expiresAt,
+        lastSentAt: now,
+        inviterId: auth.user.id,
+        createdAt: now,
+        magicLinkTokens: [magicLinkToken],
+      })
     })
 
     const { getEmailSafeUrl } = await import('@/lib/server/storage/s3')

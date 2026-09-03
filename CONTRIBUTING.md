@@ -35,7 +35,7 @@ The bootstrap script:
 - Creates a `.env` for the worktree from the main checkout's `.env`, then assigns it a free port, its own Postgres database (`quackback_<worktree-directory-name>`), and its own Redis DB index, so it can run alongside other worktrees without touching their dev data
 - Runs migrations against that new database
 
-Every worktree shares the same Postgres/MinIO/Dragonfly/Mailpit containers (started by `bun run setup`); only the database name and Redis index differ per worktree. Re-run the script any time, for example after pulling new migrations. It reuses the existing `.env` values and is safe to run repeatedly.
+Every worktree shares the same Postgres/MinIO/Mailpit containers (started by `bun run setup`); only the database name differs per worktree. Re-run the script any time, for example after pulling new migrations. It reuses the existing `.env` values and is safe to run repeatedly.
 
 Removing a worktree does not drop its database. Clean it up manually if you want to reclaim it:
 
@@ -56,9 +56,9 @@ quackback/
 ├── packages/
 │   ├── db/                # Database (Drizzle schema, migrations)
 │   ├── ids/               # TypeID system (branded UUIDs)
-│   └── email/             # Email service (Resend + React Email)
+│   └── email/             # Email service (Amazon SES + React Email)
 ├── packages/widget/       # Embeddable widget package
-└── docker-compose.yml     # Local PostgreSQL, Dragonfly, MinIO, and Mailpit
+└── docker-compose.yml     # Local PostgreSQL, MinIO, and Mailpit
 ```
 
 ## Architecture

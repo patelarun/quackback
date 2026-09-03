@@ -13,13 +13,11 @@
 /** Better-Auth's `Logger['log']` levels, minus the unused `success`. */
 type AuthLogLevel = 'error' | 'warn' | 'info' | 'debug'
 
-type WriteFn = (payload: unknown, message: string) => void
-
 export interface LogSink {
-  error: WriteFn
-  warn: WriteFn
-  info: WriteFn
-  debug: WriteFn
+  error: (payload: unknown, message: string) => void
+  warn: (payload: unknown, message: string) => void
+  info: (payload: unknown, message: string) => void
+  debug: (payload: unknown, message: string) => void
 }
 
 /**
@@ -39,21 +37,6 @@ export function redactLogArgs(args: readonly unknown[]): unknown[] {
 }
 
 /**
- * Resolve one level to a writer that carries its own receiver.
- *
- * The binding is the load-bearing part. Pino's level methods are prototype
- * methods that read `this` (`this[msgPrefixSym]`), so handing Better-Auth a
- * detached `sink[level]` reference makes the very first line the library logs
- * throw `TypeError: undefined is not an object`. Falls back to `info` for a
- * sink that omits a level, and to a no-op if that is missing too — a logger
- * that cannot be built must not take sign-in down with it.
- */
-function bindLevel(sink: LogSink, level: AuthLogLevel): WriteFn {
-  const method = typeof sink[level] === 'function' ? sink[level] : sink.info
-  return typeof method === 'function' ? method.bind(sink) : () => {}
-}
-
-/**
  * Build the `logger` option for `betterAuth({...})`.
  *
  * `level` defaults to `info` rather than `debug` on purpose: the library filters
@@ -62,26 +45,33 @@ function bindLevel(sink: LogSink, level: AuthLogLevel): WriteFn {
  * since production runs at info. Pass a level explicitly to widen it.
  */
 export function createAuthLogger(sink: LogSink, level: AuthLogLevel = 'info') {
-  const writers: Record<AuthLogLevel, WriteFn> = {
-    error: bindLevel(sink, 'error'),
-    warn: bindLevel(sink, 'warn'),
-    info: bindLevel(sink, 'info'),
-    debug: bindLevel(sink, 'debug'),
-  }
-
   return {
     level,
     disableColors: true,
     log: (level: AuthLogLevel, message: string, ...args: unknown[]) => {
-      const write = writers[level] ?? writers.info
+      // Called as a METHOD on `sink`, never as a detached function. pino's
+      // `error`/`warn`/`info` read instance state off `this` (`msgPrefixSym`
+      // among others), so `const write = sink[level]; write(...)` throws
+      // `undefined is not an object (evaluating 'this[msgPrefixSym]')` — and
+      // because better-auth calls this from inside its request handling, that
+      // throw surfaces as an unhandled **HTTP 500 on a successful sign-in**.
+      //
+      // Observed live on the pooled fleet: `/api/auth/get-session` returned 200
+      // with no cookie and 500 with a *valid* session cookie, because only the
+      // success path logged anything.
+      //
+      // The existing suite could not catch it: its sink is a plain object of
+      // `vi.fn()`s, which do not care what `this` is. Bound below, and the new
+      // case supplies a sink that does.
+      const method = sink[level] ? level : 'info'
       try {
-        write({ args: redactLogArgs(args) }, message)
+        sink[method]({ args: redactLogArgs(args) }, message)
       } catch (writeFailure) {
-        // Better-Auth calls this from inside its own error handler, so a throw
-        // here does not just lose a log line: it REPLACES the error the library
-        // was reporting and turns the request into a 500 whose stack points at
-        // the logger instead of the cause. Console is the last resort that
-        // cannot itself depend on the sink we just failed to write to.
+        // Belt and braces on top of the method call above. Because better-auth
+        // reaches this from inside its own error handler, ANY sink fault --
+        // not just the unbound-`this` one -- replaces the error the library was
+        // reporting and 500s a request that was otherwise fine. Console is the
+        // last resort that cannot depend on the sink we just failed to write to.
         console.error('[auth-logger] sink threw; original message:', message, writeFailure)
       }
     },

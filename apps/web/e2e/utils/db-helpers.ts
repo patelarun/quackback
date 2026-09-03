@@ -5,7 +5,7 @@
  * They should ONLY be used in test environments.
  */
 
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -13,16 +13,16 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
 /**
- * Run an e2e CLI script (dotenv-wrapped bun, from apps/web) and return its
- * trimmed stdout. Failures rethrow with the script's stderr so the real
- * cause surfaces in the test report.
+ * Run an e2e CLI script from apps/web and return its trimmed stdout.
+ * `bun --env-file` loads the repo-root .env for local runs. Do not shell out
+ * to `dotenv`: GitHub runners ship a Ruby dotenv first on PATH that rejects -e.
+ * Failures rethrow with the script's stderr so the real cause surfaces.
  */
 function runScript(scriptFile: string, args: string[], label: string): string {
   const scriptPath = resolve(__dirname, '../scripts', scriptFile)
-  const quotedArgs = args.map((arg) => ` "${arg}"`).join('')
 
   try {
-    const result = execSync(`dotenv -e ../../.env -- bun "${scriptPath}"${quotedArgs}`, {
+    const result = execFileSync('bun', ['--env-file=../../.env', scriptPath, ...args], {
       encoding: 'utf-8',
       cwd: resolve(__dirname, '../..'), // apps/web directory
     })
@@ -68,7 +68,7 @@ export function getOtpCode(email: string, _host?: string): string {
 /**
  * Enable (or disable) the conversation surfaces: the supportInbox flag, the
  * widget messenger (master + surface + tab), and the portal Support tab.
- * Also busts the Redis-cached tenant settings so the change is live at once.
+ * Also busts the cached workspace settings so the change is live at once.
  */
 export function setSupportSurfaces(enabled: boolean = true): void {
   runScript('set-support-surfaces.ts', [enabled ? 'on' : 'off'], 'set support surfaces')

@@ -100,10 +100,10 @@ export const createCommentFn = createServerFn({ method: 'POST' })
       // Fail closed on a missing flag — read the raw config, not
       // getPortalConfig's permissive merged default (matches the vote/post
       // gates). The per-board comment tier is enforced downstream.
-      const { readSettings } = await import('./workspace')
+      const { getSettings } = await import('./workspace')
       const { workspaceAllowsAnonymous } =
         await import('@/lib/server/domains/settings/settings.types')
-      const settings = await readSettings()
+      const settings = await getSettings()
       if (!workspaceAllowsAnonymous(settings?.portalConfig)) {
         throw new Error('Anonymous interaction is not enabled')
       }
@@ -116,8 +116,7 @@ export const createCommentFn = createServerFn({ method: 'POST' })
         postId: data.postId as PostId,
         content: data.content,
         contentJson: (data.contentJson ?? undefined) as
-          | import('@/lib/shared/db-types').TiptapContent
-          | undefined,
+          import('@/lib/shared/db-types').TiptapContent | undefined,
         parentId: data.parentId as PostCommentId | undefined,
         statusId: data.statusId as PostStatusId | undefined,
         isPrivate: data.isPrivate,
@@ -258,8 +257,7 @@ export const userEditCommentFn = createServerFn({ method: 'POST' })
 
     const result = await userEditComment(data.commentId as PostCommentId, data.content, actor, {
       contentJson: (data.contentJson ?? undefined) as
-        | import('@/lib/shared/db-types').TiptapContent
-        | undefined,
+        import('@/lib/shared/db-types').TiptapContent | undefined,
     })
     log.info({ comment_id: data.commentId }, 'comment edited')
     return result

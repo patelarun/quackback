@@ -33,14 +33,13 @@ export const Route = createFileRoute('/_portal/hc')({
     if (!flags?.helpCenter) throw notFound()
 
     const helpCenterConfig = settings?.helpCenterConfig as HelpCenterConfig | undefined
-    if (!helpCenterConfig?.enabled) throw notFound()
 
     // Full-coverage 301: every /hc/* route is nested under this layout, so
     // this is the single place the default-host -> verified-custom-domain
     // redirect needs to live (domains/languages §1).
     const currentHost = currentRequestHost()
     const target = resolveHelpCenterDomainRedirect({
-      domainConfig: helpCenterConfig.domain,
+      domainConfig: helpCenterConfig?.domain,
       currentHost,
       pathname: location.pathname,
       // `searchStr` already includes the leading `?` when non-empty.
@@ -68,7 +67,11 @@ function HelpCenterLayoutRoute() {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const additionalLocales = helpCenterConfig?.locales?.additional ?? []
   const defaultLocale = helpCenterConfig?.locales?.default ?? 'en'
-  const { locale, canonicalPath } = parseHcLocalePath(pathname, additionalLocales, defaultLocale)
+  const { locale, canonicalPath } = parseHcLocalePath(
+    pathname,
+    [defaultLocale, ...additionalLocales],
+    defaultLocale
+  )
 
   return (
     <div className="flex flex-1 min-h-0 flex-col" dir={isRtlLocale(locale) ? 'rtl' : 'ltr'}>

@@ -1,5 +1,5 @@
 {
-  "workspaceVersion": "0.13.1",
+  "workspaceVersion": "0.13.2",
   "ai": {
     "keys": [
       {
@@ -100,6 +100,12 @@
       },
       {
         "key": "AI_REQUIRE_PARAMETERS",
+        "kind": "tristate",
+        "group": "advanced",
+        "sensitive": false
+      },
+      {
+        "key": "AI_REASONING_EXCLUDE",
         "kind": "tristate",
         "group": "advanced",
         "sensitive": false

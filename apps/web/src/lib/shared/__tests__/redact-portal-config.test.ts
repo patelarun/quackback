@@ -164,13 +164,13 @@ describe('redactSettingsForClient — server-only settings columns', () => {
     expect(result.name).toBe('Acme')
   })
 
-  it('redacts the raw row riding on a TenantSettings-shaped `.settings` property', () => {
-    const tenantShaped = {
+  it('redacts the raw row riding on a WorkspaceSettings-shaped `.settings` property', () => {
+    const workspaceShaped = {
       name: 'Acme',
       portalConfig: FULL_PORTAL_CONFIG,
       settings: { ...RAW_ROW },
     }
-    const result = redactSettingsForClient(tenantShaped)
+    const result = redactSettingsForClient(workspaceShaped)
 
     expect(result.settings).not.toHaveProperty('widgetSecret')
     expect(result.portalConfig.access).toEqual({ visibility: 'private' })
@@ -181,12 +181,12 @@ describe('redactSettingsForClient — server-only settings columns', () => {
   })
 
   it('never leaks a wgt_ secret into the serialized payload', () => {
-    const tenantShaped = {
+    const workspaceShaped = {
       name: 'Acme',
       portalConfig: FULL_PORTAL_CONFIG,
       settings: { ...RAW_ROW },
     }
-    const payload = JSON.stringify(redactSettingsForClient(tenantShaped))
+    const payload = JSON.stringify(redactSettingsForClient(workspaceShaped))
 
     expect(payload).not.toContain('wgt_')
     expect(payload).not.toContain('widgetSecret')
@@ -204,6 +204,83 @@ describe('redactSettingsForClient — server-only settings columns', () => {
   it('still returns clean rows by reference', () => {
     const row = { name: 'Acme', portalConfig: null }
     expect(redactSettingsForClient(row)).toBe(row)
+  })
+})
+
+describe('redactSettingsForClient — the cloud column', () => {
+  // The signed projection is server-only enforcement and commercial state.
+  const CLOUD_ROW = {
+    name: 'Acme',
+    cloud: {
+      enabled: true,
+      projection: { version: 7, effectivePlan: 'scale' },
+    },
+    portalConfig: null,
+  }
+
+  it('strips cloud from a raw row', () => {
+    expect(redactSettingsForClient(CLOUD_ROW)).not.toHaveProperty('cloud')
+  })
+
+  it('strips cloud from a raw row riding on `.settings`', () => {
+    const result = redactSettingsForClient({
+      name: 'Acme',
+      portalConfig: null,
+      settings: { ...CLOUD_ROW },
+    })
+    expect(result.settings).not.toHaveProperty('cloud')
+  })
+
+  it('never leaks the billing projection into the serialized payload', () => {
+    const payload = JSON.stringify(
+      redactSettingsForClient({ name: 'Acme', portalConfig: null, settings: { ...CLOUD_ROW } })
+    )
+    expect(payload).not.toContain('effectivePlan')
+  })
+
+  it('leaves a row with no cloud column untouched', () => {
+    const row = { name: 'Acme', portalConfig: null }
+    expect(redactSettingsForClient(row)).toBe(row)
+  })
+})
+
+describe('redactSettingsForClient — statusConfig redaction', () => {
+  const FULL_STATUS = {
+    enabled: true,
+    portalTabEnabled: true,
+    audience: 'segments' as const,
+    allowedSegmentIds: ['seg_1', 'seg_2'],
+    emailsDisabled: true,
+    pageDescription: 'All systems operational',
+  }
+
+  it('strips allowedSegmentIds and other non-public fields from statusConfig', () => {
+    const row = { portalConfig: null, statusConfig: FULL_STATUS }
+    const result = redactSettingsForClient(row)
+
+    expect(result.statusConfig).toEqual({
+      enabled: true,
+      audience: 'segments',
+      pageDescription: 'All systems operational',
+    })
+    expect(result.statusConfig).not.toHaveProperty('allowedSegmentIds')
+    expect(result.statusConfig).not.toHaveProperty('emailsDisabled')
+    expect(result.statusConfig).not.toHaveProperty('portalTabEnabled')
+  })
+
+  it('never leaks segment ids into the serialized SSR payload', () => {
+    const payload = JSON.stringify(
+      redactSettingsForClient({ portalConfig: null, statusConfig: FULL_STATUS })
+    )
+    expect(payload).not.toContain('allowedSegmentIds')
+    expect(payload).not.toContain('seg_1')
+    expect(payload).not.toContain('emailsDisabled')
+  })
+
+  it('does not mutate the input statusConfig', () => {
+    const input = { portalConfig: null, statusConfig: { ...FULL_STATUS } }
+    redactSettingsForClient(input)
+    expect(input.statusConfig.allowedSegmentIds).toEqual(['seg_1', 'seg_2'])
   })
 })
 

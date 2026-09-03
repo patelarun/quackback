@@ -159,6 +159,12 @@ export type UserTagId = TypeId<'user_tag'>
 /** Company attribute definition ID - e.g., company_attr_01h455vb4pex5vsknk084sn02q */
 export type CompanyAttributeId = TypeId<'company_attr'>
 
+/** Billing provider webhook event ID - e.g., billing_event_01h455vb4pex5vsknk084sn02q */
+export type BillingEventId = TypeId<'billing_event'>
+
+/** Billing usage ledger row ID - e.g., billing_usage_01h455vb4pex5vsknk084sn02q */
+export type BillingUsageId = TypeId<'billing_usage'>
+
 // RBAC
 export type RoleId = TypeId<'role'>
 export type PermissionId = TypeId<'perm'>
@@ -174,6 +180,9 @@ export type SentimentId = TypeId<'sentiment'>
 
 /** AI usage log entry ID - e.g., ailog_01h455vb4pex5vsknk084sn02q */
 export type AiUsageLogId = TypeId<'ailog'>
+
+/** Email ledger row ID - e.g., emaillog_01h455vb4pex5vsknk084sn02q */
+export type EmailLogId = TypeId<'emaillog'>
 
 /** Pipeline audit log entry ID - e.g., plog_01h455vb4pex5vsknk084sn02q */
 export type PipelineLogId = TypeId<'plog'>
@@ -196,8 +205,11 @@ export type AssistantGuidanceRuleId = TypeId<'assistant_guidance'>
 /** Assistant pending action ID - e.g., assistant_action_01h455vb4pex5vsknk084sn02q */
 export type AssistantPendingActionId = TypeId<'assistant_action'>
 
-/** Assistant custom action definition ID - e.g., assistant_custom_action_01h455vb4pex5vsknk084sn02q */
-export type AssistantCustomActionId = TypeId<'assistant_custom_action'>
+/** Remote MCP connector ID - e.g., connector_01h455vb4pex5vsknk084sn02q */
+export type ConnectorId = TypeId<'connector'>
+
+/** Agent skill (packaged procedure) ID - e.g., skill_01h455vb4pex5vsknk084sn02q */
+export type SkillId = TypeId<'skill'>
 
 /** Assistant tool-call audit ID - e.g., assistant_tool_call_01h455vb4pex5vsknk084sn02q */
 export type AssistantToolCallId = TypeId<'assistant_tool_call'>
@@ -234,6 +246,9 @@ export type TicketSubscriptionId = TypeId<'ticket_sub'>
 
 /** Channel account ID (§4.8) - e.g., channel_account_01h455vb4pex5vsknk084sn02q */
 export type ChannelAccountId = TypeId<'channel_account'>
+
+/** Channel thread correlation ID - e.g., channel_thread_01h455vb4pex5vsknk084sn02q */
+export type ChannelThreadId = TypeId<'channel_thread'>
 
 /** Sending domain ID (§4.8) - e.g., sending_domain_01h455vb4pex5vsknk084sn02q */
 export type SendingDomainId = TypeId<'sending_domain'>
@@ -377,6 +392,13 @@ export type WebhookId = TypeId<'webhook'>
 /** Domain event ID (events outbox row) - e.g., evt_01h455vb4pex5vsknk084sn02q */
 export type EvtId = TypeId<'evt'>
 
+// ============================================
+// Background job Entity IDs (Postgres queue)
+// ============================================
+
+/** Queued background job ID (job_queue row) - e.g., job_01h455vb4pex5vsknk084sn02q */
+export type JobId = TypeId<'job'>
+
 /** Third-party app ID (OAuth app platform) - e.g., app_01h455vb4pex5vsknk084sn02q */
 export type AppId = TypeId<'app'>
 
@@ -414,14 +436,18 @@ export interface EntityIdMap {
   role_assignment: RoleAssignmentId
   sentiment: SentimentId
   ai_usage: AiUsageLogId
+  email_log: EmailLogId
   pipeline_log: PipelineLogId
   post_activity: PostActivityId
   page_view: PageViewId
+  billing_event: BillingEventId
+  billing_usage: BillingUsageId
   company: CompanyId
   assistant_involvement: AssistantInvolvementId
   assistant_guidance: AssistantGuidanceRuleId
   assistant_action: AssistantPendingActionId
-  assistant_custom_action: AssistantCustomActionId
+  connector: ConnectorId
+  skill: SkillId
   assistant_tool_call: AssistantToolCallId
   assistant_snippet: AssistantSnippetId
   assistant_document: AssistantDocumentId
@@ -434,6 +460,7 @@ export interface EntityIdMap {
   ticket_summary: TicketSummaryId
   ticket_sub: TicketSubscriptionId
   channel_account: ChannelAccountId
+  channel_thread: ChannelThreadId
   sending_domain: SendingDomainId
   office_hours: OfficeHoursId
   sla_policy: SlaPolicyId
@@ -502,6 +529,7 @@ export interface EntityIdMap {
   api_key: ApiKeyId
   webhook: WebhookId
   event: EvtId
+  job: JobId
   app: AppId
   kb_category: KbCategoryId
   kb_article: KbArticleId

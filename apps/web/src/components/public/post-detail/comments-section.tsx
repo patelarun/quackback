@@ -95,6 +95,10 @@ interface CommentsSectionProps {
   isLoadingMoreComments?: boolean
   /** Remaining root comments not yet loaded (for the button label). */
   remainingCommentCount?: number
+  /** When set, comment composers expose image insert. */
+  onImageUpload?: (file: File) => Promise<string>
+  /** Team members with post.approve can approve/reject pending comments inline. */
+  canModerate?: boolean
 }
 
 export function CommentsSection({
@@ -119,6 +123,8 @@ export function CommentsSection({
   onLoadMoreComments,
   isLoadingMoreComments = false,
   remainingCommentCount,
+  onImageUpload,
+  canModerate = false,
 }: CommentsSectionProps) {
   const intl = useIntl()
   const commentCount = useMemo(() => countAllComments(comments), [comments])
@@ -172,14 +178,17 @@ export function CommentsSection({
         statuses={statuses}
         currentStatusId={currentStatusId}
         isTeamMember={effectiveIsTeamMember}
-        // Portal (no adminUser) links comment authors to their public profile;
-        // the admin post view keeps author names inert.
-        linkAuthors={!adminUser}
+        // Portal links to the public profile; admin uses the enriched hover
+        // card and navigates to /admin/users?selected=.
+        linkAuthors
+        authorLinkTo={adminUser ? 'admin' : 'portal'}
         onDeleteComment={onDeleteComment}
         deletingCommentId={deletingCommentId}
         onRestoreComment={onRestoreComment}
         restoringCommentId={restoringCommentId}
         hideCommentForm={disableCommenting && !!adminUser}
+        onImageUpload={onImageUpload}
+        canModerate={canModerate}
       />
 
       {hasMoreComments && onLoadMoreComments && (

@@ -26,11 +26,7 @@ import { principal } from './auth'
 
 /** Component status values (industry-standard 5-state model). */
 export type StatusComponentStatus =
-  | 'operational'
-  | 'degraded_performance'
-  | 'partial_outage'
-  | 'major_outage'
-  | 'under_maintenance'
+  'operational' | 'degraded_performance' | 'partial_outage' | 'major_outage' | 'under_maintenance'
 
 /** Incident lifecycle. Maintenance rows use the maintenance lifecycle instead. */
 export type StatusIncidentStatus = 'investigating' | 'identified' | 'monitoring' | 'resolved'

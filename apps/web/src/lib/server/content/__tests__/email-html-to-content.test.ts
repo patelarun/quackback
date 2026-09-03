@@ -206,7 +206,9 @@ describe('emailHtmlToContent', () => {
     })
 
     it('preserves a cid image NODE but clears its unfetchable src (rewrite belongs to the attachment task)', () => {
-      const { contentJson } = emailHtmlToContent('<p>see logo</p><img src="cid:logo.png" alt="logo">')
+      const { contentJson } = emailHtmlToContent(
+        '<p>see logo</p><img src="cid:logo.png" alt="logo">'
+      )
       const imgs = nodesOfType(contentJson, 'image')
       expect(imgs).toHaveLength(1)
       // cid: is not an http(s)/data scheme, so the tiptap sanitize clears it to ''.

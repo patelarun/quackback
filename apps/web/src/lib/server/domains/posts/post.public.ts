@@ -16,6 +16,7 @@ import {
   postStatuses,
   userSegments,
   principal as principalTable,
+  user as userTable,
 } from '@/lib/server/db'
 import {
   toUuid,
@@ -29,32 +30,25 @@ import type { PublicPostListResult } from './post.types'
 import type { RespondedFilter } from '@/lib/shared/types/filters'
 import { postViewFilter, ANONYMOUS_ACTOR, type Actor } from '@/lib/server/policy'
 
-import { getPublicUrlOrNull } from '@/lib/server/storage/s3'
+import { resolveUserAvatarUrl } from '@/lib/server/domains/principals/principal-display'
 
-/** Resolve avatar URL from principal's avatar fields */
-export function resolveAvatarUrl(principal: {
+/** Resolve avatar URL — uploaded key first, then OAuth/external URL. */
+export function resolveAvatarUrl(source: {
   avatarKey?: string | null
   avatarUrl?: string | null
+  userImageKey?: string | null
+  userImage?: string | null
 }): string | null {
-  if (principal.avatarKey) {
-    const s3Url = getPublicUrlOrNull(principal.avatarKey)
-    if (s3Url) return s3Url
-  }
-  return principal.avatarUrl ?? null
+  return resolveUserAvatarUrl({
+    userImage: source.userImage,
+    userImageKey: source.userImageKey,
+    principalAvatarUrl: source.avatarUrl,
+    principalAvatarKey: source.avatarKey,
+  })
 }
 
 export function parseJson<T>(value: string | T): T {
   return typeof value === 'string' ? JSON.parse(value) : value
-}
-
-export function parseAvatarData(json: string | null): string | null {
-  if (!json) return null
-  const data = parseJson<{ key?: string; url?: string }>(json)
-  if (data.key) {
-    const s3Url = getPublicUrlOrNull(data.key)
-    if (s3Url) return s3Url
-  }
-  return data.url ?? null
 }
 
 type SortOrder = 'top' | 'new' | 'trending'
@@ -95,6 +89,7 @@ export interface PostWithVotesAndAvatars {
   board: { id: string; name: string; slug: string }
   hasVoted: boolean
   avatarUrl: string | null
+  moderationState?: 'published' | 'pending' | string
 }
 
 interface PostListParams {
@@ -248,6 +243,7 @@ export async function listPublicPostsWithVotesAndAvatars(
       principalId: posts.principalId,
       createdAt: posts.createdAt,
       pinnedAt: posts.pinnedAt,
+      moderationState: posts.moderationState,
       boardId: boards.id,
       boardName: boards.name,
       boardSlug: boards.slug,
@@ -290,8 +286,11 @@ export async function listPublicPostsWithVotesAndAvatars(
             displayName: principalTable.displayName,
             avatarKey: principalTable.avatarKey,
             avatarUrl: principalTable.avatarUrl,
+            userImage: userTable.image,
+            userImageKey: userTable.imageKey,
           })
           .from(principalTable)
+          .leftJoin(userTable, eq(userTable.id, principalTable.userId))
           .where(inArray(principalTable.id, pageAuthorIds))
       : Promise.resolve([]),
   ])
@@ -306,12 +305,12 @@ export async function listPublicPostsWithVotesAndAvatars(
 
   const items = trimmedResults.map((post): PostWithVotesAndAvatars => {
     const author = authorById.get(post.principalId)
-    // Mirror the previous correlated subquery's avatar precedence exactly: the
-    // stored key (resolved to its S3 URL) wins, with the raw avatar_url only
-    // used when no key is present.
-    const avatarUrl = author?.avatarKey
-      ? getPublicUrlOrNull(author.avatarKey)
-      : (author?.avatarUrl ?? null)
+    const avatarUrl = resolveAvatarUrl({
+      avatarKey: author?.avatarKey,
+      avatarUrl: author?.avatarUrl,
+      userImageKey: author?.userImageKey,
+      userImage: author?.userImage,
+    })
     return {
       id: post.id,
       title: post.title,
@@ -323,6 +322,7 @@ export async function listPublicPostsWithVotesAndAvatars(
       principalId: post.principalId,
       createdAt: post.createdAt,
       pinnedAt: post.pinnedAt,
+      moderationState: post.moderationState,
       tags: tagsByPost.get(post.id) ?? [],
       board: { id: post.boardId, name: post.boardName, slug: post.boardSlug },
       hasVoted: post.hasVoted ?? false,
@@ -351,6 +351,7 @@ export async function listPublicPosts(
       commentCount: posts.commentCount,
       principalId: posts.principalId,
       createdAt: posts.createdAt,
+      moderationState: posts.moderationState,
       boardId: boards.id,
       boardName: boards.name,
       boardSlug: boards.slug,
@@ -386,6 +387,7 @@ export async function listPublicPosts(
     principalId: post.principalId,
     createdAt: post.createdAt,
     commentCount: post.commentCount,
+    moderationState: post.moderationState,
     tags: parseJson<Array<{ id: PostTagId; name: string; color: string }>>(post.tagsJson),
     board: { id: post.boardId, name: post.boardName, slug: post.boardSlug },
   }))
@@ -394,22 +396,50 @@ export async function listPublicPosts(
 }
 
 export async function getAllUserVotedPostIds(principalId: PrincipalId): Promise<Set<PostId>> {
+  // Include both the post the vote was cast on and, when that post has been
+  // merged away, the canonical — so the survivor highlights as voted.
   const result = await db
-    .select({ postId: postVotes.postId })
+    .select({
+      postId: postVotes.postId,
+      canonicalPostId: posts.canonicalPostId,
+    })
     .from(postVotes)
-    .where(eq(postVotes.principalId, principalId))
-  return new Set(result.map((r) => r.postId))
+    .innerJoin(posts, eq(posts.id, postVotes.postId))
+    .innerJoin(boards, eq(boards.id, posts.boardId))
+    .where(
+      and(eq(postVotes.principalId, principalId), isNull(posts.deletedAt), isNull(boards.deletedAt))
+    )
+  const ids = new Set<PostId>()
+  for (const row of result) {
+    ids.add(row.postId)
+    if (row.canonicalPostId) ids.add(row.canonicalPostId)
+  }
+  return ids
 }
 
 export async function getVotedPostIdsByUserId(
   userId: import('@quackback/ids').UserId
 ): Promise<Set<PostId>> {
+  // Same source-to-canonical mapping as getAllUserVotedPostIds: a vote on a
+  // merged source should highlight the surviving post in the portal list.
   const result = await db
-    .select({ postId: postVotes.postId })
+    .select({
+      postId: postVotes.postId,
+      canonicalPostId: posts.canonicalPostId,
+    })
     .from(postVotes)
     .innerJoin(principalTable, eq(postVotes.principalId, principalTable.id))
-    .where(eq(principalTable.userId, userId))
-  return new Set(result.map((r) => r.postId))
+    .innerJoin(posts, eq(posts.id, postVotes.postId))
+    .innerJoin(boards, eq(boards.id, posts.boardId))
+    .where(
+      and(eq(principalTable.userId, userId), isNull(posts.deletedAt), isNull(boards.deletedAt))
+    )
+  const ids = new Set<PostId>()
+  for (const row of result) {
+    ids.add(row.postId)
+    if (row.canonicalPostId) ids.add(row.canonicalPostId)
+  }
+  return ids
 }
 
 export async function getBoardByPostId(

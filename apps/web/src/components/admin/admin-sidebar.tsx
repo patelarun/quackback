@@ -37,16 +37,21 @@ import type { LatestVersionResult } from '@/lib/server/functions/version'
 import type { SettingsBrandingData } from '@/lib/server/domains/settings/settings.types'
 import { setAgentAvailabilityFn } from '@/lib/server/functions/conversation'
 import { adminQueries } from '@/lib/client/queries/admin'
-import { launchChecklistSummary, type LaunchStatus } from '@/lib/shared/launch-checklist'
+import {
+  listOwnerWorkspacesFn,
+  openOwnerWorkspaceFn,
+} from '@/lib/server/functions/owner-workspaces'
+import { friendlySiblingAddress, WorkspaceSwitcher } from '@/components/admin/workspace-switcher'
+import {
+  isLaunchPlanActive,
+  launchChecklistSummary,
+  type LaunchStatus,
+} from '@/lib/shared/launch-checklist'
 import { useIntl } from 'react-intl'
 import { usePermission } from '@/lib/client/hooks/use-permission'
 import { PERMISSIONS } from '@/lib/shared/permissions'
-import {
-  getFirstEnabledAdminProductPath,
-  isProductEnabled,
-  type FeatureFlags,
-  type ProductId,
-} from '@/lib/shared/types/settings'
+import { isProductEnabled, type FeatureFlags, type ProductId } from '@/lib/shared/types/settings'
+import { resolveAdminHomePath } from '@/lib/shared/admin-home'
 
 /** Availability toggle for the account menu (conversation routing). The label shows the
  *  state you'll switch to; the avatar dot shows the current one. */
@@ -106,6 +111,7 @@ function NavItem({
   isActive,
   onClick,
   badge,
+  dot,
 }: {
   href: string
   icon: typeof ChatBubbleLeftIcon
@@ -114,6 +120,8 @@ function NavItem({
   onClick?: () => void
   /** Optional count or short mark (e.g. remaining launch steps) */
   badge?: string | number | null
+  /** Quiet marker while the plan is resolved but the first win is still open */
+  dot?: boolean
 }) {
   return (
     <Tooltip>
@@ -140,6 +148,12 @@ function NavItem({
               {badge}
             </span>
           )}
+          {dot && (badge == null || badge === '') && (
+            <span
+              className="absolute top-0.5 right-0.5 size-2 rounded-full bg-primary"
+              aria-hidden="true"
+            />
+          )}
           <span className="sr-only">{label}</span>
         </Link>
       </TooltipTrigger>
@@ -153,7 +167,7 @@ function NavItem({
 export function AdminSidebar({ initialUserData, latestVersion }: AdminSidebarProps) {
   const intl = useIntl()
   const router = useRouter()
-  const { session, settings, userRole } = useRouteContext({ from: '__root__' })
+  const { session, settings, userRole, billingEnabled } = useRouteContext({ from: '__root__' })
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   // The settings area is admin-only (every tab gates on requireAuth(['admin'])).
   // Members would only ever land on the access-denied page, so hide the cog.
@@ -161,30 +175,34 @@ export function AdminSidebar({ initialUserData, latestVersion }: AdminSidebarPro
   const canManageAssistant = usePermission(PERMISSIONS.ASSISTANT_MANAGE)
   const canManageWorkflows = usePermission(PERMISSIONS.WORKFLOW_MANAGE)
   const canOpenAutomation = canManageAssistant || canManageWorkflows
-  // Launch-plan progress for the shell badge (admins only). Once the
-  // checklist is complete there's nothing left to watch for, so the query
-  // stops refetching — read the last-known result straight from the cache
-  // (rather than from `onboardingQuery.data`, which isn't declared yet) to
-  // decide whether to keep it enabled. Skip/complete actions invalidate
-  // ['admin', 'onboarding'] explicitly, so this can't go stale forever.
+  // Launch-plan progress for the shell badge (admins only). Stay visible and
+  // polling until essentials resolve *and* the first win lands — a first win
+  // can arrive while invite-team is still open. Skip/complete actions also
+  // invalidate ['admin', 'onboarding'] explicitly.
   const queryClient = useQueryClient()
   const onboardingQueryOptions = adminQueries.onboardingStatus()
   const cachedOnboardingStatus = queryClient.getQueryData<LaunchStatus>(
     onboardingQueryOptions.queryKey
   )
-  const cachedAllComplete = cachedOnboardingStatus
-    ? launchChecklistSummary(cachedOnboardingStatus).resolved
+  const cachedLaunchSettled = cachedOnboardingStatus
+    ? !isLaunchPlanActive(launchChecklistSummary(cachedOnboardingStatus))
     : false
   const onboardingQuery = useQuery({
     ...onboardingQueryOptions,
-    enabled: isAdmin && !cachedAllComplete,
+    enabled: isAdmin && !cachedLaunchSettled,
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (!data) return 15_000
+      return isLaunchPlanActive(launchChecklistSummary(data)) ? 15_000 : false
+    },
   })
   const launchSummary = onboardingQuery.data ? launchChecklistSummary(onboardingQuery.data) : null
-  const showLaunchNav = isAdmin && (!launchSummary || !launchSummary.resolved)
+  const showLaunchNav = isAdmin && (!launchSummary || isLaunchPlanActive(launchSummary))
   const launchRemaining =
     launchSummary && !launchSummary.resolved && launchSummary.remaining > 0
       ? launchSummary.remaining
       : null
+  const launchQuietDot = Boolean(launchSummary?.resolved && !launchSummary.firstWinComplete)
   const launchPlanLabel =
     launchRemaining != null
       ? intl.formatMessage(
@@ -211,7 +229,11 @@ export function AdminSidebar({ initialUserData, latestVersion }: AdminSidebarPro
     if (item.href === '/admin/automation/agent') return canOpenAutomation
     return true
   })
-  const homePath = getFirstEnabledAdminProductPath(flags)
+  const homePath = resolveAdminHomePath({
+    isAdmin,
+    launchResolved: Boolean(launchSummary?.resolved),
+    flags,
+  })
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   const user = session?.user
@@ -240,6 +262,20 @@ export function AdminSidebar({ initialUserData, latestVersion }: AdminSidebarPro
     window.location.href = '/'
   }
 
+  const siblingsQuery = useQuery({
+    queryKey: ['admin', 'owner-workspaces'],
+    queryFn: () => listOwnerWorkspacesFn(),
+    enabled: Boolean(billingEnabled),
+  })
+  const siblings = siblingsQuery.data ?? []
+
+  const openSibling = useMutation({
+    mutationFn: (instanceId: string) => openOwnerWorkspaceFn({ data: { instanceId } }),
+    onSuccess: ({ url }) => {
+      window.location.assign(url)
+    },
+  })
+
   return (
     <>
       {/* Desktop Sidebar */}
@@ -262,6 +298,16 @@ export function AdminSidebar({ initialUserData, latestVersion }: AdminSidebarPro
 
             {/* Main Navigation */}
             <nav className="flex flex-col items-center gap-2.5">
+              {showLaunchNav && (
+                <NavItem
+                  href="/admin/getting-started"
+                  icon={RocketLaunchIcon}
+                  label={launchPlanLabel}
+                  isActive={isNavActive(pathname, '/admin/getting-started')}
+                  badge={launchRemaining}
+                  dot={launchQuietDot}
+                />
+              )}
               {filteredNavItems.map((item) => (
                 <NavItem
                   key={item.href}
@@ -278,17 +324,6 @@ export function AdminSidebar({ initialUserData, latestVersion }: AdminSidebarPro
 
             {/* Bottom Section */}
             <div className="flex flex-col items-center gap-2.5">
-              {/* Launch plan — first-run path; hide when all tasks are resolved. */}
-              {showLaunchNav && (
-                <NavItem
-                  href="/admin/getting-started"
-                  icon={RocketLaunchIcon}
-                  label={launchPlanLabel}
-                  isActive={isNavActive(pathname, '/admin/getting-started')}
-                  badge={launchRemaining}
-                />
-              )}
-
               {/* Settings (admin-only) */}
               {isAdmin && (
                 <NavItem
@@ -298,6 +333,10 @@ export function AdminSidebar({ initialUserData, latestVersion }: AdminSidebarPro
                   isActive={isNavActive(pathname, '/admin/settings')}
                 />
               )}
+
+              {billingEnabled && siblings.length > 0 ? (
+                <WorkspaceSwitcher siblings={siblings} onOpen={(id) => openSibling.mutate(id)} />
+              ) : null}
 
               {/* Notifications */}
               <NotificationBell className="size-9" />
@@ -449,6 +488,21 @@ export function AdminSidebar({ initialUserData, latestVersion }: AdminSidebarPro
               </SheetTitle>
             </SheetHeader>
             <nav className="flex flex-col gap-1.5 px-4 py-3">
+              {showLaunchNav && (
+                <Link
+                  to="/admin/getting-started"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={cn(
+                    'flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-colors',
+                    'text-muted-foreground/80 hover:text-foreground hover:bg-muted/50',
+                    isNavActive(pathname, '/admin/getting-started') &&
+                      'bg-muted/80 text-foreground font-medium'
+                  )}
+                >
+                  <RocketLaunchIcon className="h-5 w-5" />
+                  {launchPlanLabel}
+                </Link>
+              )}
               {filteredNavItems.map((item) => {
                 const isActive = isNavActive(pathname, item.href)
                 const Icon = item.icon
@@ -469,21 +523,6 @@ export function AdminSidebar({ initialUserData, latestVersion }: AdminSidebarPro
                 )
               })}
               <div className="h-px bg-border/40 my-4" />
-              {showLaunchNav && (
-                <Link
-                  to="/admin/getting-started"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={cn(
-                    'flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-colors',
-                    'text-muted-foreground/80 hover:text-foreground hover:bg-muted/50',
-                    isNavActive(pathname, '/admin/getting-started') &&
-                      'bg-muted/80 text-foreground font-medium'
-                  )}
-                >
-                  <RocketLaunchIcon className="h-5 w-5" />
-                  {launchPlanLabel}
-                </Link>
-              )}
               {isAdmin && (
                 <Link
                   to="/admin/settings"
@@ -499,6 +538,24 @@ export function AdminSidebar({ initialUserData, latestVersion }: AdminSidebarPro
                   Settings
                 </Link>
               )}
+              {billingEnabled && siblings.length > 0
+                ? siblings.map((sibling) => (
+                    <button
+                      key={sibling.instanceId}
+                      type="button"
+                      onClick={() => {
+                        setMobileMenuOpen(false)
+                        openSibling.mutate(sibling.instanceId)
+                      }}
+                      className="flex flex-col items-start gap-0.5 px-4 py-3 rounded-lg text-sm text-muted-foreground/80 hover:text-foreground hover:bg-muted/50 transition-colors"
+                    >
+                      <span>{sibling.displayName}</span>
+                      {friendlySiblingAddress(sibling.url) ? (
+                        <span className="text-[11px]">{friendlySiblingAddress(sibling.url)}</span>
+                      ) : null}
+                    </button>
+                  ))
+                : null}
               <Link
                 to="/"
                 onClick={() => setMobileMenuOpen(false)}

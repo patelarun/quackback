@@ -52,8 +52,7 @@ export function newRegistrationId(): string {
  *  enforcement on. Mirrors the server-side
  *  `isSsoEnforcementUnlocked(provider, null)` predicate. */
 export type ConnectionTestState =
-  | { kind: 'unsaved' | 'untested' | 'stale' }
-  | { kind: 'verified'; testedAt: string }
+  { kind: 'unsaved' | 'untested' | 'stale' } | { kind: 'verified'; testedAt: string }
 
 export function getConnectionTestState(provider: IdentityProvider | null): ConnectionTestState {
   if (!provider) return { kind: 'unsaved' }

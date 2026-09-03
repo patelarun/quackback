@@ -1,4 +1,4 @@
-import { resolveLocale } from './i18n'
+import { DEFAULT_LOCALE, resolveLocale } from './i18n'
 
 /**
  * Returns the base path for the inline help center.
@@ -9,28 +9,56 @@ export function getHelpCenterBaseUrl(): string {
 }
 
 /**
- * Prefix an /hc path with a locale segment unconditionally -- for callers that
- * already know they are inside a locale-prefixed subtree (the `/hc/$locale/*`
- * routes and the components rendered under them, which pass no locale at all
- * on base-locale pages). `path` must start with `/hc`.
+ * Join a public numeric id and slug as `{urlId}-{slug}`.
  */
-export function prefixHcPath(locale: string, path: string): string {
-  if (path === '/hc') return `/hc/${locale}`
-  return path.replace(/^\/hc/, `/hc/${locale}`)
+export function formatHcIdSlug(urlId: number, slug: string): string {
+  const trimmed = slug.replace(/^-+|-+$/g, '')
+  return trimmed ? `${urlId}-${trimmed}` : String(urlId)
 }
 
 /**
- * Build an /hc path for a given locale from its canonical (base-locale,
- * unprefixed) form -- domains/languages §2: `/hc/{locale}/...`, with the base
- * content locale staying unprefixed for URL stability.
+ * Split an `{urlId}-{slug}` path param. Returns null for a legacy category
+ * slug like `getting-started`.
+ */
+export function parseHcIdSlug(param: string): { urlId: number; slug: string } | null {
+  const hyphen = param.indexOf('-')
+  const key = hyphen === -1 ? param : param.slice(0, hyphen)
+  if (!/^[1-9]\d*$/.test(key)) return null
+  const urlId = Number(key)
+  if (!Number.isSafeInteger(urlId)) return null
+  return { urlId, slug: hyphen === -1 ? '' : param.slice(hyphen + 1) }
+}
+
+/** Public article URL: `/hc/{locale}/articles/{urlId}-{slug}`. */
+export function hcArticlePath(opts: { locale: string; urlId: number; slug: string }): string {
+  return `/hc/${opts.locale}/articles/${formatHcIdSlug(opts.urlId, opts.slug)}`
+}
+
+/** Public collection URL: `/hc/{locale}/collections/{urlId}-{slug}`. */
+export function hcCollectionPath(opts: { locale: string; urlId: number; slug: string }): string {
+  return `/hc/${opts.locale}/collections/${formatHcIdSlug(opts.urlId, opts.slug)}`
+}
+
+/**
+ * Build an /hc path for a given locale from its canonical (unprefixed) form.
+ * The homepage stays unprefixed for the base locale (`/hc`); every other
+ * path — including base-locale articles and collections — carries the
+ * locale (`/hc/en/articles/...`).
  *
  * `baseLocale` is the workspace's configured help-center base locale
  * (`helpCenter.locales.default`), NOT the app's UI fallback: a workspace that
- * authors in Swedish serves Swedish on the unprefixed paths.
+ * authors in Swedish serves Swedish on the unprefixed homepage. It defaults to
+ * DEFAULT_LOCALE so upstream's two-argument call sites keep their behaviour.
  */
-export function localizedHcPath(locale: string, path: string, baseLocale: string): string {
-  if (locale === baseLocale) return path
-  return prefixHcPath(locale, path)
+export function localizedHcPath(
+  locale: string,
+  path: string,
+  baseLocale: string = DEFAULT_LOCALE
+): string {
+  const isHome = path === '/hc' || path === '/hc/'
+  if (isHome) return locale === baseLocale ? '/hc' : `/hc/${locale}`
+  const rest = path.replace(/^\/hc/, '')
+  return `/hc/${locale}${rest}`
 }
 
 /**
@@ -43,7 +71,7 @@ export function localizedHcPath(locale: string, path: string, baseLocale: string
 export function parseHcLocalePath(
   pathname: string,
   enabledLocales: string[],
-  baseLocale: string
+  baseLocale: string = DEFAULT_LOCALE
 ): { locale: string; canonicalPath: string } {
   const match = /^\/hc\/([^/]+)(\/.*)?$/.exec(pathname)
   if (match && enabledLocales.includes(match[1])) {

@@ -22,12 +22,12 @@ const mockFindMany = vi.fn()
 const mockInsert = vi.fn()
 const mockDelete = vi.fn()
 
-vi.mock('@/lib/server/redis', () => ({
+vi.mock('@/lib/server/cache', () => ({
   cacheGet: (...a: unknown[]) => mockCacheGet(...a),
   cacheSet: (...a: unknown[]) => mockCacheSet(...a),
   cacheDel: (...a: unknown[]) => mockCacheDel(...a),
   CACHE_KEYS: {
-    TENANT_SETTINGS: 'settings:tenant',
+    WORKSPACE_SETTINGS: 'settings:workspace',
     PLATFORM_INTEGRATION_TYPES: 'platform-cred:configured-types',
   },
 }))

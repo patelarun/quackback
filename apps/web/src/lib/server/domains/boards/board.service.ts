@@ -15,6 +15,7 @@ import {
   eq,
   and,
   isNull,
+  isNotNull,
   posts,
   boards,
   webhooks,
@@ -287,6 +288,21 @@ export async function deleteBoard(id: BoardId): Promise<void> {
     .catch((error) => {
       log.error({ err: error }, 'failed to clean up webhook board_ids')
     })
+
+  // Merged sources on this board drop out of the canonical thread once the
+  // board is gone. Recount those canonicals so stored comment/vote totals
+  // match what listViewableMergedSourceIds will render.
+  const mergedSources = await db
+    .selectDistinct({ canonicalPostId: posts.canonicalPostId })
+    .from(posts)
+    .where(and(eq(posts.boardId, id), isNotNull(posts.canonicalPostId)))
+  const { recalculateCanonicalVoteCount } =
+    await import('@/lib/server/domains/posts/post.merge-ids')
+  for (const row of mergedSources) {
+    if (row.canonicalPostId) {
+      await recalculateCanonicalVoteCount(row.canonicalPostId as PostId)
+    }
+  }
 }
 
 /**
@@ -329,7 +345,7 @@ export async function listBoards(): Promise<Board[]> {
 }
 
 /**
- * List all boards with post counts (excludes soft-deleted)
+ * List all boards with post counts (excludes soft-deleted and merged duplicates)
  */
 export async function listBoardsWithDetails(): Promise<BoardWithDetails[]> {
   // Get all active boards ordered by name
@@ -350,7 +366,9 @@ export async function listBoardsWithDetails(): Promise<BoardWithDetails[]> {
       count: sql<number>`count(*)`.as('count'),
     })
     .from(posts)
-    .where(and(inArray(posts.boardId, boardIds), sql`${posts.deletedAt} IS NULL`))
+    .where(
+      and(inArray(posts.boardId, boardIds), isNull(posts.deletedAt), isNull(posts.canonicalPostId))
+    )
     .groupBy(posts.boardId)
 
   // Create a map of board ID -> post count

@@ -1,6 +1,5 @@
 import type { ComponentType } from 'react'
-import { FormattedMessage, useIntl } from 'react-intl'
-import { widgetTranslationFor, type WidgetTranslations } from '@/lib/shared/widget/translations'
+import { FormattedMessage } from 'react-intl'
 import { motion, useReducedMotion } from 'framer-motion'
 import {
   LightBulbIcon,
@@ -35,9 +34,6 @@ interface WidgetOverviewProps {
   tabs: EnabledTabs
   /** Admin-customised Home content (greeting, hero style, ordered cards). */
   home: WidgetHomeConfig | null
-  /** Per-locale copy overrides; the greeting/subtitle resolve against the
-   *  visitor's locale before the base `home` copy. */
-  translations?: WidgetTranslations
   /** AI-assistant display identity; personalises the conversation card when set. */
   assistant: { name: string; avatarUrl: string | null } | null
   /** Teammate avatars — the facepile on the ask-a-question card. */
@@ -88,7 +84,6 @@ function fillGreeting(template: string, firstName: string | null | undefined): s
 export function WidgetOverview({
   tabs,
   home,
-  translations,
   assistant,
   team,
   topArticles,
@@ -103,12 +98,8 @@ export function WidgetOverview({
   onOpenChangelogEntry,
 }: WidgetOverviewProps) {
   const { user, isIdentified } = useWidgetAuth()
-  // Resolve the customer-facing greeting/subtitle for the visitor's locale,
-  // falling back to the base admin copy.
-  const { locale } = useIntl()
-  const localized = widgetTranslationFor(translations, locale)
-  const greeting = localized.greeting || home?.greeting
-  const subtitle = localized.subtitle || home?.subtitle
+  const greeting = home?.greeting
+  const subtitle = home?.subtitle
   const firstName = firstNameOf(user?.name)
   const reduceMotion = useReducedMotion()
 
@@ -258,7 +249,14 @@ export function WidgetOverview({
               </span>
               <MagnifyingGlassIcon className="w-4 h-4 text-muted-foreground" />
             </button>
-            <ul className="mt-1">
+            {/* Eyebrow so the list reads as content, not as part of the search control. */}
+            <p className="mt-2 px-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
+              <FormattedMessage
+                id="widget.launcher.popularArticles"
+                defaultMessage="Popular articles"
+              />
+            </p>
+            <ul className="mt-0.5">
               {topArticles.map((a) => (
                 <li key={a.slug}>
                   <button

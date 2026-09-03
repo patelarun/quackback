@@ -123,7 +123,7 @@ describe('kbKnowledgeSource', () => {
         type: 'article',
         id: 'kb_article_1',
         title: 'Title kb_article_1',
-        url: '/hc/articles/general/slug-kb_article_1',
+        url: '/hc/en/articles/1-slug-kb_article_1',
       },
     })
   })
@@ -183,15 +183,16 @@ describe('resolveAssistantKnowledgeSnapshot', () => {
 
   it('compiles the Copilot map (team ceiling): its enabled sources plus always-on snippets and web sources', () => {
     const snap = resolveAssistantKnowledgeSnapshot('copilot', DEFAULT_ASSISTANT_CONFIG, 'team')
-    // Default copilot: helpCenter, posts, pastConversations, documents on;
-    // tickets, changelog off; plus snippets always at the team ceiling and web
-    // sources always at every ceiling; status on.
+    // Default copilot: every knowledge source on, plus snippets always at the
+    // team ceiling and web sources always at every ceiling.
     expect([...snap.sources].sort()).toEqual([
       'article',
+      'changelog',
       'document',
       'post',
       'snippet',
       'summary',
+      'ticket',
       'webpage',
     ])
     expect(snap.status).toBe(true)

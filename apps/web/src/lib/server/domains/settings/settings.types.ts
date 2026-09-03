@@ -9,7 +9,6 @@ import type { TiptapContent } from '@/lib/shared/db-types'
 import type { Role } from '@/lib/shared/roles'
 import type { OfficeHoursConfig } from '@/lib/shared/conversation/types'
 import type { WidgetTranslations } from '@/lib/shared/widget/translations'
-import type { ChangelogSettings } from '@/lib/shared/changelog-settings'
 import type { StatusSettings } from '@/lib/shared/status-settings'
 import { DEFAULT_WORKSPACE_LOCALE, type SupportedLocale } from '@/lib/shared/i18n'
 
@@ -117,7 +116,7 @@ export interface AuthConfig {
    * guarantee when those methods are also enabled.
    *
    * Default `undefined` is treated as `required=false` (off) so
-   * existing tenants pre-migration aren't suddenly locked out.
+   * existing workspaces pre-migration aren't suddenly locked out.
    */
   twoFactor?: { required: boolean }
 }
@@ -159,7 +158,7 @@ export interface VerifiedDomain {
  *
  * `password: true` matches the prior hardcoded behaviour in v0.9.9 and
  * earlier, where team password sign-in was always allowed regardless
- * of any stored config. Pre-upgrade tenants whose `authConfig.oauth`
+ * of any stored config. Pre-upgrade workspaces whose `authConfig.oauth`
  * has no `password` key also fall back to this default via the
  * `?? true` check in `isAuthMethodAllowed`, so upgrading from v0.9.9
  * doesn't lock admins out of their team surface.
@@ -170,7 +169,31 @@ export const DEFAULT_AUTH_CONFIG: AuthConfig = {
     github: true,
     password: true,
   },
-  openSignup: false,
+  /**
+   * `true` because that is what a workspace that never answered the question
+   * has always DONE, not because open sign-ups are the friendlier choice.
+   *
+   * The setting bound nothing on any server path until `auth/signup-policy.ts`
+   * started enforcing it, so every workspace accepted new accounts regardless
+   * of what this reported. Two cohorts read their value from here rather than
+   * from a stored one: a config-file-provisioned workspace, whose `settings`
+   * row is inserted with no `authConfig` column at all, and any row written
+   * before this key existed. Defaulting them closed would not enforce a policy
+   * anyone set — it would invent one, apply it retroactively, and shut the
+   * public portal of every provisioned workspace the moment its owner arrived.
+   *
+   * `false` is honoured everywhere it is stored. Where it comes FROM is worth
+   * being exact about, because it is narrower than it looks: the onboarding
+   * wizard writes this key on workspace creation and always writes `true`, and
+   * nothing else writes it at all — no admin control sends it, and the
+   * declarative config file's `auth` block is a deprecated key the reconciler
+   * ignores. So on the team's side this default is, in practice, the value.
+   *
+   * The public portal's answer is the one an administrator can actually change,
+   * through the signup toggle on the portal access settings; see
+   * {@link PortalConfig.openSignup}.
+   */
+  openSignup: true,
 }
 
 // =============================================================================
@@ -202,32 +225,38 @@ export interface PortalFeatures {
 }
 
 /**
- * Workspace-wide post-approval policy. Applies to every board — there is
- * no per-board override.
+ * Workspace-wide post-approval policy. Author-type hold (`requireApproval`)
+ * can be overridden per board; content holds (`holdImages` / `holdLinks`)
+ * are workspace-wide only.
  */
 export interface ModerationDefault {
   requireApproval: 'none' | 'anonymous' | 'authenticated' | 'all'
+  /** Hold posts and comments that contain an image. Default false. */
+  holdImages?: boolean
+  /** Hold posts and comments that contain an external link. Default false. */
+  holdLinks?: boolean
 }
 
 /**
- * Welcome card shown above the post list on the portal index.
- * Title is plain text (server trims + caps at 120 chars). Body is
- * sanitized TipTap JSON — same shape as post / help-center content,
- * sanitized via `sanitizeTiptapContent` on every write.
+ * Welcome message shown above the post list on the portal index.
+ * Body is sanitized TipTap JSON — same shape as post / help-center
+ * content, sanitized via `sanitizeTiptapContent` on every write.
  *
- * Default off. Renders only when `enabled` and at least one of
- * `title` / `body` has content.
+ * Default empty (hidden). Renders only when `body` has visible content.
+ * Legacy stored `{ enabled, title, body }` is repaired on read: enabled
+ * + a non-empty title folds the title into a heading node; disabled
+ * drafts resolve to an empty body.
  */
 export interface PortalWelcomeCard {
-  enabled: boolean
-  /** Plain text. Server trims and rejects > 120 chars. */
-  title: string
   /** Sanitized TipTap JSON doc. */
   body: TiptapContent
 }
 
-/** Max length of {@link PortalWelcomeCard.title} after trimming. */
-export const PORTAL_WELCOME_CARD_TITLE_MAX = 120
+/** Empty TipTap doc used as the default / hidden welcome message. */
+export const EMPTY_WELCOME_BODY: TiptapContent = {
+  type: 'doc',
+  content: [{ type: 'paragraph' }],
+}
 
 /**
  * Portal-level access control settings.
@@ -253,13 +282,7 @@ export interface PortalAccessConfig {
  * external link.
  */
 export type PortalNavItemType =
-  | 'feedback'
-  | 'roadmap'
-  | 'changelog'
-  | 'help'
-  | 'support'
-  | 'status'
-  | 'link'
+  'feedback' | 'roadmap' | 'changelog' | 'help' | 'support' | 'status' | 'link'
 
 /** An ordered, admin-configurable tab in the portal top-nav. */
 export interface PortalNavItemConfig {
@@ -296,7 +319,31 @@ export interface PortalNavConfig {
 export interface PortalConfig {
   /** Feature toggles */
   features: PortalFeatures
-  /** Welcome card on the portal index. Optional — absent = disabled. */
+  /**
+   * May a member of the public open an account on the PORTAL?
+   *
+   * The public portal's own answer to the question {@link AuthConfig.openSignup}
+   * answers for the team, and the two are routinely different: a workspace that
+   * takes feedback from anyone while keeping the team invitation-only says
+   * `true` here and `false` there. Provisioned workspaces are seeded with
+   * exactly that pair.
+   *
+   * **Optional, and deliberately absent from {@link DEFAULT_PORTAL_CONFIG}.**
+   * Absent means "this portal has no answer of its own", and the policy then
+   * falls back to the workspace-wide {@link AuthConfig.openSignup}. Giving this
+   * a default would make that absence unobservable and sever the fallback, so a
+   * workspace carrying only the workspace-wide answer would stop obeying it.
+   *
+   * Written by `updatePortalConfigFn` — the signup toggle on the portal access
+   * settings — and by nothing else. The first save writes an explicit value and
+   * the fallback stops applying from then on, which is the intended meaning of
+   * an administrator answering the question directly.
+   *
+   * Read through `signupOpenFor` in `auth/signup-policy.ts`; nothing else
+   * should compare this field directly.
+   */
+  openSignup?: boolean
+  /** Welcome message on the portal index. Optional — absent / empty body = hidden. */
   welcomeCard?: PortalWelcomeCard
   /** Workspace-wide approval policy; applies to every board. */
   moderationDefault: ModerationDefault
@@ -319,8 +366,9 @@ export interface PortalConfig {
 }
 
 /**
- * Portal Support tab configuration. Gated (with the `supportInbox` feature
- * flag) by `isPortalSupportEnabled`; independent of the widget messenger toggles.
+ * Portal Support tab configuration. Gated by `isPortalSupportSurfaceEnabled`
+ * (`supportTickets` OR `supportInbox` plus this toggle); independent of the
+ * widget Messages tab.
  */
 export interface PortalSupportConfig {
   enabled: boolean
@@ -337,13 +385,11 @@ export const DEFAULT_PORTAL_CONFIG: PortalConfig = {
     allowAnonymous: true,
   },
   welcomeCard: {
-    enabled: false,
-    title: '',
-    body: { type: 'doc', content: [{ type: 'paragraph' }] },
+    body: EMPTY_WELCOME_BODY,
   },
-  moderationDefault: { requireApproval: 'none' },
+  moderationDefault: { requireApproval: 'none', holdImages: false, holdLinks: false },
   access: { visibility: 'public', allowedDomains: [], widgetSignIn: false, allowedSegmentIds: [] },
-  support: { enabled: false },
+  support: { enabled: true },
   defaultLocale: DEFAULT_WORKSPACE_LOCALE,
 }
 
@@ -352,7 +398,7 @@ export const DEFAULT_PORTAL_CONFIG: PortalConfig = {
  * (un-merged) `settings.portalConfig`. Only an explicitly-enabled flag permits
  * anonymous vote / comment / submit; a missing flag DENIES — the security gate
  * must not inherit `getPortalConfig`'s permissive merged default. Existing
- * tenants carry an explicit value from migration 0084, and the per-board tier
+ * workspaces carry an explicit value from migration 0084, and the per-board tier
  * is the inner gate. This is the single source of truth for every anonymous
  * write/read gate so they cannot drift.
  */
@@ -511,7 +557,11 @@ export interface PublicAssistantConfig extends AssistantDeploymentConfig {
 }
 
 export interface MessengerConfig {
-  /** Master toggle for the messenger tab + endpoints. */
+  /**
+   * @deprecated Ignored at read time. Messenger is on when the `supportInbox`
+   * flag is on; widget visibility is `tabs.messenger`. Still written by the
+   * widget-activation path so stored JSON stays consistent with older readers.
+   */
   enabled: boolean
   /** Greeting shown when a visitor opens the messenger with no history. */
   welcomeMessage?: string
@@ -523,7 +573,8 @@ export interface MessengerConfig {
    * When true, a visitor cannot reply to a CLOSED conversation from the
    * Messenger — the send is refused instead of reopening the thread (support
    * platform §4.3). Default off (undefined = off), where a reply reopens. Email
-   * replies always reopen regardless; this applies to the Messenger only.
+   * replies always reopen regardless; this applies to the Messenger only
+   * (`reopenOnReply === 'configurable'` on the channel descriptor).
    */
   preventRepliesWhenClosed?: boolean
   /** AI-assistant display identity (client-safe). */
@@ -535,8 +586,11 @@ export interface MessengerConfig {
    * code writes it and it is not projected into the public widget config.
    */
   officeHours?: OfficeHoursConfig
-  /** Conversation routing: auto-assign new conversations to an active agent.
-   *  Agent-only; never projected into the public config. */
+  /**
+   * @deprecated Migration-only. Canonical routing now lives in the
+   * `settings.metadata` bag (`conversationRouting`). This field types the
+   * released stored config that the read-time fallback still honours.
+   */
   routing?: {
     enabled: boolean
     /** Only one strategy today: assign to an online agent. */
@@ -558,11 +612,7 @@ export type PublicMessengerConfig = Omit<
  * Future types (e.g. recent tickets) extend this union.
  */
 export type WidgetHomeCardType =
-  | 'feedback'
-  | 'new_conversation'
-  | 'article_search'
-  | 'latest_updates'
-  | 'link'
+  'feedback' | 'new_conversation' | 'article_search' | 'latest_updates' | 'link'
 
 /** Which visitors a Home card is shown to (visitor-vs-user content). */
 export type WidgetCardAudience = 'everyone' | 'anonymous' | 'identified'
@@ -651,7 +701,7 @@ export interface WidgetConfig {
     help?: boolean
     /** Messenger (the "Messages" tab). */
     messenger?: boolean
-    /** Support tickets (the "Tickets" tab). */
+    /** Requester's own-tickets list (the "Tickets" tab). Defaults on. */
     tickets?: boolean
     /** Show the aggregated Home tab (defaults to on; only appears with 2+ sections) */
     home?: boolean
@@ -660,13 +710,13 @@ export interface WidgetConfig {
   messenger?: MessengerConfig
   /** Home surface customisation (greeting, hero style, quick-link cards). */
   home?: WidgetHomeConfig
-  /** Per-locale overrides of the customer-facing copy (welcome/offline message,
-   *  home greeting/subtitle). The base fields are the fallback. */
+  /** Per-locale overrides of the messenger welcome/offline message. The base
+   *  fields are the fallback. */
   translations?: WidgetTranslations
 }
 
 /**
- * Public subset of widget config — safe to include in TenantSettings / bootstrap data
+ * Public subset of widget config — safe to include in WorkspaceSettings / bootstrap data
  * Does NOT include identifyVerification (admin-only concern)
  */
 export type PublicWidgetConfig = Pick<
@@ -690,13 +740,31 @@ export const DEFAULT_MESSENGER_CONFIG: MessengerConfig = {
   enabled: false,
   welcomeMessage: 'Hi! 👋 How can we help you today?',
   offlineMessage: "We're away right now. Leave a message and we'll get back to you by email.",
-  // AI-first by default: conversations open fronted by the assistant identity.
-  // Admins can rename or disable it under Settings → AI & Automation. `respond`
-  // defaults off — identity is on, in-process answering is opt-in.
-  assistant: { enabled: true, respond: false },
+  // AI-first: identity on, and Quinn answers when a model is configured.
+  // Admins pause replies under Automation → Agent. The widget master stays
+  // off until Support is turned on (or Show on your website) so a pasted
+  // snippet does not go live by itself.
+  assistant: { enabled: true, respond: true },
 }
 
 export const DEFAULT_WIDGET_CONFIG: WidgetConfig = {
+  enabled: false,
+  tabs: {
+    feedback: true,
+    changelog: true,
+    messenger: true,
+    tickets: true,
+    home: true,
+  },
+  messenger: DEFAULT_MESSENGER_CONFIG,
+}
+
+/**
+ * Defaults that were live before Messenger / Quinn replies / changelog tab
+ * flipped on. Stored JSON is merged over this object so missing nested keys
+ * stay off. Null/empty blobs pick up {@link DEFAULT_WIDGET_CONFIG} instead.
+ */
+export const LEGACY_WIDGET_CONFIG: WidgetConfig = {
   enabled: false,
   tabs: {
     feedback: true,
@@ -704,7 +772,17 @@ export const DEFAULT_WIDGET_CONFIG: WidgetConfig = {
     messenger: false,
     home: true,
   },
-  messenger: DEFAULT_MESSENGER_CONFIG,
+  messenger: {
+    ...DEFAULT_MESSENGER_CONFIG,
+    enabled: false,
+    assistant: { enabled: true, respond: false },
+  },
+}
+
+/** Same split as {@link LEGACY_WIDGET_CONFIG} for portal chats. */
+export const LEGACY_PORTAL_CONFIG: PortalConfig = {
+  ...DEFAULT_PORTAL_CONFIG,
+  support: { enabled: false },
 }
 
 /**
@@ -856,6 +934,10 @@ export interface HelpCenterHeaderLink {
 export const HELP_CENTER_HEADER_LINKS_MAX = 3
 
 export interface HelpCenterConfig {
+  /**
+   * @deprecated Ignored at read time. Help Center is public when the
+   * `helpCenter` product flag is on; widget visibility is `tabs.help`.
+   */
   enabled: boolean
   homepageTitle: string
   homepageDescription: string
@@ -901,6 +983,8 @@ export interface UpdateAuthConfigInput {
  */
 export interface UpdatePortalConfigInput {
   features?: Partial<PortalFeatures>
+  /** The portal's own signup answer; see {@link PortalConfig.openSignup}. */
+  openSignup?: boolean
   welcomeCard?: Partial<PortalWelcomeCard>
   moderationDefault?: ModerationDefault
   access?: Partial<PortalAccessConfig>
@@ -932,6 +1016,13 @@ export interface PublicAuthConfig {
 export interface PublicPortalConfig {
   features: PortalFeatures
   /**
+   * The portal's RESOLVED signup answer — `portalConfig.openSignup` when it has
+   * one, the workspace-wide answer when it does not. Resolved on the server,
+   * through the same `signupOpenFor` the gate uses, so the sign-in form and the
+   * gate can never disagree about whether a stranger may open an account.
+   */
+  openSignup: boolean
+  /**
    * Public OIDC sign-in buttons from the identity_provider table. Each
    * `id` is a provider's `registrationId` (drives
    * `signIn.oauth2({ providerId })`); `name` is its display label. Only
@@ -939,7 +1030,7 @@ export interface PublicPortalConfig {
    * (verified domain + showButton:false) are omitted.
    */
   oidcProviders?: { id: string; name: string }[]
-  /** Welcome card on the portal index. Absent / disabled = nothing rendered. */
+  /** Welcome message on the portal index. Absent / empty body = nothing rendered. */
   welcomeCard?: PortalWelcomeCard
   /**
    * Client-safe access control indicator. `isPrivate` and `widgetSignIn`
@@ -958,23 +1049,27 @@ export interface SettingsBrandingData {
   logoUrl: string | null
   faviconUrl: string | null
   headerLogoUrl: string | null
-  /** Custom portal social share (OG) image; null falls back to the logo. */
+  /**
+   * @deprecated Unread. Social share resolves to the workspace logo
+   * (`resolvePortalOgImageUrl`); the stored `portal_og_image_key` column is
+   * left in place but no longer populated or read.
+   */
   ogImageUrl: string | null
   headerDisplayMode: string | null
   headerDisplayName: string | null
 }
 
 // =============================================================================
-// Tenant Settings (consolidated settings object)
+// Workspace Settings (consolidated settings object)
 // =============================================================================
 
 /**
- * Consolidated tenant settings, parsed from the database settings row.
+ * Consolidated workspace settings, parsed from the database settings row.
  * This interface is client-safe (no DB types) and can be imported from the barrel.
  */
-export interface TenantSettings {
+export interface WorkspaceSettings {
   /** Raw settings record from database (opaque on client, typed on server) */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // oxlint-disable-next-line @typescript-eslint/no-explicit-any
   settings: Record<string, any>
   /** Workspace name */
   name: string
@@ -990,13 +1085,11 @@ export interface TenantSettings {
   publicPortalConfig: PublicPortalConfig
   /** Help center configuration */
   helpCenterConfig: HelpCenterConfig
-  /** Changelog audience/nav/collaboration/email settings */
-  changelogConfig: ChangelogSettings
   /** Status page enablement/visibility/email settings */
   statusConfig: StatusSettings
   /** Public widget config (no secret, safe for client) */
   publicWidgetConfig: PublicWidgetConfig
-  /** Product availability and experimental feature flags */
+  /** Product availability flags */
   featureFlags: FeatureFlags
   brandingData: SettingsBrandingData
   faviconData: { url: string } | null
@@ -1019,8 +1112,10 @@ export interface TenantSettings {
 // =============================================================================
 
 /**
- * Workspace product availability and experimental/in-development features.
- * Product flags default on; optional AI and analytics flags default off.
+ * Workspace product availability.
+ * Core products (Feedback & Roadmaps, Changelog) default on. Support, Help
+ * Center, and Status default off until an operator or onboarding goal turns
+ * them on.
  */
 export interface FeatureFlags {
   /** Feedback boards, posts, voting, and roadmaps */
@@ -1029,61 +1124,21 @@ export interface FeatureFlags {
   changelog: boolean
   /** Help center knowledge base */
   helpCenter: boolean
-  /** AI answers with citations on help-center search surfaces */
-  helpCenterAiAnswers: boolean
   /** Support inbox: messenger widget channel + unified admin inbox. Also
    *  covers conversation niceties like external link preview cards. */
   supportInbox: boolean
   /** Support tickets: durable, trackable requests portal alongside conversations */
   supportTickets: boolean
-  /** Cookieless visitor + pageview analytics (portal and widget) */
-  visitorAnalytics: boolean
-  /** Durable first-party device id: connects visitors to leads and users
-   *  across visits. Subordinate to `visitorAnalytics` — rendered as a nested
-   *  sub-toggle in Labs and only effective when analytics is on. */
-  visitorDeviceTracking: boolean
-  /** Teammate-facing AI in the inbox: Copilot's private Q&A tab,
-   *  two-way conversation translation, and AI classification of
-   *  ai_detect-enabled conversation attributes. Each capability keeps its
-   *  own finer-grained controls (copilot.use permission, per-conversation
-   *  translation, per-attribute opt-in). */
-  inboxAi: boolean
-  /** What the AI assistant may DO: built-in actions such as closing
-   *  conversations and creating tickets. Every action has per-action
-   *  controls and approvals. */
-  assistantTools: boolean
-  /** Custom actions library (QUINN-TWO-AGENT-SPEC D6/Phase 5): admin-authored
-   *  HTTP actions the assistant can call, defined once and assigned per agent.
-   *  Off by default; gates dynamic registration of custom actions into the
-   *  toolset (built-in actions are unaffected). */
-  assistantCustomActions: boolean
   /** Status page: public/private/segment-scoped service status with incidents,
    *  maintenance windows, uptime history, and subscriber notifications. */
   statusPage: boolean
 }
 
 /**
- * Pre-consolidation flag keys that may still appear in stored
- * `settings.feature_flags` JSON. Each maps to the umbrella flag that
- * absorbed it; `resolveFeatureFlags` ORs them in at read time so tenants
- * who enabled a feature before the consolidation keep it without a
- * migration. `linkPreviews` is absent deliberately: it folded into
- * `supportInbox` (default on), and a stored `linkPreviews: true` must not
- * force a disabled inbox back on.
- */
-export const LEGACY_FLAG_MAP: Record<string, keyof FeatureFlags> = {
-  assistantCopilot: 'inboxAi',
-  inboxTranslation: 'inboxAi',
-  aiAttributeDetection: 'inboxAi',
-  assistantActions: 'assistantTools',
-}
-
-/**
  * Resolve stored feature-flags JSON to the current FeatureFlags shape:
- * defaults for missing keys, stored values for known keys, and legacy
- * (pre-consolidation) keys coalesced into their umbrella flag — an explicit
- * stored value for the umbrella key wins over any legacy keys. Unknown keys
- * are dropped, so the first write after an upgrade persists a clean shape.
+ * defaults for missing keys, stored values for known keys. Unknown keys
+ * (including retired Inbox AI / Connectors / Skills flags) are dropped, so
+ * the first write after an upgrade persists a clean shape.
  */
 export function resolveFeatureFlags(storedJson: string | null | undefined): FeatureFlags {
   const stored: Record<string, unknown> = storedJson ? JSON.parse(storedJson) : {}
@@ -1091,107 +1146,66 @@ export function resolveFeatureFlags(storedJson: string | null | undefined): Feat
   for (const key of Object.keys(DEFAULT_FEATURE_FLAGS) as Array<keyof FeatureFlags>) {
     if (typeof stored[key] === 'boolean') flags[key] = stored[key]
   }
-  for (const [legacyKey, umbrella] of Object.entries(LEGACY_FLAG_MAP)) {
-    if (stored[umbrella] === undefined && stored[legacyKey] === true) flags[umbrella] = true
-  }
+  // The public portal homepage is the feedback board, so this one is never off,
+  // whatever a workspace stored while the switch could still be moved. Read-time
+  // repair rather than a migration: it corrects the workspaces that are already
+  // wrong, not only the ones upgrading, and the next write persists it.
+  flags.feedback = true
   return flags
 }
 
 /**
- * Defaults for a multi-product workspace.
+ * Defaults for a new workspace.
  *
- * Product surfaces (Support, Help Center, Status, tickets, link previews)
- * default **on** so nav and admin shells show the full platform without a
- * Labs treasure-hunt. AI capabilities and anything that collects visitor
- * data stay **off** until an operator opts in — they need a configured
- * model and/or a privacy review (visitor analytics ships before its consent
- * gate, so it must not start collecting on upgrade).
+ * Feedback & Roadmaps plus Changelog match the historical core product.
+ * Support, Help Center, and Status stay off until Settings → General or an
+ * onboarding goal turns them on.
  *
- * Existing tenants with an explicit `featureFlags` JSON row keep stored
- * values; only missing keys and null rows pick up these defaults (merged in
- * settings.service).
+ * Existing workspaces with an explicit `featureFlags` JSON row keep stored
+ * values. A one-time SQL stamp wrote today's previous all-on object onto
+ * null rows before this default flipped, so already-running installs do
+ * not lose surfaces. Only missing keys and new null rows pick up these
+ * defaults (merged in settings.service).
  */
 export const DEFAULT_FEATURE_FLAGS: FeatureFlags = {
-  // Products — on
   feedback: true,
   changelog: true,
-  helpCenter: true,
-  supportInbox: true,
-  supportTickets: true,
-  statusPage: true,
-  // AI / privacy-sensitive — opt-in
-  helpCenterAiAnswers: false,
-  visitorAnalytics: false,
-  visitorDeviceTracking: false,
-  inboxAi: false,
-  assistantTools: false,
-  assistantCustomActions: false,
+  helpCenter: false,
+  supportInbox: false,
+  supportTickets: false,
+  statusPage: false,
 }
 
-/**
- * Feature flag metadata for the admin UI
- */
-export const FEATURE_FLAG_REGISTRY: Record<
-  keyof FeatureFlags,
-  { label: string; description: string }
-> = {
-  feedback: {
-    label: 'Feedback & Roadmaps',
-    description: 'Collect ideas, votes, and comments from customers and share what comes next.',
-  },
-  changelog: {
-    label: 'Changelog',
-    description: 'Publish product updates and keep customers informed about what you ship.',
-  },
-  helpCenter: {
-    label: 'Help Center',
-    description: 'Publish a searchable help center so customers can find answers on their own.',
-  },
-  helpCenterAiAnswers: {
-    label: 'Help Center AI Answers',
-    description:
-      'Let customers ask a question and get an instant AI answer with citations, built only from your published help articles. Requires an AI model to be configured.',
-  },
-  supportInbox: {
-    label: 'Conversations',
-    description:
-      'Let visitors start a conversation with Messenger from the widget; messages land in a shared inbox your team works from. Includes link preview cards for external links shared in conversations.',
-  },
-  supportTickets: {
-    label: 'Support Tickets',
-    description:
-      'Give customers a Tickets portal for durable, trackable support requests alongside conversations.',
-  },
-  visitorAnalytics: {
-    label: 'Visitor Analytics',
-    description:
-      'Measure visitors and pageviews across your portal and widget without cookies or personal data.',
-  },
-  visitorDeviceTracking: {
-    label: 'Visitor Identity',
-    description:
-      'Remember returning visitors with a first-party device id so their activity connects to leads and users. Stores an identifier in the browser; check your privacy requirements before enabling.',
-  },
-  inboxAi: {
-    label: 'Inbox AI',
-    description:
-      'AI for your team inside the inbox: a private Copilot tab for asking questions about a conversation, two-way message translation, and automatic classification of conversation attributes you opt in. Requires an AI model to be configured; each capability has its own controls.',
-  },
-  assistantTools: {
-    label: 'Assistant actions',
-    description:
-      'Let the AI assistant take actions such as closing conversations or creating tickets. Actions have per-action controls and approvals.',
-  },
-  assistantCustomActions: {
-    label: 'Custom actions',
-    description:
-      'Build your own actions from an HTTP request the assistant can call, define them once, and assign them to the Agent or Copilot. Scoped response access and audit logging keep them safe.',
-  },
-  statusPage: {
-    label: 'Status page',
-    description:
-      'Publish a status page on your portal with live component status, incidents, scheduled maintenance, uptime history, and subscriber notifications.',
-  },
+/** Onboarding outcomes that may turn extra products on. Kept local so this
+ *  file stays free of the db package. */
+export type FeatureFlagUseCase =
+  'product_feedback' | 'customer_support' | 'help_center' | 'internal'
+
+/** Flags to persist for a new workspace, or to merge on (never off) when
+ *  the operator picks a goal that needs a module. */
+export function featureFlagsForUseCase(useCase?: FeatureFlagUseCase | null): FeatureFlags {
+  const flags = { ...DEFAULT_FEATURE_FLAGS }
+  if (useCase === 'customer_support') {
+    flags.supportInbox = true
+    flags.supportTickets = true
+  } else if (useCase === 'help_center') {
+    flags.helpCenter = true
+  }
+  return flags
+}
+
+/** Turn on the modules a goal needs without turning anything else off. */
+export function enableFlagsForUseCase(
+  current: FeatureFlags,
+  useCase?: FeatureFlagUseCase | null
+): FeatureFlags {
+  const needed = featureFlagsForUseCase(useCase)
+  return {
+    ...current,
+    supportInbox: current.supportInbox || needed.supportInbox,
+    supportTickets: current.supportTickets || needed.supportTickets,
+    helpCenter: current.helpCenter || needed.helpCenter,
+  }
 }
 
 export type ProductId = 'feedback' | 'support' | 'helpCenter' | 'changelog' | 'status'
@@ -1202,17 +1216,13 @@ export interface ProductDefinition {
   description: string
   featureFlags: readonly (keyof FeatureFlags)[]
   adminPath:
-    | '/admin/feedback'
-    | '/admin/inbox'
-    | '/admin/help-center'
-    | '/admin/changelog'
-    | '/admin/status'
+    '/admin/feedback' | '/admin/inbox' | '/admin/help-center' | '/admin/changelog' | '/admin/status'
 }
 
 /**
- * Workspace products shown on Settings > General. Support retains its two
- * persisted capability flags for compatibility, but the UI changes them as a
- * single product so workspaces no longer need to coordinate two Labs toggles.
+ * Workspace products shown on Settings > General. Support retains two
+ * persisted capability keys for compatibility; the UI changes them as one
+ * product.
  */
 export const PRODUCT_DEFINITIONS = [
   {
@@ -1246,11 +1256,28 @@ export const PRODUCT_DEFINITIONS = [
   {
     id: 'status',
     label: 'Status',
-    description: 'Share live service status, incidents, maintenance, and uptime history.',
+    description:
+      'Publish a status page with live service status, incidents, maintenance, and uptime history.',
     featureFlags: ['statusPage'],
     adminPath: '/admin/status',
   },
 ] as const satisfies readonly ProductDefinition[]
+
+/** Product labels that this flag change newly turned on. Additive diffs only. */
+export function newlyEnabledProductLabels(before: FeatureFlags, after: FeatureFlags): string[] {
+  return PRODUCT_DEFINITIONS.filter((product) =>
+    product.featureFlags.some((flag) => before[flag] !== true && after[flag] === true)
+  ).map((product) => product.label)
+}
+
+/** Merge a goal onto current flags and name what this change newly turned on. */
+export function flagsForGoal(
+  current: FeatureFlags,
+  useCase?: FeatureFlagUseCase | null
+): { flags: FeatureFlags; enabledModules: string[] } {
+  const flags = enableFlagsForUseCase(current, useCase)
+  return { flags, enabledModules: newlyEnabledProductLabels(current, flags) }
+}
 
 function getProductDefinition(productId: ProductId): ProductDefinition {
   return PRODUCT_DEFINITIONS.find((product) => product.id === productId)!
@@ -1286,39 +1313,3 @@ export function getFirstEnabledAdminProductPath(
     '/admin/analytics'
   )
 }
-
-/**
- * Labs page layout: experimental flags grouped into sections, each rendered as
- * a card with a heading + high-level description. Product flags are surfaced
- * on General instead; a coverage test pins every flag to exactly one page. A
- * sub-flag renders indented beneath its parent row and is only toggleable while
- * the parent is on.
- */
-export interface LabSectionRow {
-  key: keyof FeatureFlags
-  subFlags?: Array<keyof FeatureFlags>
-}
-
-export const LAB_SECTIONS: Array<{
-  title: string
-  description: string
-  flags: LabSectionRow[]
-}> = [
-  {
-    title: 'AI',
-    description:
-      'Optional AI capabilities. Require a configured model; off by default until you opt in.',
-    flags: [
-      { key: 'helpCenterAiAnswers' },
-      { key: 'inboxAi' },
-      { key: 'assistantTools' },
-      { key: 'assistantCustomActions' },
-    ],
-  },
-  {
-    title: 'Privacy-sensitive',
-    description:
-      'Analytics about who visits your portal and widget. Review your privacy policy before enabling.',
-    flags: [{ key: 'visitorAnalytics', subFlags: ['visitorDeviceTracking'] }],
-  },
-]

@@ -71,26 +71,22 @@ export async function findContactsByEmail(rawEmail: string): Promise<ContactEmai
     )
 
   return [
-    ...userRows.map(
-      (row): ContactEmailMatch => ({
-        type: row.emailVerified ? 'verified_user' : 'unverified_user',
-        principalId: row.principalId as PrincipalId,
-        userId: row.userId as UserId,
-        name: row.displayName || row.name,
-        email: row.email ?? normalized,
-        avatarUrl: row.avatarUrl,
-      })
-    ),
-    ...leadRows.map(
-      (row): ContactEmailMatch => ({
-        type: 'lead',
-        principalId: row.principalId as PrincipalId,
-        userId: row.userId as UserId | null,
-        name: row.displayName || 'Anonymous visitor',
-        email: row.contactEmail ?? normalized,
-        avatarUrl: row.avatarUrl,
-      })
-    ),
+    ...userRows.map((row): ContactEmailMatch => ({
+      type: row.emailVerified ? 'verified_user' : 'unverified_user',
+      principalId: row.principalId as PrincipalId,
+      userId: row.userId as UserId,
+      name: row.displayName || row.name,
+      email: row.email ?? normalized,
+      avatarUrl: row.avatarUrl,
+    })),
+    ...leadRows.map((row): ContactEmailMatch => ({
+      type: 'lead',
+      principalId: row.principalId as PrincipalId,
+      userId: row.userId as UserId | null,
+      name: row.displayName || 'Anonymous visitor',
+      email: row.contactEmail ?? normalized,
+      avatarUrl: row.avatarUrl,
+    })),
   ]
 }
 

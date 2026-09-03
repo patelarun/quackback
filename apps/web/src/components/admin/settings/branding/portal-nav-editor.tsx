@@ -216,8 +216,8 @@ function NavRow({
             </span>
           </TooltipTrigger>
           <TooltipContent side="top">
-            This tab shows once its product is enabled (Settings → Labs / product settings). Your
-            order and label are kept.
+            This tab shows once its product is enabled (Settings → General). Your order and label
+            are kept.
           </TooltipContent>
         </Tooltip>
       )}
@@ -234,12 +234,16 @@ function NavRow({
         </Button>
       )}
 
-      <Switch
-        checked={item.enabled !== false}
-        disabled={gated}
-        onCheckedChange={(checked) => onPatch({ enabled: checked ? undefined : false })}
-        aria-label={`Show ${item.label || defaultLabel} tab`}
-      />
+      {item.type === 'feedback' ? (
+        <Badge variant="outline">Always on</Badge>
+      ) : (
+        <Switch
+          checked={item.enabled !== false}
+          disabled={gated}
+          onCheckedChange={(checked) => onPatch({ enabled: checked ? undefined : false })}
+          aria-label={`Show ${item.label || defaultLabel} tab`}
+        />
+      )}
     </div>
   )
 }

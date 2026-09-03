@@ -96,7 +96,7 @@ const SCRATCH_DB = 'quackback_drift_check'
  * declare. Every entry needs a reason; an entry that stops matching anything
  * is reported so the list cannot rot.
  */
-const EXEMPTIONS: { reason: string; pattern: RegExp }[] = [
+const EXEMPTIONS: { reason: string; pattern: RegExp; optional?: boolean }[] = [
   {
     // page_views is declaratively day-partitioned (0137); drizzle-kit's
     // introspection does not see partitioned parents (relkind 'p'), so the
@@ -227,6 +227,70 @@ const EXEMPTIONS: { reason: string; pattern: RegExp }[] = [
     pattern:
       /^ALTER TABLE "settings" ALTER COLUMN "assistant_config" SET DEFAULT '\{"version":3,.*\}'::jsonb;?$/,
   },
+  {
+    // dispatch_owner is rollout compatibility state owned by migrations 0253/0254.
+    // The application reads the column, while this CHECK deliberately remains
+    // raw SQL so an older schema declaration cannot silently redefine the
+    // accepted owner vocabulary during the relay-to-job cutover.
+    reason: 'events dispatch_owner CHECK is raw-SQL-owned rollout compatibility state',
+    pattern: /^ALTER TABLE "events" DROP CONSTRAINT "events_dispatch_owner_ck";?$/,
+  },
+  {
+    // drizzle-kit on PG 17 reports composite UNIQUE/PK columns in creation
+    // order; on PG 18 it reports them alphabetically (matching the TS
+    // declarations). The resulting DROP+ADD pair is a column-order rewrite
+    // of the same key, not real drift. Optional because PG 18 emits nothing.
+    reason:
+      'drizzle-kit composite UNIQUE column-order rewrite (PG 17 creation order vs alphabetical TS)',
+    pattern:
+      /^ALTER TABLE "(?:post_external_links|ticket_external_links|integration_event_mappings)" (?:DROP|ADD) CONSTRAINT "(?:post_external_links_type_external_post_unique|ticket_external_links_type_external_ticket_unique|mapping_unique)"/,
+    optional: true,
+  },
+  {
+    reason:
+      'drizzle-kit composite PK column-order rewrite (PG 17 creation order vs alphabetical TS)',
+    pattern:
+      /^ALTER TABLE "(?:status_incident_components|ticket_links|visitor_top_stats|ticket_conversations|changelog_entry_categories)" DROP CONSTRAINT "(?:status_incident_components_incident_id_component_id_pk|ticket_links_pkey|visitor_top_stats_pkey|ticket_conversations_pkey|changelog_entry_categories_pk)"/,
+    optional: true,
+  },
+  {
+    reason: 'drizzle-kit no-op composite PK rename for workspace-keyed two-column stores on PG 17',
+    pattern:
+      /^ALTER TABLE "(kv_store|rate_bucket)" (?:DROP CONSTRAINT "\1_pkey"|ADD CONSTRAINT "\1_workspace_key_key_pk" PRIMARY KEY\("workspace_key","key"\));?$/,
+    optional: true,
+  },
+  {
+    reason: 'drizzle-kit no-op composite PK rename for workspace-keyed kv_set_member on PG 17',
+    pattern:
+      /^ALTER TABLE "kv_set_member" (?:DROP CONSTRAINT "kv_set_member_pkey"|ADD CONSTRAINT "kv_set_member_workspace_key_set_key_member_pk" PRIMARY KEY\("workspace_key","set_key","member"\));?$/,
+    optional: true,
+  },
+  {
+    reason: 'drizzle-kit no-op composite PK rename for workspace-keyed presence_stream on PG 17',
+    pattern:
+      /^ALTER TABLE "presence_stream" (?:DROP CONSTRAINT "presence_stream_pkey"|ADD CONSTRAINT "presence_stream_workspace_key_principal_id_stream_id_pk" PRIMARY KEY\("workspace_key","principal_id","stream_id"\));?$/,
+    optional: true,
+  },
+  {
+    // The ownership stamp is deliberately read through to_jsonb() and omitted
+    // from the ORM schema so older self-hosted databases can still serve while
+    // the additive migration rolls out. Raw SQL owns this column.
+    reason: 'settings.cloud_workspace_key is a raw-SQL-only compatibility column',
+    pattern: /^ALTER TABLE "settings" DROP COLUMN "cloud_workspace_key";?$/,
+  },
+  {
+    // The canary is written and read only by the per-workspace secret custody
+    // check (service-encrypted ciphertext); the ORM never names it, so a
+    // declaration would be a second owner for a column raw SQL already owns.
+    reason: 'settings.cloud_secret_canary is a raw-SQL-only custody column',
+    pattern: /^ALTER TABLE "settings" DROP COLUMN "cloud_secret_canary";?$/,
+  },
+  {
+    // The migration owns this partial index because it must sit after the
+    // guarded tenant_id-to-workspace_key rename and remain replay-safe.
+    reason: 'presence agent heartbeat index is raw-SQL-owned rename-completion DDL',
+    pattern: /^DROP INDEX "presence_stream_agents_idx";?$/,
+  },
 ]
 
 function scratchUrl(): string {
@@ -301,7 +365,10 @@ async function main(): Promise<number> {
     console.log('Applying all migrations to the scratch database...')
     // The same code path production boot uses (migrate + system seed); the
     // seed's DML cannot affect the DDL diff.
-    await runMigrations(scratchUrl())
+    // Concurrent indexes and the post-condition sweep are deliberately off:
+    // this check diffs DDL that drizzle-kit can express, while concurrent
+    // indexes are raw-SQL-owned and verified separately by schema operations.
+    await runMigrations(scratchUrl(), { concurrentIndexes: false, verify: false })
 
     console.log('Diffing live schema against the Drizzle TS schema...')
     // pushSchema reads `.rows` off execute() results, but the postgres-js
@@ -324,7 +391,7 @@ async function main(): Promise<number> {
 
     // A stale exemption is a failure, not a warning: nobody reads warnings
     // on green builds, and the list is meant not to rot.
-    const stale = EXEMPTIONS.filter((_, i) => !used.has(i))
+    const stale = EXEMPTIONS.filter((e, i) => !used.has(i) && !e.optional)
     for (const exemption of stale) {
       console.error(
         `STALE EXEMPTION (matched nothing, remove it): ${exemption.pattern} (${exemption.reason})`

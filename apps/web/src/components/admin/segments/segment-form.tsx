@@ -341,11 +341,7 @@ function RuleConditionRow({
             const res = await fetchSegmentAttributeValuesFn({
               data: {
                 attribute: condition.attribute as
-                  | 'country'
-                  | 'locale'
-                  | 'name'
-                  | 'email'
-                  | 'signup_source',
+                  'country' | 'locale' | 'name' | 'email' | 'signup_source',
                 query,
                 limit: 20,
               },

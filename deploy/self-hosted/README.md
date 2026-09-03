@@ -30,7 +30,7 @@ cd quackback
 cp .env.prod.example .env
 # Edit .env — fill in every value (generate secrets with: openssl rand -base64 32)
 
-# Start the application (app + Postgres + Dragonfly + MinIO)
+# Start the application (app + Postgres + MinIO)
 docker compose -f docker-compose.prod.yml up -d
 
 # View logs
@@ -93,14 +93,15 @@ docker pull ghcr.io/quackbackio/quackback:latest-enterprise
 
 ### Optional
 
-| Variable               | Description                                                               | Default      |
-| ---------------------- | ------------------------------------------------------------------------- | ------------ |
-| `PORT`                 | Server port                                                               | `3000`       |
-| `NODE_ENV`             | Environment                                                               | `production` |
-| `QUACKBACK_ROLE`       | Process role: `all`, `web`, or `worker` (see [Scaling Out](#scaling-out)) | `all`        |
-| `SKIP_MIGRATIONS`      | Skip the startup migration step (run migrations out-of-band instead)      | `false`      |
-| `EMAIL_RESEND_API_KEY` | Email service (Resend)                                                    | -            |
-| `EMAIL_FROM`           | From address for emails                                                   | -            |
+| Variable                           | Description                                                                                                                                                                                                                                                | Default      |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| `PORT`                             | Server port                                                                                                                                                                                                                                                | `3000`       |
+| `NODE_ENV`                         | Environment                                                                                                                                                                                                                                                | `production` |
+| `QUACKBACK_ROLE`                   | Process role: `all`, `web`, or `worker` (see [Scaling Out](#scaling-out))                                                                                                                                                                                  | `all`        |
+| `SKIP_MIGRATIONS`                  | Skip the startup migration step (run migrations out-of-band instead)                                                                                                                                                                                       | `false`      |
+| `EMAIL_SES_ACCESS_KEY_ID`          | Amazon SES sending key id; needs `EMAIL_SES_SECRET_ACCESS_KEY` and `EMAIL_SES_REGION` too                                                                                                                                                                  | -            |
+| `EMAIL_SES_IDENTITY_ACCESS_KEY_ID` | Separate SES key id used only to verify a customer-owned sending domain; needs `EMAIL_SES_IDENTITY_SECRET_ACCESS_KEY`. Grant `ses:CreateEmailIdentity`, `ses:GetEmailIdentity`, `ses:PutEmailIdentityMailFromAttributes` and NOT `ses:DeleteEmailIdentity` | -            |
+| `EMAIL_FROM`                       | From address for emails                                                                                                                                                                                                                                    | -            |
 
 ### Integrations (Optional)
 
@@ -165,7 +166,7 @@ pg_restore -d quackback quackback_backup.dump
 
 ### Prerequisites
 
-- **Bun** 1.3.3+
+- **Bun** 1.4.0+
 - **PostgreSQL** 17+
 - **Node.js** 20+ (for some dev tools)
 
@@ -272,26 +273,19 @@ For deployments with higher load or stricter uptime requirements, run multiple i
 | `web`    | HTTP only, enqueues but does not consume | 1+       | Safe to scale horizontally               |
 | `worker` | Background workers and sweepers          | 1+       | Required for background jobs to run      |
 
-All replicas must share the same PostgreSQL, Redis, and S3-compatible storage.
+All replicas must share the same PostgreSQL and S3-compatible storage.
 
-Sticky sessions are not required. Realtime features use Redis pub/sub.
+Sticky sessions are not required. Realtime features use PostgreSQL `LISTEN`/`NOTIFY`.
 
-Run at least one `worker` replica (or use `all`) at all times, or background jobs like email polling, workflow timers, and analytics refresh will not execute. Multiple worker replicas are safe; jobs are processed exactly once via the shared queue.
+Run at least one `worker` replica (or use `all`) at all times, or background jobs like email polling, workflow timers, and analytics refresh will not execute. Multiple worker replicas are safe; jobs are processed exactly once via the shared queue tables in PostgreSQL.
 
 ### Docker Compose Example
 
-The datastores (Postgres, Dragonfly, MinIO) are the same as in `docker-compose.prod.yml`. The app splits into a scaled `web` service and a `worker` service running the same image. Web replicas cannot each publish port 3000 on the host, so run a reverse proxy or load balancer (see [Reverse Proxy](#reverse-proxy)) in front of the `web` service and let Compose's internal DNS balance across replicas.
+The datastores (Postgres, MinIO) are the same as in `docker-compose.prod.yml`. The app splits into a scaled `web` service and a `worker` service running the same image. Web replicas cannot each publish port 3000 on the host, so run a reverse proxy or load balancer (see [Reverse Proxy](#reverse-proxy)) in front of the `web` service and let Compose's internal DNS balance across replicas.
 
 ```yaml
 services:
   # postgres, minio: same as docker-compose.prod.yml
-
-  dragonfly:
-    image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.27.1
-    # BullMQ requires cluster_mode=emulated + lock_on_hashtags.
-    command: dragonfly --cluster_mode=emulated --lock_on_hashtags
-    volumes:
-      - dragonfly_data:/data
 
   web:
     image: ghcr.io/quackbackio/quackback:latest
@@ -299,14 +293,12 @@ services:
       QUACKBACK_ROLE: web
       SKIP_MIGRATIONS: 'true'
       DATABASE_URL: postgresql://postgres:password@postgres:5432/quackback
-      REDIS_URL: redis://dragonfly:6379
       SECRET_KEY: ${SECRET_KEY}
       BASE_URL: ${BASE_URL}
       # plus your S3_* and email settings, same as docker-compose.prod.yml
     restart: unless-stopped
     depends_on:
       - postgres
-      - dragonfly
       - minio
     deploy:
       replicas: 3
@@ -317,20 +309,17 @@ services:
       QUACKBACK_ROLE: worker
       SKIP_MIGRATIONS: 'true'
       DATABASE_URL: postgresql://postgres:password@postgres:5432/quackback
-      REDIS_URL: redis://dragonfly:6379
       SECRET_KEY: ${SECRET_KEY}
       BASE_URL: ${BASE_URL}
       # plus your S3_* and email settings, same as docker-compose.prod.yml
     restart: unless-stopped
     depends_on:
       - postgres
-      - dragonfly
       - minio
     deploy:
       replicas: 1
 
 volumes:
-  dragonfly_data:
 ```
 
 ### Database Migrations at Scale
@@ -496,7 +485,7 @@ curl -X POST 'https://api.resend.com/emails' \
 Deploys Quackback + PostgreSQL (with pgvector) + S3-compatible storage bucket to Railway. After deploying:
 
 1. **Find your OTP code**: If email is not configured, login codes appear in Railway's deployment logs
-2. **Configure email** (recommended): Add SMTP or Resend API key in the service's environment variables
+2. **Configure email** (recommended): Add SMTP or Amazon SES credentials in the service's environment variables
 3. **Custom domain**: Add a custom domain in Railway, then update the `BASE_URL` environment variable to match
 
 File uploads (logos, avatars, changelog images) work out of the box via the included Railway storage bucket.

@@ -5,6 +5,13 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // GitHub-hosted ubuntu-latest is 4 vCPU. Default maxWorkers is ~50% of
+    // cores, which leaves half the runner idle. Pin to 4 in CI; locally leave
+    // headroom for the rest of the machine. Isolation stays on: turning it
+    // off leaked vi.mock state across files (~200 failures on a shard).
+    maxWorkers: process.env.CI ? 4 : undefined,
+    fileParallelism: true,
+    pool: 'forks',
     // Many server tests do a first-time dynamic import() inside the test body
     // (the vi.mock factory pattern). Under parallel CPU contention that load
     // can exceed the 5s default — and a timeout firing mid-import() corrupts
@@ -18,8 +25,6 @@ export default defineConfig({
       '**/.next/**',
       '**/e2e/**',
       '**/.output/**',
-      // TanStack route for /admin/automation/test, not a Vitest suite.
-      '**/src/routes/admin/automation.test.tsx',
       // Isolated git worktrees live here; they are separate checkouts with
       // their own deps and must not be run by the parent repo's suite.
       '**/.claude/**',
@@ -35,6 +40,11 @@ export default defineConfig({
     env: {
       DATABASE_URL: 'postgresql://postgres:password@localhost:5432/quackback_test',
     },
+    deps: {
+      optimizer: {
+        ssr: { enabled: true },
+      },
+    },
   },
   esbuild: {
     // Disable esbuild's strip-only mode to properly handle TypeScript features
@@ -47,6 +57,12 @@ export default defineConfig({
   resolve: {
     alias: {
       '@quackback/db/client': path.resolve(__dirname, './packages/db/src/client.ts'),
+      '@quackback/db/schema-version': path.resolve(
+        __dirname,
+        './packages/db/src/schema-version.ts'
+      ),
+      '@quackback/db/schema-ops': path.resolve(__dirname, './packages/db/src/schema-ops.ts'),
+      '@quackback/db/migrate': path.resolve(__dirname, './packages/db/src/migrate-runtime.ts'),
       '@quackback/db/schema': path.resolve(__dirname, './packages/db/src/schema/index.ts'),
       '@quackback/db/types': path.resolve(__dirname, './packages/db/src/types.ts'),
       '@quackback/db': path.resolve(__dirname, './packages/db/index.ts'),

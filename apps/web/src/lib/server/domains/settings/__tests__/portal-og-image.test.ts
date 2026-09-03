@@ -1,27 +1,23 @@
 /**
  * Portal OG image settings tests.
  *
- * Verifies:
- * - savePortalOgImageKey stores the key, removes the replaced S3 object, and
- *   invalidates the tenant settings cache
- * - deletePortalOgImageKey clears the key, removes the S3 object, and
- *   invalidates the cache
- * - getTenantSettings resolves brandingData.ogImageUrl from the stored key
+ * The stored `portal_og_image_key` column is leftover and unread.
+ * Social share resolves to the workspace logo (then `/logo.png`).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-// --- Redis cache mocks ---
+// --- Cache mocks ---
 const mockCacheGet = vi.fn()
 const mockCacheSet = vi.fn()
 const mockCacheDel = vi.fn()
 
-vi.mock('@/lib/server/redis', () => ({
+vi.mock('@/lib/server/cache', () => ({
   cacheGet: (...args: unknown[]) => mockCacheGet(...args),
   cacheSet: (...args: unknown[]) => mockCacheSet(...args),
   cacheDel: (...args: unknown[]) => mockCacheDel(...args),
   CACHE_KEYS: {
-    TENANT_SETTINGS: 'settings:tenant',
+    WORKSPACE_SETTINGS: 'settings:workspace',
     INTEGRATION_MAPPINGS: 'hooks:integration-mappings',
     ACTIVE_WEBHOOKS: 'hooks:webhooks-active',
     SLACK_CHANNELS: 'slack:channels',
@@ -120,8 +116,7 @@ function makeSettingsRow(overrides: Record<string, unknown> = {}) {
 }
 
 // Import after mocks
-const { getTenantSettings } = await import('../settings.service')
-const { savePortalOgImageKey, deletePortalOgImageKey } = await import('../settings.media')
+const { getWorkspaceSettings } = await import('../settings.service')
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -136,62 +131,19 @@ beforeEach(() => {
   mockUpdate.mockReturnValue({ set: mockSet })
 })
 
-describe('savePortalOgImageKey', () => {
-  beforeEach(() => {
-    mockFindFirst.mockResolvedValue(makeSettingsRow())
-  })
-
-  it('stores the key and invalidates the tenant settings cache', async () => {
-    const result = await savePortalOgImageKey('portal-og/og.png')
-
-    expect(result).toEqual({ success: true, key: 'portal-og/og.png' })
-    expect(mockSet).toHaveBeenCalledWith({ portalOgImageKey: 'portal-og/og.png' })
-    expect(mockCacheDel).toHaveBeenCalledWith('settings:tenant', 'auth:registered-providers')
-  })
-
-  it('deletes the replaced S3 object', async () => {
-    mockFindFirst.mockResolvedValue(makeSettingsRow({ portalOgImageKey: 'portal-og/old.png' }))
-
-    await savePortalOgImageKey('portal-og/new.png')
-
-    expect(mockDeleteObject).toHaveBeenCalledWith('portal-og/old.png')
-  })
-})
-
-describe('deletePortalOgImageKey', () => {
-  it('clears the key, deletes the S3 object, and invalidates the cache', async () => {
+describe('getWorkspaceSettings brandingData.ogImageUrl', () => {
+  it('does not read a leftover stored portal_og_image_key', async () => {
     mockFindFirst.mockResolvedValue(makeSettingsRow({ portalOgImageKey: 'portal-og/og.png' }))
 
-    const result = await deletePortalOgImageKey()
+    const result = await getWorkspaceSettings()
 
-    expect(result).toEqual({ success: true })
-    expect(mockDeleteObject).toHaveBeenCalledWith('portal-og/og.png')
-    expect(mockSet).toHaveBeenCalledWith({ portalOgImageKey: null })
-    expect(mockCacheDel).toHaveBeenCalledWith('settings:tenant', 'auth:registered-providers')
-  })
-
-  it('does not touch S3 when no image is set', async () => {
-    mockFindFirst.mockResolvedValue(makeSettingsRow())
-
-    await deletePortalOgImageKey()
-
-    expect(mockDeleteObject).not.toHaveBeenCalled()
-  })
-})
-
-describe('getTenantSettings brandingData.ogImageUrl', () => {
-  it('resolves the public URL from the stored key', async () => {
-    mockFindFirst.mockResolvedValue(makeSettingsRow({ portalOgImageKey: 'portal-og/og.png' }))
-
-    const result = await getTenantSettings()
-
-    expect(result?.brandingData.ogImageUrl).toBe('https://cdn.test/portal-og/og.png')
+    expect(result?.brandingData.ogImageUrl).toBeNull()
   })
 
   it('is null when no OG image is set', async () => {
     mockFindFirst.mockResolvedValue(makeSettingsRow())
 
-    const result = await getTenantSettings()
+    const result = await getWorkspaceSettings()
 
     expect(result?.brandingData.ogImageUrl).toBeNull()
   })

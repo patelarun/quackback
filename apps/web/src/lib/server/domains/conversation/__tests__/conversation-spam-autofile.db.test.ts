@@ -13,7 +13,6 @@ import type { Actor } from '@/lib/server/policy/types'
 
 process.env.BASE_URL = 'https://quackback.test'
 process.env.SECRET_KEY ||= 'x'.repeat(32)
-process.env.REDIS_URL ||= 'redis://localhost:6379'
 
 import { createDbTestFixture, testDb } from '@/lib/server/__tests__/db-test-fixture'
 import {
@@ -49,7 +48,7 @@ vi.mock('../conversation.query', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../conversation.query')>()),
   conversationToDTO: vi.fn(async (row: { id: string }) => ({ id: row.id })),
 }))
-vi.mock('@/lib/server/utils/redis-rate-bucket', () => ({
+vi.mock('@/lib/server/utils/rate-bucket', () => ({
   incrementBucket: vi.fn().mockResolvedValue({ count: 1 }),
   incrementBuckets: vi.fn().mockResolvedValue([1]),
   bucketRetryAfter: vi.fn().mockResolvedValue(60),
@@ -58,7 +57,7 @@ vi.mock('@/lib/server/storage/s3', async (importOriginal) => {
   const { config } = await import('@/lib/server/config')
   return {
     ...(await importOriginal<typeof import('@/lib/server/storage/s3')>()),
-    isS3Configured: () => true,
+    isS3Usable: () => true,
     uploadImageBuffer: async (bytes: Buffer, mime: string) => ({
       url: `${config.baseUrl}/api/storage/chat-images/img-${bytes.length}.${mime.split('/')[1]}`,
     }),
@@ -148,6 +147,7 @@ function agentActor(): Actor {
 const coldEmail = (over: Partial<ParsedInboundEmail> = {}): ParsedInboundEmail => ({
   toAddresses: ['support@quackback.io'],
   ccAddresses: [],
+  replyToAddresses: [],
   from: 'customer@acme.com',
   subject: 'Help with billing',
   text: 'My invoice looks wrong.',
@@ -304,7 +304,7 @@ describe.skipIf(!fixture.available)('inbound auto-spam filter (real DB, rolled b
   it('files a bursting sender to Spam without invoking the AI classifier', async () => {
     await seedWorkspace()
     mockChat.mockResolvedValue({ spam: false })
-    const { incrementBucket } = await import('@/lib/server/utils/redis-rate-bucket')
+    const { incrementBucket } = await import('@/lib/server/utils/rate-bucket')
     vi.mocked(incrementBucket).mockImplementation(async (spec: { key: string }) => ({
       count: spec.key.includes(':burst:') ? 5 : 1,
     }))
@@ -337,6 +337,40 @@ describe.skipIf(!fixture.available)('inbound auto-spam filter (real DB, rolled b
     })
     expect(stored?.status).toBe('open')
     expect(stored?.endReason).toBeNull()
+    expect(mockChat).not.toHaveBeenCalled()
+  })
+
+  // The trust list outranks every FILING path, and that is correct — but a hard
+  // DMARC reject is a REFUSAL, decided before any filing path runs, and the two
+  // must not be confused. Trusting a domain says "mail genuinely from these
+  // people is never spam"; it cannot say "anyone claiming to be these people is
+  // fine", because the whole content of a reject verdict is that we could not
+  // establish the sender is who they claim. Routing the refusal through the
+  // ordinary spam filter would have handed a stranger the open inbox by
+  // spoofing an address the workspace trusts, which is strictly worse than the
+  // destruction this change replaced.
+  it('quarantines a hard DMARC reject even when the spoofed domain is trusted', async () => {
+    await seedWorkspace(['acme.com'])
+    mockChat.mockResolvedValue({ spam: false })
+
+    const res = await ingestParsedEmail(
+      coldEmail({
+        from: 'spoofer@acme.com',
+        authenticationResults: 'mx.quackback.io; dmarc=fail (p=reject) header.from=acme.com',
+      })
+    )
+
+    expect(res.status).toBe('quarantined')
+    if (res.status !== 'quarantined') return
+    const stored = await testDb.query.conversations.findFirst({
+      where: eq(conversations.id, res.conversationId),
+    })
+    expect(stored?.status).toBe('closed')
+    expect(stored?.endReason).toBe('spam')
+    expect(stored?.spamReason).toBe('sender_auth_reject')
+    // Retained AND reviewable: the Spam view is where the agent finds it.
+    await expect(spamViewIds()).resolves.toContain(res.conversationId)
+    await expect(spamViewReason(res.conversationId)).resolves.toBe('sender_auth_reject')
     expect(mockChat).not.toHaveBeenCalled()
   })
 })

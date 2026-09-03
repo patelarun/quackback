@@ -4,7 +4,6 @@
  * "on" turns on everything the three conversation surfaces need:
  *   - featureFlags.supportInbox        (gates /admin/inbox + all conversation paths)
  *   - widgetConfig.enabled             (widget master switch)
- *   - widgetConfig.messenger.enabled   (widget messenger surface)
  *   - widgetConfig.tabs.messenger      (widget Messages tab)
  *   - portalConfig.support.enabled     (portal /support tab)
  *
@@ -12,12 +11,12 @@
  * master switch is left alone so unrelated widget specs are not disturbed).
  *
  * The settings JSON columns are *text*, so we read -> patch -> write, then
- * drop the Redis-cached tenant settings (settings:tenant) so the running dev
+ * drop the Redis-cached workspace settings (settings:workspace) so the running dev
  * server sees the change immediately instead of after the 1h cache TTL.
  *
  * Usage: bun set-support-surfaces.ts <on|off>
  */
-import { openDb, bustTenantSettings, parseJson } from './_lib'
+import { openDb, bustWorkspaceSettings, parseJson } from './_lib'
 
 const mode = (process.argv[2] || 'on').toLowerCase()
 if (mode !== 'on' && mode !== 'off') {
@@ -39,7 +38,6 @@ try {
 
   const widget = parseJson(rows[0].widget_config)
   if (enabled) widget.enabled = true
-  widget.messenger = { ...((widget.messenger as object) ?? {}), enabled }
   widget.tabs = { ...((widget.tabs as object) ?? {}), messenger: enabled }
 
   const portal = parseJson(rows[0].portal_config)
@@ -52,8 +50,8 @@ try {
         portal_config = ${JSON.stringify(portal)}
     WHERE id = ${id}`
 
-  // Bust the tenant-settings cache so the change is visible on the next request.
-  await bustTenantSettings()
+  // Bust the workspace-settings cache so the change is visible on the next request.
+  await bustWorkspaceSettings(sql)
 
   console.log(JSON.stringify({ supportSurfaces: mode }))
   await sql.end()

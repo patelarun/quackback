@@ -97,8 +97,7 @@ export async function previewImport(data: ImportInput): Promise<ImportPreview> {
   const finalSample = sample.map(({ sourceId, ...rest }) => ({
     ...rest,
     action: (sourceId && matchedSourceIds.has(sourceId) ? 'update' : 'create') as
-      | 'create'
-      | 'update',
+      'create' | 'update',
   }))
 
   return {

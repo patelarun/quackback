@@ -13,7 +13,7 @@ import {
 import { toast } from 'sonner'
 import { contentPreview } from '@/lib/shared/utils/string'
 import { useAuthPopoverSafe } from '@/components/auth/auth-popover-context'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Avatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -27,10 +27,11 @@ import { TimeAgo } from '@/components/ui/time-ago'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { PostStatusEntity } from '@/lib/shared/db-types'
 import { usePostVote } from '@/lib/client/hooks/use-post-vote'
-import { cn, getInitials } from '@/lib/shared/utils'
+import { cn } from '@/lib/shared/utils'
 import { useEnsureAnonSession } from '@/lib/client/hooks/use-ensure-anon-session'
 import { AuthorHoverCard } from '@/components/public/author-hover-card'
 import type { PostId, PostStatusId, PrincipalId } from '@quackback/ids'
+import { InlineModerationActions } from '@/components/shared/inline-moderation-actions'
 
 interface PostCardProps {
   id: PostId
@@ -98,6 +99,11 @@ interface PostCardProps {
   showQuickActions?: boolean
   /** Whether to show avatar in meta row */
   showAvatar?: boolean
+  moderationState?: 'published' | 'pending' | string | null
+  canModerate?: boolean
+  moderationBusy?: boolean
+  onApprove?: () => void
+  onReject?: () => void
 }
 
 export function PostCard({
@@ -131,6 +137,11 @@ export function PostCard({
   onMouseLeave,
   showQuickActions = false,
   showAvatar = true,
+  moderationState,
+  canModerate = false,
+  moderationBusy = false,
+  onApprove,
+  onReject,
 }: PostCardProps): React.ReactElement {
   // Safe hook - returns null in admin context where AuthPopoverProvider isn't available
   const intl = useIntl()
@@ -448,12 +459,12 @@ export function PostCard({
   const authorInner = (
     <>
       {showAvatar && (
-        <Avatar className="h-5 w-5">
-          {authorAvatarUrl && (
-            <AvatarImage src={authorAvatarUrl} alt={authorName || authorFallback} />
-          )}
-          <AvatarFallback className="bg-muted text-xs">{getInitials(authorName)}</AvatarFallback>
-        </Avatar>
+        <Avatar
+          className="h-5 w-5"
+          src={authorAvatarUrl}
+          name={authorName}
+          fallbackClassName="bg-muted text-xs"
+        />
       )}
       <span className={showAvatar ? '' : 'text-foreground/80'}>{authorName || authorFallback}</span>
     </>
@@ -524,6 +535,17 @@ export function PostCard({
             </span>
           )}
         </div>
+        {moderationState === 'pending' && (
+          <div className="mt-2.5" onClick={(e) => e.stopPropagation()}>
+            <InlineModerationActions
+              pending
+              noun="post"
+              busy={moderationBusy}
+              onApprove={canModerate ? onApprove : undefined}
+              onReject={canModerate ? onReject : undefined}
+            />
+          </div>
+        )}
       </div>
 
       {/* Quick actions */}

@@ -48,6 +48,10 @@ const mockEnforceAiTokenBudget = vi.hoisted(() => vi.fn(async () => {}))
 vi.mock('@/lib/server/domains/settings/tier-enforce', () => ({
   enforceAiTokenBudget: mockEnforceAiTokenBudget,
 }))
+const mockRequireEntitlement = vi.hoisted(() => vi.fn(async () => {}))
+vi.mock('@/lib/server/domains/settings/cloud/entitlements', () => ({
+  requireEntitlement: mockRequireEntitlement,
+}))
 vi.mock('@/lib/server/domains/settings/settings.office-hours', () => ({
   getOfficeHoursSchedule: vi.fn(async () => ({ enabled: false, timezone: 'UTC', intervals: [] })),
 }))
@@ -63,10 +67,18 @@ vi.mock('@/lib/server/domains/settings/settings.service', () => ({
 const mockGetLiveWorkflowReferencedAttributeKeys = vi.hoisted(() => vi.fn(async () => new Set()))
 vi.mock('@/lib/server/domains/workflows/workflow.service', () => ({
   getLiveWorkflowReferencedAttributeKeys: mockGetLiveWorkflowReferencedAttributeKeys,
+  hasLiveWorkflowForTrigger: vi.fn(async () => false),
 }))
 const mockClassifyConversationAttributes = vi.hoisted(() => vi.fn(async () => []))
 vi.mock('@/lib/server/domains/conversation-attributes/ai-classification.service', () => ({
   classifyConversationAttributes: mockClassifyConversationAttributes,
+}))
+const mockSetConversationAttribute = vi.hoisted(() => vi.fn(async () => ({})))
+vi.mock('@/lib/server/domains/conversation-attributes/set-attribute.service', () => ({
+  setConversationAttribute: mockSetConversationAttribute,
+}))
+vi.mock('@/lib/server/domains/conversation-attributes/conversation-attribute.service', () => ({
+  ensureAssistantEscalationReasonAttribute: vi.fn(async () => {}),
 }))
 
 vi.mock('@/lib/server/realtime/conversation-channels', () => ({
@@ -282,6 +294,7 @@ beforeEach(() => {
   assistantMock.openInvolvement.mockResolvedValue({ id: 'assistant_involvement_1' })
   getMessengerConfig.mockResolvedValue({ assistant: { respond: true, name: 'Quinn' } })
   mockEnforceAiTokenBudget.mockResolvedValue(undefined)
+  mockRequireEntitlement.mockResolvedValue(undefined)
   mockIsFeatureEnabled.mockResolvedValue(false)
   mockGetLiveWorkflowReferencedAttributeKeys.mockResolvedValue(new Set())
   mockClassifyConversationAttributes.mockResolvedValue([])
@@ -325,6 +338,25 @@ describe('runAssistantTurnForConversation gate', () => {
     assistantMock.isAssistantConfigured.mockReturnValue(false)
     await runAssistantTurnForConversation(CONV)
     expect(assistantMock.runAssistantTurn).not.toHaveBeenCalled()
+  })
+
+  it('does not run when the workspace is not entitled to the AI assistant', async () => {
+    const { EntitlementRequiredError } = await import('@/lib/server/errors/entitlement-error')
+    mockRequireEntitlement.mockRejectedValue(
+      new EntitlementRequiredError({
+        entitlement: 'aiAssistant',
+        friendly: 'The AI assistant',
+        friendlyIsPlural: false,
+        requiredPlanArticle: 'a',
+        currentPlan: 'free',
+        currentPlanName: 'Free',
+        requiredPlan: 'growth',
+        requiredPlanName: 'Growth',
+      })
+    )
+    await runAssistantTurnForConversation(CONV)
+    expect(assistantMock.runAssistantTurn).not.toHaveBeenCalled()
+    expect(assistantMock.ensureAssistantPrincipal).not.toHaveBeenCalled()
   })
 
   it('stays silent after a handoff even before the first teammate reply', async () => {
@@ -464,13 +496,12 @@ describe('runAssistantTurnForConversation escalation dispatch', () => {
       senderType: 'agent',
       content: 'I am connecting you with a teammate now.',
     })
-    expect(
-      updateSets.some(
-        (s) =>
-          (s.customAttributes as Record<string, unknown> | undefined)
-            ?.assistant_escalation_reason === 'low_confidence'
-      )
-    ).toBe(true)
+    expect(mockSetConversationAttribute).toHaveBeenCalledWith(
+      { conversationId: CONV },
+      'assistant_escalation_reason',
+      'low_confidence',
+      'ai'
+    )
   })
 
   it('threads the active involvement id and the latest customer message id into the engine', async () => {
@@ -623,13 +654,12 @@ describe('runAssistantTurnForConversation activity snapshot (Redis mirror)', () 
       'system_error'
     )
     expect(mockAppendAssistantHandoffNote).not.toHaveBeenCalled()
-    expect(
-      updateSets.some(
-        (s) =>
-          (s.customAttributes as Record<string, unknown> | undefined)
-            ?.assistant_escalation_reason === 'system_error'
-      )
-    ).toBe(true)
+    expect(mockSetConversationAttribute).toHaveBeenCalledWith(
+      { conversationId: CONV },
+      'assistant_escalation_reason',
+      'system_error',
+      'ai'
+    )
     expect(mockClearActivitySnapshot).toHaveBeenCalledWith(CONV)
   })
 
@@ -672,16 +702,6 @@ describe('runAssistantTurnForConversation activity snapshot (Redis mirror)', () 
 })
 
 describe('runAssistantTurnForConversation Phase 2 live attribute re-check', () => {
-  it('never fires when the inboxAi flag is off', async () => {
-    mockIsFeatureEnabled.mockResolvedValue(false)
-    mockGetLiveWorkflowReferencedAttributeKeys.mockResolvedValue(new Set(['issue_type']))
-    assistantMock.runAssistantTurn.mockResolvedValue(answered({}))
-    await runAssistantTurnForConversation(CONV)
-    // The flag gate is checked before the referenced-keys read at all.
-    expect(mockGetLiveWorkflowReferencedAttributeKeys).not.toHaveBeenCalled()
-    expect(mockClassifyConversationAttributes).not.toHaveBeenCalled()
-  })
-
   it('never fires when no live workflow references any AI attribute', async () => {
     mockIsFeatureEnabled.mockResolvedValue(true)
     mockGetLiveWorkflowReferencedAttributeKeys.mockResolvedValue(new Set())
@@ -693,7 +713,7 @@ describe('runAssistantTurnForConversation Phase 2 live attribute re-check', () =
     expect(mockClassifyConversationAttributes).not.toHaveBeenCalled()
   })
 
-  it('fires with trigger live_recheck restricted to the referenced keys when flag on + referenced', async () => {
+  it('fires with trigger live_recheck restricted to the referenced keys when referenced', async () => {
     mockIsFeatureEnabled.mockResolvedValue(true)
     mockGetLiveWorkflowReferencedAttributeKeys.mockResolvedValue(
       new Set(['issue_type', 'sentiment'])

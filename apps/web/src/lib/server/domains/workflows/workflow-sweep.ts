@@ -3,7 +3,7 @@
  * is durable only at wait boundaries, which leaves two stranding modes with
  * no recovery path otherwise: a process crash mid-run leaves a row stuck in
  * state 'running' forever, holding the customer_facing exclusive lock on its
- * conversation; and if Redis was down when a wait was scheduled, or its job
+ * conversation; and if the queue was down when a wait was scheduled, or its job
  * was lost, a 'waiting' row has no timer and never resumes. This module scans
  * for both and reconciles them, plus a third pass (abandoned-journey
  * auto-close) below; workflow-sweep-queue runs it on a repeating timer.
@@ -43,6 +43,7 @@ import { resolveReplyRecipient } from '@/lib/server/domains/conversation/convers
 import { getWorkflowAbandonedAutoCloseSettings } from '@/lib/server/domains/settings/settings.workflows'
 import {
   getWorkflowWaitJob,
+  removeWorkflowWaitJob,
   scheduleWorkflowResume,
   workflowWaitJobId,
   readCursor,
@@ -178,17 +179,16 @@ export async function sweepOrphanedWaitingRuns(now: Date): Promise<number> {
   let rescheduled = 0
   for (const run of candidates) {
     const cursor = readCursor(run)
-    const job = await getWorkflowWaitJob(workflowWaitJobId(run.id, cursor.waitSeq))
+    const waitKey = workflowWaitJobId(run.id, cursor.waitSeq)
+    const job = await getWorkflowWaitJob(waitKey)
     if (job) {
-      const state = await job.getState()
-      if (state !== 'failed' && state !== 'completed') continue
-      // A failed/completed job is retained by removeOnFail/removeOnComplete
-      // (7-day age), so it still occupies its jobId. BullMQ treats
-      // queue.add() with an existing jobId as a no-op, so scheduleWorkflowResume
-      // below (which reuses the same waitSeq-keyed jobId) would silently never
-      // re-enqueue — leaving the run parked until the stale job ages out.
-      // Remove it first to free the id for the fresh resume.
-      await job.remove()
+      if (!job.terminal) continue
+      // A terminal job is retained by the queue's retention window (7 days), so
+      // it still occupies its dedupe key, and enqueueing that key again is a
+      // no-op — scheduleWorkflowResume below reuses the same waitSeq-keyed key,
+      // so it would silently never write, leaving the run parked until the
+      // stale row ages out. Remove it first to free the key for the resume.
+      await removeWorkflowWaitJob(waitKey)
     }
 
     const remainingSeconds = Math.max(0, waitFireTimeMs(run, cursor) - now.getTime()) / 1000
@@ -302,7 +302,7 @@ async function closeIfAbandoned(
   if (!convo || convo.status === 'closed') return
   if (await hasVisitorMessage(conversationId)) return
   if (keepIfEmailCaptured && (await hasCapturedEmail(conversationId))) return
-  await setConversationStatus(conversationId, 'closed', sweepActor())
+  await setConversationStatus(conversationId, 'closed', sweepActor(), undefined, 'auto_closed')
 }
 
 /**
@@ -371,6 +371,33 @@ export async function sweepExpiredInputWaits(now: Date): Promise<number> {
     if (run.conversationId) {
       await closeIfAbandoned(run.conversationId, keepIfEmailCaptured)
     }
+  }
+  return swept
+}
+
+/** Expired `let_assistant_answer` parks resume down the escalated edge. */
+export async function sweepExpiredAssistantWaits(now: Date): Promise<number> {
+  const isExpiredAssistantWait = and(
+    eq(workflowRuns.state, 'waiting'),
+    sql`coalesce(${workflowRuns.cursor}->>'waitKind', 'timer') = 'assistant'`,
+    sql`(${workflowRuns.cursor}->>'expiresAt') IS NOT NULL`,
+    sql`(${workflowRuns.cursor}->>'expiresAt')::timestamptz <= ${now.toISOString()}::timestamptz`
+  )
+  const candidates = await db
+    .select()
+    .from(workflowRuns)
+    .where(isExpiredAssistantWait)
+    .orderBy(asc(workflowRuns.startedAt))
+    .limit(SWEEP_BATCH_SIZE)
+  if (candidates.length === 0) return 0
+
+  const { resumeWorkflowRun } = await import('./workflow.engine')
+  let swept = 0
+  for (const run of candidates) {
+    const resumed = await resumeWorkflowRun(run.id, { assistantOutcome: 'escalated' })
+    if (!resumed) continue
+    await logRunEvent(run.id, run.workflowId, run.subjectPrincipalId, 'swept_assistant_expired')
+    swept++
   }
   return swept
 }
@@ -757,17 +784,26 @@ export async function sweepWorkflowRuns(): Promise<void> {
   const staleCount = await sweepStaleRunningRuns(now)
   const rescheduledCount = await sweepOrphanedWaitingRuns(now)
   const expiredCount = await sweepExpiredInputWaits(now)
+  const assistantExpiredCount = await sweepExpiredAssistantWaits(now)
   const unresponsiveCount = await sweepUnresponsiveConversations(now)
   const slaTimerCount = await sweepSlaTimerTriggers(now)
   if (
     staleCount > 0 ||
     rescheduledCount > 0 ||
     expiredCount > 0 ||
+    assistantExpiredCount > 0 ||
     unresponsiveCount > 0 ||
     slaTimerCount > 0
   ) {
     log.info(
-      { staleCount, rescheduledCount, expiredCount, unresponsiveCount, slaTimerCount },
+      {
+        staleCount,
+        rescheduledCount,
+        expiredCount,
+        assistantExpiredCount,
+        unresponsiveCount,
+        slaTimerCount,
+      },
       'workflow-sweep run complete'
     )
   }

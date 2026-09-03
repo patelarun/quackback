@@ -12,7 +12,9 @@ export type ChangelogAudience = 'public' | 'authenticated'
 export interface ChangelogSettings {
   /** Public visitors vs. signed-in portal users only. */
   audience: ChangelogAudience
-  /** Show the "Changelog" tab in the portal top nav. */
+  /**
+   * @deprecated Ignored at read time. Portal chrome is Portal → Navigation.
+   */
   portalTabEnabled: boolean
   /** Turns off comments + reactions on changelog entries (one toggle, per spec). */
   collaborationDisabled: boolean
@@ -33,8 +35,6 @@ export const DEFAULT_CHANGELOG_SETTINGS: ChangelogSettings = {
 export const changelogSettingsSchema = z
   .object({
     audience: z.enum(['public', 'authenticated']),
-    portalTabEnabled: z.boolean(),
-    collaborationDisabled: z.boolean(),
     autoSubscribe: z.boolean(),
     emailsDisabled: z.boolean(),
   })

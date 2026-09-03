@@ -145,6 +145,7 @@ vi.mock('@/lib/server/db', async (importOriginal) => {
     insert: vi.fn(() => createChainMock()),
     update: vi.fn(() => createChainMock()),
     delete: vi.fn(() => createChainMock()),
+    execute: vi.fn().mockResolvedValue([]),
     transaction: vi.fn(async (fn: (tx: ReturnType<typeof createTx>) => Promise<unknown>) => {
       transactionUsed = true
       const tx = createTx()
@@ -177,6 +178,12 @@ vi.mock('@/lib/server/db', async (importOriginal) => {
   }
 })
 
+// Canonical comment-count bump is covered by the merge db tests. This suite
+// uses fixture ids that are not valid TypeIDs, so skip the helper here.
+vi.mock('@/lib/server/domains/posts/post.merge-ids', () => ({
+  adjustCanonicalCommentCount: vi.fn().mockResolvedValue(undefined),
+}))
+
 // Mock subscriptions
 vi.mock('@/lib/server/domains/subscriptions/subscription.service', () => ({
   subscribeToPost: vi.fn(),
@@ -205,6 +212,10 @@ vi.mock('@/lib/server/domains/settings/settings.service', () => ({
   getPortalConfig: vi.fn().mockResolvedValue({
     moderationDefault: { requireApproval: 'none' },
   }),
+}))
+
+vi.mock('@/lib/server/content/rehost-images', () => ({
+  rehostExternalImages: vi.fn(async (json: unknown) => json),
 }))
 
 const portalActor: Actor = {

@@ -149,9 +149,8 @@ describe('getChangelogSubscriptionStatus', () => {
 
 describe('importChangelogSubscribersFromEmails', () => {
   it('returns all-zero result for an empty input', async () => {
-    const { importChangelogSubscribersFromEmails } = await import(
-      '../changelog-subscription.service'
-    )
+    const { importChangelogSubscribersFromEmails } =
+      await import('../changelog-subscription.service')
 
     const result = await importChangelogSubscribersFromEmails([])
 

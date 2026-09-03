@@ -5,8 +5,8 @@
  * - `gateCopilotAguiRequest`, for the AG-UI streaming routes (copilot.ts,
  *   transform.ts, suggest.ts): `copilot.use` permission -> AG-UI body parse
  *   (`chatParamsFromRequestBody`, with the route's own fields validated off
- *   `forwardedProps` against its zod schema) -> `assertCopilotAvailable` (the
- *   `inboxAi` flag, then the assistant being configured) -> the AI token
+ *   `forwardedProps` against its zod schema) -> `assertCopilotAvailable`
+ *   (the assistant being configured) -> the AI token
  *   budget -> item-scoped viewability (`assertConversationViewable` or
  *   `assertTicketVisible`, whichever the parsed ref carries — unified inbox
  *   §2.9), each already mapped onto the route's error envelope
@@ -17,11 +17,6 @@
  *   wrap the throw shape: its parse and budget steps interleave the shared
  *   steps, so the two share `assertCopilotAvailable` and
  *   `resolveViewableItem` instead of one wrapping the other.
- *
- * sandbox.ts is deliberately NOT a caller: it has no conversation to assert
- * viewability against and gates on a different permission (`settings.manage`,
- * not `copilot.use`), so its shape genuinely differs rather than merely
- * duplicating these.
  */
 import type { z } from 'zod'
 import { chatParamsFromRequestBody } from '@tanstack/ai'
@@ -37,7 +32,6 @@ import {
 // denial vocabulary in play there instead of a restated copy.
 import { isAuthDenialError } from '@/lib/server/functions/auth-errors'
 import { PERMISSIONS } from '@/lib/shared/permissions'
-import { isFeatureEnabled } from '@/lib/server/domains/settings/settings.service'
 // The barrel, not a relative import to assistant.runtime.ts directly: every
 // route test that exercises this gate mocks `isAssistantConfigured` at
 // '@/lib/server/domains/assistant' (the same seam copilot.ts and transform.ts
@@ -50,6 +44,7 @@ import { assertTicketVisible } from '@/lib/server/domains/tickets/ticket.service
 import { NotFoundError } from '@/lib/shared/errors'
 import { enforceAiTokenBudget } from '@/lib/server/domains/settings/tier-enforce'
 import { TierLimitError } from '@/lib/server/errors/tier-limit-error'
+import { EntitlementRequiredError } from '@/lib/server/errors/entitlement-error'
 import { errorResponse, forbiddenResponse } from '@/lib/server/domains/api/responses'
 
 /**
@@ -70,16 +65,12 @@ export class CopilotUnavailableError extends Error {
 }
 
 /**
- * The `inboxAi` flag -> assistant-configured half of the Copilot
- * gate sequence, order load-bearing (the flag is checked first). Permission
- * and item viewability differ per gate shape and stay out of this helper;
- * this covers only the two checks both shapes (`gateCopilotAguiRequest`,
+ * Assistant-configured half of the Copilot gate sequence. Permission and
+ * item viewability differ per gate shape and stay out of this helper; this
+ * covers only the check both shapes (`gateCopilotAguiRequest`,
  * `gateCopilotFn`) run verbatim.
  */
 export async function assertCopilotAvailable(): Promise<void> {
-  if (!(await isFeatureEnabled('inboxAi'))) {
-    throw new CopilotUnavailableError('NOT_FOUND', 'Copilot is not available', 404)
-  }
   if (!isAssistantConfigured()) {
     throw new CopilotUnavailableError('AI_NOT_CONFIGURED', 'The assistant is not configured', 503)
   }
@@ -174,8 +165,7 @@ export interface CopilotAguiEnvelope {
 }
 
 export type CopilotAguiGateResult<T> =
-  | (CopilotGateOk<T> & { agui: CopilotAguiEnvelope })
-  | CopilotGateFailed
+  (CopilotGateOk<T> & { agui: CopilotAguiEnvelope }) | CopilotGateFailed
 
 /**
  * The Response-shaped gate for the AG-UI streaming routes: the body is an
@@ -213,6 +203,32 @@ export async function gateCopilotAguiRequest<
   } catch (err) {
     if (err instanceof CopilotUnavailableError) {
       return { ok: false, response: errorResponse(err.code, err.message, err.statusCode) }
+    }
+    throw err
+  }
+
+  // Plan gate before the budget: whether drafting help is included at all is a
+  // cheaper question than how much of the month's allowance is left, and its
+  // refusal is the one that can name the plan that would grant it. No-op on any
+  // install without a plan, which is every self-hosted one — see
+  // domains/settings/cloud/entitlements.ts.
+  try {
+    const { requireEntitlement } = await import('@/lib/server/domains/settings/cloud/entitlements')
+    await requireEntitlement('aiDrafts')
+  } catch (err) {
+    if (err instanceof EntitlementRequiredError) {
+      // A distinct code from the numeric refusal below, so a client can tell
+      // "buy a bigger plan" apart from "you are over a count"; the details
+      // carry the plan the upgrade prompt needs.
+      return {
+        ok: false,
+        response: errorResponse(
+          'ENTITLEMENT_REQUIRED',
+          err.message,
+          err.statusCode,
+          err.toResponseBody()
+        ),
+      }
     }
     throw err
   }

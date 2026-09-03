@@ -43,8 +43,8 @@ vi.mock('@/lib/server/domains/settings/tier-enforce', () => ({
   enforceAiTokenBudget: (...args: unknown[]) => mockEnforceAiTokenBudget(...args),
 }))
 
-const mockGetSpamFilterConfig = vi.fn(
-  (): Promise<{ trustedSenders: string[] }> => Promise.resolve({ trustedSenders: [] })
+const mockGetSpamFilterConfig = vi.fn((): Promise<{ trustedSenders: string[] }> =>
+  Promise.resolve({ trustedSenders: [] })
 )
 vi.mock('@/lib/server/domains/settings/settings.spam', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/server/domains/settings/settings.spam')>()),

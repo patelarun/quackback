@@ -10,11 +10,7 @@
  */
 
 export type StatusCalcComponentStatus =
-  | 'operational'
-  | 'under_maintenance'
-  | 'degraded_performance'
-  | 'partial_outage'
-  | 'major_outage'
+  'operational' | 'under_maintenance' | 'degraded_performance' | 'partial_outage' | 'major_outage'
 
 export type StatusCalcImpact = 'none' | 'minor' | 'major' | 'critical' | 'maintenance'
 

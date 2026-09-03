@@ -83,7 +83,7 @@ async function extractThemeFromCss(css: string): Promise<PublicServerTheme> {
  * Build the public server config. `enabled: false` means the widget is off
  * for this workspace and callers should serve their disabled variant.
  *
- * Every read below goes through the Redis-cached tenant settings (see
+ * Every read below goes through the Redis-cached workspace settings (see
  * requireSettingsCached / isFeatureEnabled), so a warm request costs a single
  * Redis GET rather than repeated settings-row queries.
  */
@@ -131,18 +131,14 @@ export async function getPublicServerConfig(): Promise<{
     // Fall back to SDK defaults — theme stays empty
   }
 
-  const { isFeatureEnabled } = await import('@/lib/server/domains/settings/settings.service')
-  const visitorAnalytics = await isFeatureEnabled('visitorAnalytics')
-
   return {
     enabled: true,
     config: {
       theme: Object.keys(theme).length > 0 ? theme : undefined,
       tabs: widgetConfig.tabs,
       hmacRequired: widgetConfig.hmacRequired,
-      visitorAnalytics,
-      // The durable device id is only meaningful with analytics on.
-      visitorDeviceTracking: visitorAnalytics && (await isFeatureEnabled('visitorDeviceTracking')),
+      visitorAnalytics: true,
+      visitorDeviceTracking: true,
       launcherGreeting: widgetConfig.launcherGreeting?.trim() || undefined,
       launcherLabel: widgetConfig.launcherLabel?.trim() || undefined,
       position:

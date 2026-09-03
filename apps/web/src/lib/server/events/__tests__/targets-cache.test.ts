@@ -11,16 +11,16 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-// --- Redis cache mocks ---
+// --- Cache mocks ---
 const mockCacheGet = vi.fn()
 const mockCacheSet = vi.fn()
 
-vi.mock('@/lib/server/redis', () => ({
+vi.mock('@/lib/server/cache', () => ({
   cacheGet: (...args: unknown[]) => mockCacheGet(...args),
   cacheSet: (...args: unknown[]) => mockCacheSet(...args),
   cacheDel: vi.fn(),
   CACHE_KEYS: {
-    TENANT_SETTINGS: 'settings:tenant',
+    WORKSPACE_SETTINGS: 'settings:workspace',
     INTEGRATION_MAPPINGS: 'hooks:integration-mappings',
     ACTIVE_WEBHOOKS: 'hooks:webhooks-active',
     SLACK_CHANNELS: 'slack:channels',
@@ -248,7 +248,8 @@ describe('integration hook config', () => {
   }
 
   async function targetsFor(row: Record<string, unknown>) {
-    mockCacheGet.mockResolvedValueOnce([row]).mockResolvedValueOnce([])
+    // Key-based mock — sinks resolve concurrently, so Once-order is a race.
+    cacheByKey({ mappings: [row], webhooks: [] })
     return getHookTargets(makePostCreatedEvent())
   }
 
@@ -277,8 +278,8 @@ describe('integration hook config', () => {
   })
 
   it('forwards organizationName, apiKey, and teamId from stored config', async () => {
-    mockCacheGet
-      .mockResolvedValueOnce([
+    cacheByKey({
+      mappings: [
         mapping({
           integrationType: 'azure_devops',
           integrationConfig: { organizationName: 'acme' },
@@ -294,8 +295,9 @@ describe('integration hook config', () => {
           integrationConfig: { teamId: 'team-1' },
           actionConfig: { channelId: 'ch-1' },
         }),
-      ])
-      .mockResolvedValueOnce([])
+      ],
+      webhooks: [],
+    })
 
     const targets = await getHookTargets(makePostCreatedEvent())
     expect(targets.find((t) => t.type === 'azure_devops')?.config).toMatchObject({

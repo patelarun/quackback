@@ -99,7 +99,9 @@ describe('sanitizeEmailHtml', () => {
   })
 
   it('drops a 2x2 tracking pixel too', () => {
-    const out = sanitizeEmailHtml('<img src="https://track.example.com/open.gif" width="2" height="2">')
+    const out = sanitizeEmailHtml(
+      '<img src="https://track.example.com/open.gif" width="2" height="2">'
+    )
     expect(out).toBe('')
   })
 

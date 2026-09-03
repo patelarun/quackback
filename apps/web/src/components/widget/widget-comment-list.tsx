@@ -7,14 +7,14 @@ import {
   MapPinIcon,
 } from '@heroicons/react/24/solid'
 import { useIntl, FormattedMessage } from 'react-intl'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Avatar } from '@/components/ui/avatar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { TimeAgo } from '@/components/ui/time-ago'
 import { REACTION_EMOJIS } from '@/lib/shared/db-types'
 import { ReactionChip } from '@/components/shared/reaction-chip'
 import { addReactionFn, removeReactionFn } from '@/lib/server/functions/comments'
 import { getWidgetAuthHeaders } from '@/lib/client/widget-auth'
-import { getInitials, cn } from '@/lib/shared/utils'
+import { cn } from '@/lib/shared/utils'
 import { CommentContent } from '@/components/public/comment-content'
 import { RichTextEditor } from '@/components/ui/rich-text-editor'
 import { COMMENT_EDITOR_FEATURES } from '@/components/public/comment-editor-features'
@@ -33,6 +33,7 @@ interface WidgetCommentListProps {
     contentJson: TiptapContent | null,
     parentId: string
   ) => Promise<void>
+  onImageUpload?: (file: File) => Promise<string>
 }
 
 export function WidgetCommentList({
@@ -40,6 +41,7 @@ export function WidgetCommentList({
   pinnedCommentId,
   canComment = false,
   onSubmitComment,
+  onImageUpload,
 }: WidgetCommentListProps) {
   const sortedComments = [...comments].sort((a, b) => {
     if (pinnedCommentId) {
@@ -70,6 +72,7 @@ export function WidgetCommentList({
           depth={0}
           canComment={canComment}
           onSubmitComment={onSubmitComment}
+          onImageUpload={onImageUpload}
         />
       ))}
     </div>
@@ -86,6 +89,7 @@ interface WidgetCommentItemProps {
     contentJson: TiptapContent | null,
     parentId: string
   ) => Promise<void>
+  onImageUpload?: (file: File) => Promise<string>
 }
 
 function WidgetCommentItem({
@@ -94,6 +98,7 @@ function WidgetCommentItem({
   depth,
   canComment,
   onSubmitComment,
+  onImageUpload,
 }: WidgetCommentItemProps) {
   const intl = useIntl()
   const [isCollapsed, setIsCollapsed] = useState(false)
@@ -174,9 +179,7 @@ function WidgetCommentItem({
       >
         <div className="py-1.5">
           <div className="flex items-center gap-1.5">
-            <Avatar className="h-5 w-5 shrink-0 opacity-40">
-              <AvatarFallback className="text-xs">?</AvatarFallback>
-            </Avatar>
+            <Avatar className="h-5 w-5 shrink-0 opacity-40" fallback="?" />
             <span className="text-xs text-muted-foreground/60 italic">
               {comment.isRemovedByTeam ? (
                 <FormattedMessage id="widget.commentList.removed" defaultMessage="[removed]" />
@@ -221,6 +224,7 @@ function WidgetCommentItem({
                   depth={depth + 1}
                   canComment={canComment}
                   onSubmitComment={onSubmitComment}
+                  onImageUpload={onImageUpload}
                 />
               ))}
             </div>
@@ -246,12 +250,12 @@ function WidgetCommentItem({
       >
         {/* Header */}
         <div className="flex items-center gap-1.5">
-          <Avatar className="h-5 w-5 shrink-0">
-            {comment.avatarUrl && (
-              <AvatarImage src={comment.avatarUrl} alt={comment.authorName || ''} />
-            )}
-            <AvatarFallback className="text-xs">{getInitials(comment.authorName)}</AvatarFallback>
-          </Avatar>
+          <Avatar
+            className="h-5 w-5 shrink-0"
+            src={comment.avatarUrl}
+            name={comment.authorName}
+            fallbackClassName="text-xs"
+          />
           <span className="text-xs font-medium text-foreground truncate">{authorName}</span>
           {comment.isTeamMember && (
             <span className="text-[11px] px-1 py-px rounded bg-primary/15 text-primary font-medium shrink-0">
@@ -370,6 +374,7 @@ function WidgetCommentItem({
                   borderless
                   minHeight="44px"
                   features={COMMENT_EDITOR_FEATURES}
+                  onImageUpload={onImageUpload}
                   disabled={isSubmitting}
                   placeholder={intl.formatMessage(
                     {

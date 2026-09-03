@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useIntl, FormattedMessage } from 'react-intl'
 import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
 import {
   CalendarIcon,
   ChevronUpIcon,
@@ -23,19 +22,20 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { portalDetailQueries } from '@/lib/client/queries/portal-detail'
 import { StatusDropdown } from '@/components/shared/status-dropdown'
 import { StatusBadge } from '@/components/ui/status-badge'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Avatar } from '@/components/ui/avatar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { TimeAgo } from '@/components/ui/time-ago'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AuthVoteButton } from '@/components/public/auth-vote-button'
 import { AuthorHoverCard } from '@/components/public/author-hover-card'
+import { AdminAuthorHoverCard } from '@/components/admin/admin-author-hover-card'
 import { AuthSubscriptionBell } from '@/components/public/auth-subscription-bell'
 import {
   VotersAvatarStack,
   type VotersQuerySource,
 } from '@/components/admin/feedback/voters-avatar-stack'
-import { cn, getInitials, formatMonthYear } from '@/lib/shared/utils'
+import { cn, formatMonthYear } from '@/lib/shared/utils'
 import type { PostStatusEntity } from '@/lib/shared/db-types'
 import type { OwnerRef } from '@/lib/server/functions/post-owner-context'
 import type { PostId, PostStatusId, PostTagId, BoardId, PrincipalId } from '@quackback/ids'
@@ -676,12 +676,12 @@ export function MetadataSidebar({
                 >
                   {owner ? (
                     <>
-                      <Avatar className="h-5 w-5">
-                        {owner.avatarUrl && <AvatarImage src={owner.avatarUrl} alt={owner.name} />}
-                        <AvatarFallback className="text-xs">
-                          {getInitials(owner.name)}
-                        </AvatarFallback>
-                      </Avatar>
+                      <Avatar
+                        className="h-5 w-5"
+                        src={owner.avatarUrl}
+                        name={owner.name}
+                        fallbackClassName="text-xs"
+                      />
                       <span className="truncate text-foreground">{owner.name}</span>
                     </>
                   ) : (
@@ -729,10 +729,12 @@ export function MetadataSidebar({
                           'transition-all duration-100 text-start font-medium'
                         )}
                       >
-                        <Avatar className="h-5 w-5 shrink-0">
-                          {m.avatarUrl && <AvatarImage src={m.avatarUrl} alt={m.name} />}
-                          <AvatarFallback className="text-xs">{getInitials(m.name)}</AvatarFallback>
-                        </Avatar>
+                        <Avatar
+                          className="h-5 w-5 shrink-0"
+                          src={m.avatarUrl}
+                          name={m.name}
+                          fallbackClassName="text-xs"
+                        />
                         <span className="flex-1 truncate">{m.name}</span>
                         {owner?.principalId === m.principalId && (
                           <CheckIcon className="h-3.5 w-3.5 text-primary shrink-0" />
@@ -875,53 +877,33 @@ export function MetadataSidebar({
             </span>
           </div>
           {canEdit && authorPrincipalId ? (
-            <Link
-              to="/admin/users"
-              search={{ selected: authorPrincipalId }}
-              className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
-            >
-              <Avatar className="h-5 w-5">
-                {authorAvatarUrl && (
-                  <AvatarImage
-                    src={authorAvatarUrl}
-                    alt={
-                      authorName ||
-                      intl.formatMessage({
-                        id: 'portal.postDetail.metadata.authorFallback',
-                        defaultMessage: 'Anonymous',
-                      })
-                    }
-                  />
-                )}
-                <AvatarFallback className="text-xs">{getInitials(authorName)}</AvatarFallback>
-              </Avatar>
-              <span className="text-sm font-medium text-foreground underline decoration-muted-foreground/30 underline-offset-2">
-                {authorName ||
-                  intl.formatMessage({
-                    id: 'portal.postDetail.metadata.authorFallback',
-                    defaultMessage: 'Anonymous',
-                  })}
+            <AdminAuthorHoverCard principalId={authorPrincipalId} displayName={authorName}>
+              <span className="inline-flex items-center gap-1.5">
+                <Avatar
+                  className="h-5 w-5"
+                  src={authorAvatarUrl}
+                  name={authorName}
+                  fallbackClassName="text-xs"
+                />
+                <span className="text-sm font-medium text-foreground underline decoration-muted-foreground/30 underline-offset-2">
+                  {authorName ||
+                    intl.formatMessage({
+                      id: 'portal.postDetail.metadata.authorFallback',
+                      defaultMessage: 'Anonymous',
+                    })}
+                </span>
               </span>
-            </Link>
+            </AdminAuthorHoverCard>
           ) : (
             (() => {
               const authorRow = (
                 <div className="flex items-center gap-1.5">
-                  <Avatar className="h-5 w-5">
-                    {authorAvatarUrl && (
-                      <AvatarImage
-                        src={authorAvatarUrl}
-                        alt={
-                          authorName ||
-                          intl.formatMessage({
-                            id: 'portal.postDetail.metadata.authorFallback',
-                            defaultMessage: 'Anonymous',
-                          })
-                        }
-                      />
-                    )}
-                    <AvatarFallback className="text-xs">{getInitials(authorName)}</AvatarFallback>
-                  </Avatar>
+                  <Avatar
+                    className="h-5 w-5"
+                    src={authorAvatarUrl}
+                    name={authorName}
+                    fallbackClassName="text-xs"
+                  />
                   <span className="text-sm font-medium text-foreground">
                     {authorName ||
                       intl.formatMessage({

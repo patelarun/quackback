@@ -10,8 +10,7 @@
  * to the conversation/ticket itself and never opens or touches an
  * assistant_involvements row: those side effects live entirely in
  * assistant.orchestrator.ts's runAssistantTurnForConversation, which this
- * route never calls; it calls the runtime seam directly, exactly as the
- * admin sandbox does.
+ * route never calls; it calls the runtime seam directly.
  *
  * WIRE: TanStack AI's AG-UI protocol. The client (useChat) POSTs a
  * `RunAgentInput` — its accumulated message history plus `forwardedProps`
@@ -24,8 +23,8 @@
  * stream with a coded RUN_ERROR frame instead.
  *
  * ACTION tools are forced to `writeToolPolicy: 'propose'` (see
- * `resolveEffectiveToolMode`) regardless of the assistantTools setting and
- * each tool's configured mode: a copilot turn is a teammate asking Quinn a
+ * `resolveEffectiveToolMode`) regardless of each tool's configured mode:
+ * a copilot turn is a teammate asking Quinn a
  * question about the conversation, never Quinn acting in it directly, so a
  * write-tool call turns into a pending-approval proposal instead of running
  * for real (P2-C.4, "act-on-approval"). This includes metadata writes such as
@@ -38,10 +37,10 @@
  * `proposedActions` on the final payload mirrors what got proposed, straight
  * off the tool context's ledger.
  *
- * Gated on `copilot.use` (the authz matrix picks this up automatically) and
- * the `inboxAi` flag. The shared gate sequence (permission -> AG-UI body parse
- * -> flag -> configured -> token budget -> item-viewable) lives in
- * copilot-gate.ts (`gateCopilotAguiRequest`), alongside transform.ts.
+ * Gated on `copilot.use` (the authz matrix picks this up automatically).
+ * The shared gate sequence (permission -> AG-UI body parse -> configured ->
+ * token budget -> item-viewable) lives in copilot-gate.ts
+ * (`gateCopilotAguiRequest`), alongside transform.ts.
  */
 import { createFileRoute } from '@tanstack/react-router'
 import { toServerSentEventsResponse } from '@tanstack/ai'
@@ -98,9 +97,9 @@ export async function handleCopilot({ request }: { request: Request }): Promise<
   if (!gate.ok) return gate.response
   const { auth, parsed, conversationId, ticketId, agui } = gate
 
-  // Copilot Q&A capability gate (v3 config). Layered past inboxAi: a 404
-  // NOT_FOUND shape, one config knob up. A workspace can keep Copilot's
-  // identity while turning its Q&A off.
+  // Copilot Q&A capability gate (v3 config). A 404 NOT_FOUND shape, one
+  // config knob up. A workspace can keep Copilot's identity while turning
+  // its Q&A off.
   if (!(await isCopilotCapabilityEnabled('qa'))) {
     return errorResponse('NOT_FOUND', 'Copilot Q&A is not available', 404)
   }

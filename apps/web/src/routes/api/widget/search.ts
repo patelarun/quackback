@@ -6,7 +6,7 @@ import {
   widgetJsonError,
   enforceWidgetQuota,
 } from '@/lib/server/widget/public-endpoint'
-import { readSettings } from '@/lib/server/functions/workspace'
+import { getSettings } from '@/lib/server/functions/workspace'
 import { logger } from '@/lib/server/logger'
 
 const log = logger.child({ component: 'widget-search' })
@@ -15,11 +15,11 @@ export const Route = createFileRoute('/api/widget/search')({
   server: {
     handlers: {
       GET: async ({ request }) => {
-        const settings = await readSettings()
+        const settings = await getSettings()
         if (!settings) return widgetJsonError(503, 'WORKSPACE_UNAVAILABLE', 'Workspace unavailable')
         const limited = await enforceWidgetQuota(request, {
           keyPrefix: 'widget-search',
-          tenantId: settings.id,
+          workspaceKey: settings.id,
           limit: 60,
           windowSeconds: 60,
           message: 'Too many searches, slow down',

@@ -10,6 +10,31 @@ import type { PrincipalId } from '@quackback/ids'
 import { getPublicUrlOrNull } from '@/lib/server/storage/s3'
 import type { ConversationAuthorDTO } from '@/lib/shared/conversation/types'
 
+/**
+ * Display URL: the public URL of an uploaded key, else an OAuth/external URL.
+ * An upload is the user's explicit choice (saveAvatarKeyFn sets the key
+ * without clearing `image`; removing the avatar clears only the key), so it
+ * must win over the provider picture — the same precedence as fetchUserAvatar
+ * and the admin sidebar.
+ *
+ * User-row fields beat the principal mirror: `principal.avatar_*` drifts on
+ * rows that pre-date syncPrincipalProfile being wired into every upload path.
+ */
+export function resolveUserAvatarUrl(opts: {
+  userImage?: string | null
+  userImageKey?: string | null
+  principalAvatarUrl?: string | null
+  principalAvatarKey?: string | null
+}): string | null {
+  return (
+    getPublicUrlOrNull(opts.userImageKey) ??
+    getPublicUrlOrNull(opts.principalAvatarKey) ??
+    opts.userImage ??
+    opts.principalAvatarUrl ??
+    null
+  )
+}
+
 /** Batch-load principal display info, returning a lookup map. */
 export async function loadAuthors(
   ids: ReadonlyArray<PrincipalId | null | undefined>
@@ -18,8 +43,8 @@ export async function loadAuthors(
   const map = new Map<PrincipalId, ConversationAuthorDTO>()
   if (unique.length === 0) return map
   // Resolve the avatar from the linked user (the canonical source, like the
-  // team-member list): an external image URL, or the public URL of an uploaded
-  // avatar (stored only as an S3 key), falling back to the principal's synced
+  // team-member list): the public URL of an uploaded avatar (stored only as an
+  // S3 key), else an external image URL, falling back to the principal's synced
   // copy. principal.avatarUrl alone is not reliably kept in sync, so agents
   // whose avatar lives only on the user row would otherwise show initials.
   const rows = await db
@@ -27,6 +52,7 @@ export async function loadAuthors(
       id: principal.id,
       displayName: principal.displayName,
       avatarUrl: principal.avatarUrl,
+      avatarKey: principal.avatarKey,
       userImage: user.image,
       userImageKey: user.imageKey,
     })
@@ -37,7 +63,12 @@ export async function loadAuthors(
     map.set(row.id, {
       principalId: row.id,
       displayName: row.displayName ?? null,
-      avatarUrl: row.userImage ?? getPublicUrlOrNull(row.userImageKey) ?? row.avatarUrl ?? null,
+      avatarUrl: resolveUserAvatarUrl({
+        userImage: row.userImage,
+        userImageKey: row.userImageKey,
+        principalAvatarUrl: row.avatarUrl,
+        principalAvatarKey: row.avatarKey,
+      }),
     })
   }
   return map

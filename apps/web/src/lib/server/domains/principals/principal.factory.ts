@@ -35,12 +35,30 @@ import {
 import { generateId, type PrincipalId, type RoleId, type UserId } from '@quackback/ids'
 import { isTeamMember, type Role, type PrincipalType } from '@/lib/shared/roles'
 import { presetForLegacyRole } from '@/lib/shared/permissions'
-import { cacheDel, CACHE_KEYS } from '@/lib/server/redis'
+import { cacheDel, CACHE_KEYS } from '@/lib/server/cache'
 import { addPrincipalToDefaultTeam } from '@/lib/server/domains/teams'
 import { ForbiddenError } from '@/lib/shared/errors'
+import { enqueueMembershipSync } from './membership-sync'
 
 /** The live db or an open transaction — both expose insert/update/query. */
 export type Executor = Database | Transaction
+
+function isTeamSeat(type: string | null | undefined, role: string | null | undefined): boolean {
+  return type === 'user' && isTeamMember(role)
+}
+
+function shouldSyncMembership(args: {
+  type?: string | null
+  fromRole?: string | null
+  toRole: string
+}): boolean {
+  if (args.type === 'service' || args.type === 'anonymous' || args.type === 'support') return false
+  return isTeamMember(args.toRole) || isTeamMember(args.fromRole)
+}
+
+async function noteMembershipChanged(executor?: Executor): Promise<void> {
+  await enqueueMembershipSync(executor && executor !== db ? { executor } : undefined)
+}
 
 /** Address a principal by its id (exact) or by its owning user. */
 export type PrincipalRef = { principalId: PrincipalId } | { userId: UserId }
@@ -100,6 +118,7 @@ export async function createPrincipal(
 ): Promise<Principal> {
   const [created] = await exec.insert(principal).values(toRow(input)).returning()
   await enrollTeamTierInDefaultTeam(created, exec)
+  if (isTeamSeat(created.type, created.role)) await noteMembershipChanged(exec)
   return created
 }
 
@@ -111,6 +130,7 @@ export async function createPrincipals(
   if (inputs.length === 0) return []
   const created = await exec.insert(principal).values(inputs.map(toRow)).returning()
   for (const row of created) await enrollTeamTierInDefaultTeam(row, exec)
+  if (created.some((row) => isTeamSeat(row.type, row.role))) await noteMembershipChanged(exec)
   return created
 }
 
@@ -129,7 +149,8 @@ export interface EnsurePrincipalInput extends ProfileFields {
  * it inserts with `onConflictDoNothing` (the partial unique index on `user_id`
  * is the backstop) and re-reads the winner on a lost race. Returns the existing
  * or newly-created principal plus whether it inserted. Busts the principal cache
- * only when it actually inserts.
+ * only when it actually inserts. An existing row is returned as-is — including
+ * `type='support'` — and is never rewritten to `type='user'`.
  */
 export async function ensurePrincipalForUser(
   input: EnsurePrincipalInput,
@@ -148,6 +169,7 @@ export async function ensurePrincipalForUser(
   if (inserted) {
     await enrollTeamTierInDefaultTeam(inserted, exec)
     await cacheDel(CACHE_KEYS.PRINCIPAL_BY_USER(input.userId))
+    if (isTeamSeat(inserted.type, inserted.role)) await noteMembershipChanged(exec)
     return { principal: inserted, created: true }
   }
 
@@ -250,9 +272,10 @@ export async function setPrincipalRole(
   }
 
   const exec = opts.executor ?? db
+  let current: { type?: string | null; role?: string | null } | undefined
   if (role !== 'admin' && typeof exec.execute === 'function') {
     await exec.execute(sql`SELECT pg_advisory_xact_lock(7061636)`)
-    const current = await exec.query.principal.findFirst({ where: refWhere(ref) })
+    current = await exec.query.principal.findFirst({ where: refWhere(ref) })
     if (current?.type === 'user' && current.role === 'admin') {
       const [row] = await exec
         .select({ count: sql<number>`count(*)` })
@@ -287,20 +310,24 @@ export async function setPrincipalRole(
   // Capability-gated like the lock above: the real db/tx always has delete;
   // the mocked executors in the unit suites opt out.
   const reconcilable = typeof exec.delete === 'function'
-  let target: { id: PrincipalId; role: string } | undefined
+  let target: { id: PrincipalId; role: string; type: string } | undefined
   if (reconcilable) {
     ;[target] = await exec
-      .select({ id: principal.id, role: principal.role })
+      .select({ id: principal.id, role: principal.role, type: principal.type })
       .from(principal)
       .where(whereClause)
       .limit(1)
       .for('update')
+  }
+  if (target?.type === 'support' || current?.type === 'support') {
+    throw new ForbiddenError('SUPPORT_PRINCIPAL', 'Cannot change the role of a support principal')
   }
   await exec.update(principal).set({ role }).where(whereClause)
   // Reconcile only when the role actually changed or an explicit assignment
   // was requested — a redundant same-role save must not clobber an explicit
   // workspace grant (a custom role) with the legacy preset. A guard-filtered
   // no-op update (no target row) reconciles nothing.
+  const roleMoved = !target || target.role !== role || opts.assignRoleId != null
   if (reconcilable && target && (opts.assignRoleId != null || target.role !== role)) {
     await reconcileWorkspaceAssignment(
       exec,
@@ -309,6 +336,11 @@ export async function setPrincipalRole(
       opts.assignRoleId,
       opts.assignGrantedBy
     )
+  }
+  const type = target?.type ?? current?.type
+  const fromRole = target?.role ?? current?.role
+  if (roleMoved && shouldSyncMembership({ type, fromRole, toRole: role })) {
+    await noteMembershipChanged(opts.executor)
   }
   const keys = userId ? [CACHE_KEYS.PRINCIPAL_BY_USER(userId)] : []
   if (!opts.executor) for (const k of keys) await cacheDel(k)

@@ -1,6 +1,7 @@
 import { db, eq, settings } from '@/lib/server/db'
 import { deleteObject } from '@/lib/server/storage/s3'
 import { ValidationError } from '@/lib/shared/errors'
+import { advancedCssRemainder } from '@/lib/shared/theme/generator'
 import { assertNotManaged } from '@/lib/server/config-file/managed-guard'
 import { logger } from '@/lib/server/logger'
 import type { BrandingConfig } from './settings.types'
@@ -75,15 +76,17 @@ export async function updateCustomCss(css: string): Promise<string> {
     if (css.includes('<')) {
       throw new ValidationError('INVALID_CUSTOM_CSS', 'Custom CSS cannot contain the "<" character')
     }
-    // Clearing CSS (empty string) is always allowed so a workspace whose
-    // tier just stopped including custom CSS can wipe it without being
-    // blocked. Anything non-empty hits the feature gate.
-    if (css.trim().length > 0) {
+    const org = await requireSettings()
+    const trimmed = css.trim()
+    // Empty is always allowed so a workspace whose tier just stopped including
+    // custom CSS can wipe it. Stripping generated theme declarations from CSS
+    // already stored is also ungated — that rewrite cannot introduce extra
+    // rules. Any other non-empty write hits the feature gate.
+    if (trimmed.length > 0 && trimmed !== advancedCssRemainder(org.customCss ?? '')) {
       const { assertTierFeature } = await import('./tier-enforce')
       await assertTierFeature('customCss', 'Custom CSS')
     }
 
-    const org = await requireSettings()
     await db.update(settings).set({ customCss: css }).where(eq(settings.id, org.id))
     await invalidateSettingsCache()
     return css
@@ -125,7 +128,8 @@ export async function saveLogoKey(key: string): Promise<{ success: true; key: st
 }
 
 /**
- * Delete logo from S3 and clear the key.
+ * Delete logo from S3 and clear the key. The favicon is derived from the
+ * logo at upload, so removing the logo clears both keys.
  */
 export async function deleteLogoKey(): Promise<{ success: true }> {
   log.info('delete logo key')
@@ -139,8 +143,18 @@ export async function deleteLogoKey(): Promise<{ success: true }> {
         log.warn({ err, logo_key: org.logoKey }, 'failed to delete logo s3 object')
       }
     }
+    if (org.faviconKey) {
+      try {
+        await deleteObject(org.faviconKey)
+      } catch (err) {
+        log.warn({ err, favicon_key: org.faviconKey }, 'failed to delete favicon s3 object')
+      }
+    }
 
-    await db.update(settings).set({ logoKey: null }).where(eq(settings.id, org.id))
+    await db
+      .update(settings)
+      .set({ logoKey: null, faviconKey: null })
+      .where(eq(settings.id, org.id))
     await invalidateSettingsCache()
 
     return { success: true }
@@ -257,64 +271,6 @@ export async function deleteHeaderLogoKey(): Promise<{ success: true }> {
   } catch (error) {
     log.error({ err: error }, 'delete header logo key failed')
     wrapDbError('delete header logo key', error)
-  }
-}
-
-/**
- * Save portal OG image S3 key and delete old image if exists.
- */
-export async function savePortalOgImageKey(key: string): Promise<{ success: true; key: string }> {
-  log.info('save portal og image key')
-  try {
-    const org = await requireSettings()
-
-    if (org.portalOgImageKey) {
-      try {
-        await deleteObject(org.portalOgImageKey)
-      } catch (err) {
-        log.warn(
-          { err, portal_og_image_key: org.portalOgImageKey },
-          'failed to delete old portal og image s3 object'
-        )
-      }
-    }
-
-    await db.update(settings).set({ portalOgImageKey: key }).where(eq(settings.id, org.id))
-    await invalidateSettingsCache()
-
-    return { success: true, key }
-  } catch (error) {
-    log.error({ err: error }, 'save portal og image key failed')
-    wrapDbError('save portal og image key', error)
-  }
-}
-
-/**
- * Delete portal OG image from S3 and clear the key.
- */
-export async function deletePortalOgImageKey(): Promise<{ success: true }> {
-  log.info('delete portal og image key')
-  try {
-    const org = await requireSettings()
-
-    if (org.portalOgImageKey) {
-      try {
-        await deleteObject(org.portalOgImageKey)
-      } catch (err) {
-        log.warn(
-          { err, portal_og_image_key: org.portalOgImageKey },
-          'failed to delete portal og image s3 object'
-        )
-      }
-    }
-
-    await db.update(settings).set({ portalOgImageKey: null }).where(eq(settings.id, org.id))
-    await invalidateSettingsCache()
-
-    return { success: true }
-  } catch (error) {
-    log.error({ err: error }, 'delete portal og image key failed')
-    wrapDbError('delete portal og image key', error)
   }
 }
 

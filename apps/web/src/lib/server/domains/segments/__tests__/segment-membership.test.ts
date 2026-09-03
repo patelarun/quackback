@@ -173,13 +173,11 @@ vi.mock('@/lib/server/db', () => {
     },
     eq: vi.fn((col: ColumnRef, val: string): Condition => ({ kind: 'eq', col: col.__col, val })),
     and: vi.fn((...conditions: Condition[]): Condition => ({ kind: 'and', conditions })),
-    inArray: vi.fn(
-      (col: ColumnRef, vals: readonly string[]): Condition => ({
-        kind: 'in',
-        col: col.__col,
-        vals,
-      })
-    ),
+    inArray: vi.fn((col: ColumnRef, vals: readonly string[]): Condition => ({
+      kind: 'in',
+      col: col.__col,
+      vals,
+    })),
     sql: Object.assign(
       vi.fn((parts: TemplateStringsArray, ..._values: unknown[]) => ({
         kind: 'sql',

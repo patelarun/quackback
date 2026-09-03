@@ -331,6 +331,11 @@ export type OutcomeTaskResolutions = Partial<
   Record<OnboardingOutcome, Record<string, LaunchTaskResolution>>
 >
 
+export interface ActivationMilestones {
+  /** A workspace admin copied a publicly viewable board's distribution link. */
+  publicBoardLinkCopiedAt?: string
+}
+
 export type SetupCompletionSource = 'wizard' | 'managed' | 'legacy'
 
 export interface SetupState {
@@ -343,11 +348,15 @@ export interface SetupState {
   completedAt?: string
   /** ICP outcome for setup and activation personalization. */
   useCase?: OnboardingOutcome
+  /** Cloud owner saved or skipped the optional post-handoff identity polish. */
+  workspaceDetailsSeenAt?: string
   completionSource?: SetupCompletionSource
   /** Set only after the one-time setup-to-activation bridge has been acknowledged. */
   activationHandoffSeenAt?: string
   /** Required tasks may be deferred; optional polish alone may be dismissed. */
   taskResolutions?: OutcomeTaskResolutions
+  /** Product-led activation signals that are not durable domain artifacts. */
+  activationMilestones?: ActivationMilestones
 }
 
 export const DEFAULT_SETUP_STATE: SetupState = {
@@ -436,7 +445,7 @@ function normalizeTaskResolutions(value: unknown): OutcomeTaskResolutions | unde
  * Pure, deterministic V1-to-V2 normalizer. Reads never write; the normalized
  * representation is persisted by the next setup-state mutation.
  *
- * Completed V1 tenants are marked as already having seen the handoff so an
+ * Completed V1 workspaces are marked as already having seen the handoff so an
  * upgrade cannot unexpectedly redirect an established workspace back into
  * onboarding. The epoch fallback is intentionally stable for rows that lack a
  * completion timestamp.
@@ -457,6 +466,10 @@ export function normalizeSetupStateV2(value: unknown): SetupState | null {
       value.completionSource === 'legacy'
         ? value.completionSource
         : undefined
+    const storedMilestones = isRecord(value.activationMilestones)
+      ? value.activationMilestones
+      : undefined
+    const publicBoardLinkCopiedAt = asIsoString(storedMilestones?.publicBoardLinkCopiedAt)
     return {
       version: 2,
       steps: {
@@ -466,11 +479,15 @@ export function normalizeSetupStateV2(value: unknown): SetupState | null {
       },
       ...(asIsoString(value.completedAt) ? { completedAt: value.completedAt as string } : {}),
       ...(useCase ? { useCase } : {}),
+      ...(asIsoString(value.workspaceDetailsSeenAt)
+        ? { workspaceDetailsSeenAt: value.workspaceDetailsSeenAt as string }
+        : {}),
       ...(completionSource ? { completionSource } : {}),
       ...(asIsoString(value.activationHandoffSeenAt)
         ? { activationHandoffSeenAt: value.activationHandoffSeenAt as string }
         : {}),
       ...(taskResolutions ? { taskResolutions } : {}),
+      ...(publicBoardLinkCopiedAt ? { activationMilestones: { publicBoardLinkCopiedAt } } : {}),
     }
   }
 
@@ -531,6 +548,27 @@ export function isOnboardingComplete(setupState: SetupState | null): boolean {
   return Boolean(
     setupState?.steps.core && setupState.steps.workspace && setupState.steps.startingPoint
   )
+}
+
+/**
+ * A managed/provisioned workspace can satisfy {@link isOnboardingComplete}
+ * without the owner ever seeing the "ready — here's what to do next" screen.
+ * The public portal stays open for visitors; this is the admin-only last hop.
+ */
+export function needsActivationHandoff(setupState: SetupState | null): boolean {
+  return isOnboardingComplete(setupState) && !setupState?.activationHandoffSeenAt
+}
+
+/**
+ * Provision can stamp the wizard complete so a public board exists, but the
+ * owner still has to set the workspace name and URL and pick a first goal.
+ * Until they do, send them through the wizard — not the empty board, and not
+ * the "you're ready" handoff.
+ */
+export function needsCloudOnboardingWizard(setupState: SetupState | null): boolean {
+  if (!setupState || setupState.completionSource !== 'managed') return false
+  if (!setupState.workspaceDetailsSeenAt) return true
+  return setupState.steps.startingPoint?.source === 'managed'
 }
 
 // Helper to get typed board settings
@@ -605,9 +643,32 @@ export type ConversationEndReason = (typeof CONVERSATION_END_REASONS)[number]
 // fallback verdict and 'manual' an agent's own filing. A plain-text column
 // whose allowed values live here as the single source of truth for the
 // Spam view's reason badge.
+//
+// The three sender_auth_* values are one family, split because they are three
+// different things to a person deciding whether to release the message:
+//   - sender_auth_failure     the MTA reported DMARC fail under a policy that
+//                             does not ask us to refuse (p=none/quarantine).
+//   - sender_auth_reject      DMARC fail under p=reject, with no validated ARC
+//                             chain. The author domain asked us to refuse it.
+//   - sender_auth_arc_rescued DMARC fail under p=reject, but our MTA validated
+//                             an ARC chain, so an intermediary vouched for a
+//                             message we cannot tie to the From domain
+//                             ourselves. The forwarding-gateway shape, and the
+//                             one most likely to be a real customer.
+// Collapsing them would erase exactly the distinction that tells an agent
+// which quarantined mail is worth releasing.
+//
+// 'mail_loop_suspected' is the same shape of judgement about a different
+// question: the ingest path's guess that this message is one of the workspace's
+// own mails coming back. It badges a message filed rather than destroyed
+// BECAUSE it is a guess — see INBOUND_REFUSAL_CAUSES in the conversation domain
+// for what the guess is made of and why it is retained.
 export const CONVERSATION_SPAM_FILED_BY = [
   'auto_responder',
   'sender_auth_failure',
+  'sender_auth_reject',
+  'sender_auth_arc_rescued',
+  'mail_loop_suspected',
   'burst_rate',
   'ai_classifier',
   'manual',
@@ -622,10 +683,10 @@ export type AgentAvailability = (typeof AGENT_AVAILABILITY_VALUES)[number]
 // The inbound channel a conversation arrived on — kept in sync with the
 // conversations.channel column enum. Widget threads are 'messenger' (ticket
 // intake forms mint messenger-channel backing conversations with source
-// 'ticket_form'); 'email' threads point at their inbound channel account.
-// This keeps one polymorphic conversation object with a channel field, not
-// a per-channel table.
-export const CHANNELS = ['messenger', 'email'] as const
+// 'ticket_form'); 'email' threads point at their inbound channel account;
+// 'github' threads are a connected repository's issues. This keeps one
+// polymorphic conversation object with a channel field, not a per-channel table.
+export const CHANNELS = ['messenger', 'email', 'github'] as const
 export type Channel = (typeof CHANNELS)[number]
 
 // Agent-set conversation priority for inbox triage — kept in sync with the
@@ -876,9 +937,34 @@ export type BlockReplyMetadata =
   | { kind: 'collectReply'; inReplyToMessageId: string; value: string }
   | { kind: 'csat'; inReplyToMessageId: string; rating: number; comment?: string }
 
+/** Outbound delivery of an agent reply onto a thread-addressed channel
+ *  (the customer's GitHub issue, etc.). Pending at insert; sent once the
+ *  provider accepts; failed if the post does not land. Messenger/email
+ *  replies do not carry this. */
+export type ChannelDeliveryStatus = 'pending' | 'sent' | 'failed'
+
+export interface ChannelDelivery {
+  status: ChannelDeliveryStatus
+  channel: Channel
+  /** ISO timestamp of the last status change. */
+  at: string
+  /** Provider-side id once accepted (GitHub issue comment id). */
+  externalId?: string
+  /** Short agent-facing reason when status is failed. */
+  error?: string
+}
+
 export interface ConversationMessageMetadata {
   /** The channel this message arrived through, when not the in-app messenger. */
-  source?: 'email'
+  source?: 'email' | 'github'
+  /** GitHub issue comment REST id, used to dedupe webhook retries. */
+  githubCommentId?: string
+  /** Live outbound status for a thread-addressed channel send. */
+  channelDelivery?: ChannelDelivery
+  /** GitHub issue number for the message's thread, when known. */
+  githubIssueNumber?: string
+  /** Tracker inbound webhook body hash, used to dedupe redelivered status notes. */
+  inboundDeliveryKey?: string
   /** Provider Message-ID for an inbound email, used to dedupe webhook retries. */
   emailMessageId?: string
   /** RFC 5322 threading of an inbound email message: the parent it replied to

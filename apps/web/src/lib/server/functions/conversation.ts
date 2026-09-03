@@ -35,6 +35,7 @@ import {
 import { officeHoursSnapshot } from '@/lib/shared/office-hours'
 import type { ConversationPresence } from '@/lib/shared/conversation/presence'
 import { realEmail } from '@/lib/shared/anonymous-email'
+import { inboxChannelFilterSchema } from '@/lib/shared/channels/inbox-filter'
 import {
   CONVERSATION_STATUSES,
   CONVERSATION_END_REASONS,
@@ -153,6 +154,7 @@ const listConversationsSchema = z.object({
   teamId: z.string().optional(),
   // Inbound source discriminator (e.g. 'widget', 'email').
   source: z.string().max(32).optional(),
+  channel: inboxChannelFilterSchema.optional(),
   // "Waiting" scope: only conversations a customer is currently waiting on.
   waitingOnly: z.boolean().optional(),
   // Inbox ordering; omitted = 'recent'. The canonical list lives in shared
@@ -413,15 +415,16 @@ export const sendConversationMessageFn = createServerFn({ method: 'POST' })
 
 /**
  * The team's availability verdict (live presence + office-hours snapshot),
- * WITHOUT loading the conversation or messages. Tenant-global — no visitor auth
+ * WITHOUT loading the conversation or messages. Workspace-global — no visitor auth
  * needed. The widget polls this to keep the online/offline indicator fresh, and
  * the widget loader calls it server-side to SSR-seed the same value so the first
  * paint matches what the poll reports.
  *
- * The Redis/DB reads stay INSIDE the handler so the server-fn transform strips
- * them — and their transitive `ioredis` import — from the client bundle. A plain
- * exported helper holding these dynamic imports would leak ioredis client-side
- * and break the build, so callers (incl. the loader) must go through this fn.
+ * The database reads stay INSIDE the handler so the server-fn transform strips
+ * them — and their transitive `postgres` import — from the client bundle. A
+ * plain exported helper holding these dynamic imports would leak the database
+ * stack client-side and trip `vite.config.ts`'s import protection, so callers
+ * (incl. the loader) must go through this fn.
  */
 export const getConversationPresenceFn = createServerFn({ method: 'GET' }).handler(
   async (): Promise<ConversationPresence> => {
@@ -441,7 +444,7 @@ export const getConversationPresenceFn = createServerFn({ method: 'GET' }).handl
 )
 
 /**
- * Teammate avatars for the widget Home header cluster. Tenant-global and
+ * Teammate avatars for the widget Home header cluster. Workspace-global and
  * public-safe by construction — the domain query exposes only name + image for
  * genuine teammates (never portal users, anonymous visitors, or service
  * principals), so no visitor auth is needed.
@@ -469,7 +472,7 @@ export const getMyConversationFn = createServerFn({ method: 'GET' })
       await import('@/lib/server/domains/settings/settings.widget')
     const { isConversationsEnabled } =
       await import('@/lib/server/domains/settings/settings.support')
-    const { readSettings } = await import('./workspace')
+    const { getSettings } = await import('./workspace')
     const { isEmailConfigured } = await import('@quackback/email')
     const { canEmailVisitor } = await import('@/lib/shared/conversation/reply-capability')
     const { widgetTranslationFor } = await import('@/lib/shared/widget/translations')
@@ -478,7 +481,7 @@ export const getMyConversationFn = createServerFn({ method: 'GET' })
     const [enabled, messengerConfig, appSettings, widgetConfig] = await Promise.all([
       isConversationsEnabled(),
       getMessengerConfig(),
-      readSettings(),
+      getSettings(),
       getWidgetConfig(),
     ])
     // Per-locale copy override for this visitor's language (base copy is the
@@ -896,6 +899,7 @@ export const listConversationsFn = createServerFn({ method: 'GET' })
         teamId:
           data.teamId && isValidTypeId(data.teamId, 'team') ? (data.teamId as TeamId) : undefined,
         source: data.source,
+        channel: data.channel,
         waitingOnly: data.waitingOnly,
         sort: data.sort,
         search: data.search,
@@ -1011,20 +1015,17 @@ export const getConversationFn = createServerFn({ method: 'GET' })
     // language detection, so the auto-suggest banner has something to
     // compare against. Fire-and-forget (like the summarize-on-close hook,
     // events/process.ts) — this NEVER blocks opening the thread, even when
-    // the flag is on and AI is configured. The DTO below carries whatever
-    // is already stored; a detection that completes during (or after) this
-    // request simply lands on the NEXT read of this conversation.
-    const { isFeatureEnabled } = await import('@/lib/server/domains/settings/settings.service')
-    if (await isFeatureEnabled('inboxAi')) {
-      void import('@/lib/server/domains/conversation/conversation-translation.service')
-        .then((m) => m.maybeDetectCustomerLanguage(conversation))
-        .catch((err) =>
-          log.error(
-            { err, conversation_id: conversation.id },
-            'customer language detection failed to load'
-          )
+    // AI is configured. The DTO below carries whatever is already stored; a
+    // detection that completes during (or after) this request simply lands
+    // on the NEXT read of this conversation.
+    void import('@/lib/server/domains/conversation/conversation-translation.service')
+      .then((m) => m.maybeDetectCustomerLanguage(conversation))
+      .catch((err) =>
+        log.error(
+          { err, conversation_id: conversation.id },
+          'customer language detection failed to load'
         )
-    }
+      )
     const [dto, page] = await Promise.all([
       conversationToDTO(conversation, 'agent'),
       // Agents see internal notes inline. CONVERGENCE PHASE 0: a linked
@@ -1063,8 +1064,7 @@ export const sendAgentMessageFn = createServerFn({ method: 'POST' })
 
     let content = data.content
     let contentJson = (data.contentJson ?? null) as
-      | import('@/lib/shared/db-types').TiptapContent
-      | null
+      import('@/lib/shared/db-types').TiptapContent | null
     let translatedFrom: import('@/lib/shared/db-types').TranslatedFromMetadata | undefined
 
     // P2-D.1 inbox translation: translate the reply into the customer's
@@ -1072,8 +1072,7 @@ export const sendAgentMessageFn = createServerFn({ method: 'POST' })
     // always what the customer should see. `skipTranslation` is the
     // explicit "Send untranslated" fallback a teammate picks after a
     // TRANSLATION_FAILED error — it bypasses this block entirely.
-    const { isFeatureEnabled } = await import('@/lib/server/domains/settings/settings.service')
-    if (!data.skipTranslation && (await isFeatureEnabled('inboxAi'))) {
+    if (!data.skipTranslation) {
       const { resolveOutgoingReplyTranslation } =
         await import('@/lib/server/domains/conversation/conversation-translation.service')
       // Any failure here (AI unconfigured, unparseable/empty response)
@@ -1126,8 +1125,7 @@ export const startAgentConversationFn = createServerFn({ method: 'POST' })
         targetPrincipalId: data.targetPrincipalId as PrincipalId,
         content: data.content,
         contentJson: (data.contentJson ?? null) as
-          | import('@/lib/shared/db-types').TiptapContent
-          | null,
+          import('@/lib/shared/db-types').TiptapContent | null,
       },
       {
         principalId: ctx.principal.id,
@@ -1659,8 +1657,6 @@ export const translateConversationMessagesFn = createServerFn({ method: 'GET' })
   .handler(async ({ data }) => {
     const ctx = await requireAuth({ permission: PERMISSIONS.CONVERSATION_VIEW })
     const actor = await policyActorFromAuth(ctx)
-    const { isFeatureEnabled } = await import('@/lib/server/domains/settings/settings.service')
-    if (!(await isFeatureEnabled('inboxAi'))) return {}
 
     const { assertConversationViewable } =
       await import('@/lib/server/domains/conversation/conversation.service')

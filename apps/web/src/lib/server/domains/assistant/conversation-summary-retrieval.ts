@@ -18,7 +18,7 @@
  * `visitorPrincipalId = <the current conversation's customer>`, always, on
  * every surface. Without it, one customer's support history would leak into
  * another customer's answer, which is a severe breach — worse than getting
- * the audience ceiling wrong, since the mistake crosses tenants' own
+ * the audience ceiling wrong, since the mistake crosses workspaces' own
  * customers rather than merely over-sharing content tier.
  *
  * `retrieveConversationSummaries` enforces this by refusing to run at all
@@ -215,27 +215,25 @@ export const conversationSummariesKnowledgeSource: KnowledgeSource = {
       customerPrincipalId: opts.customerPrincipalId,
       conversationId: opts.conversationId,
     })
-    return rows.map(
-      (r): RetrievedItem => ({
+    return rows.map((r): RetrievedItem => ({
+      id: r.conversationId,
+      sourceType: 'summary' as const,
+      title: PAST_CONVERSATION_TITLE,
+      excerpt: r.summary.slice(0, KNOWLEDGE_SNIPPET_CHARS),
+      score: r.score,
+      updatedAt: r.createdAt.toISOString(),
+      citation: {
+        type: 'summary' as const,
         id: r.conversationId,
-        sourceType: 'summary' as const,
         title: PAST_CONVERSATION_TITLE,
-        excerpt: r.summary.slice(0, KNOWLEDGE_SNIPPET_CHARS),
-        score: r.score,
-        updatedAt: r.createdAt.toISOString(),
-        citation: {
-          type: 'summary' as const,
-          id: r.conversationId,
-          title: PAST_CONVERSATION_TITLE,
-          // No cross-surface-safe URL: unlike a KB article or a post, a past
-          // conversation isn't necessarily viewable from wherever this
-          // citation renders (e.g. the widget), so this stays title-referential
-          // only, like a snippet's.
-          url: '',
-          // Another conversation's content is never customer-facing material.
-          internal: true,
-        },
-      })
-    )
+        // No cross-surface-safe URL: unlike a KB article or a post, a past
+        // conversation isn't necessarily viewable from wherever this
+        // citation renders (e.g. the widget), so this stays title-referential
+        // only, like a snippet's.
+        url: '',
+        // Another conversation's content is never customer-facing material.
+        internal: true,
+      },
+    }))
   },
 }

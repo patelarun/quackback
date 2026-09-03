@@ -231,25 +231,23 @@ export const changelogKnowledgeSource: KnowledgeSource = {
   sourceType: 'changelog',
   async retrieve(query, ceiling) {
     const rows = await retrieveChangelogEntries(query, ceiling)
-    return rows.map(
-      (e): RetrievedItem => ({
+    return rows.map((e): RetrievedItem => ({
+      id: e.id,
+      sourceType: 'changelog' as const,
+      title: e.title,
+      excerpt: e.content.slice(0, KNOWLEDGE_SNIPPET_CHARS),
+      score: e.score,
+      updatedAt: e.updatedAt.toISOString(),
+      citation: {
+        type: 'changelog' as const,
         id: e.id,
-        sourceType: 'changelog' as const,
         title: e.title,
-        excerpt: e.content.slice(0, KNOWLEDGE_SNIPPET_CHARS),
-        score: e.score,
-        updatedAt: e.updatedAt.toISOString(),
-        citation: {
-          type: 'changelog' as const,
-          id: e.id,
-          title: e.title,
-          // Published entries link to the public changelog and stay
-          // customer-visible; drafts/scheduled entries (only reachable at a
-          // team ceiling) link to the admin editor and trip the leak gate.
-          url: e.isPublished ? publicChangelogUrl(e.id) : adminChangelogUrl(e.id),
-          ...(e.isPublished ? {} : { internal: true }),
-        },
-      })
-    )
+        // Published entries link to the public changelog and stay
+        // customer-visible; drafts/scheduled entries (only reachable at a
+        // team ceiling) link to the admin editor and trip the leak gate.
+        url: e.isPublished ? publicChangelogUrl(e.id) : adminChangelogUrl(e.id),
+        ...(e.isPublished ? {} : { internal: true }),
+      },
+    }))
   },
 }

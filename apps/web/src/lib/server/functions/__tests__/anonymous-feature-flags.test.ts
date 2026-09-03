@@ -109,7 +109,6 @@ vi.mock('@/lib/server/domains/statuses/status.service', () => ({
 
 vi.mock('@/lib/server/functions/workspace', () => ({
   getSettings: () => mockGetSettings(),
-  readSettings: () => mockGetSettings(),
 }))
 
 vi.mock('@/lib/server/domains/posts/post.service', () => ({

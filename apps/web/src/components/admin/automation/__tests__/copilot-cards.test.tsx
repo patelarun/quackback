@@ -27,8 +27,8 @@ const config = {
         posts: true,
         pastConversations: true,
         internalNotes: true,
-        tickets: false,
-        changelog: false,
+        tickets: true,
+        changelog: true,
         status: true,
       },
     },
@@ -95,7 +95,7 @@ describe('CopilotKnowledgeCard', () => {
     await screen.findByText('Tickets')
     fireEvent.click(screen.getByLabelText('Use Tickets'))
     await waitFor(() => expect(updateCopilotKnowledge).toHaveBeenCalledTimes(1))
-    expect(updateCopilotKnowledge.mock.calls[0][0].data.knowledge.tickets).toBe(true)
+    expect(updateCopilotKnowledge.mock.calls[0][0].data.knowledge.tickets).toBe(false)
   })
 })
 
@@ -121,7 +121,7 @@ describe('CopilotDeploymentCard', () => {
     expect(screen.getByRole('button', { name: 'Turn off Copilot' })).toBeInTheDocument()
   })
 
-  it('shows Unavailable when the inbox AI gate is off', async () => {
+  it('shows Unavailable when no AI model is configured', async () => {
     renderWithProviders(<CopilotDeploymentCard available={false} />)
     expect(await screen.findByText('Unavailable')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Turn off Copilot' })).not.toBeInTheDocument()

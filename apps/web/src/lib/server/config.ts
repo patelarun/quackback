@@ -12,8 +12,20 @@
 
 import { z } from 'zod'
 import { logger } from '@/lib/server/logger'
+import { getCurrentWorkspace } from '@/lib/server/workspaces/workspace-context'
 
 const log = logger.child({ component: 'config' })
+
+/**
+ * A hostname that is a pattern rather than a host.
+ *
+ * `deploy/railway-template.yml` sets `BASE_URL: https://${{RAILWAY_PUBLIC_DOMAIN}}`,
+ * and the moment a wildcard custom domain is attached that variable becomes the
+ * literal string `*.example.com` (SAAS-HOSTING-STACK.md §9). `new URL()` accepts
+ * it, so nothing downstream complains — it just produces email links, asset URLs
+ * and cookie attributes for a host that does not exist.
+ */
+const WILDCARD_HOST_RE = /[*?]/
 
 // =============================================================================
 // Schema Helpers
@@ -64,68 +76,175 @@ const envInt = z.preprocess(
 // Schema Definition (camelCase property names)
 // =============================================================================
 
-const configSchema = z.object({
-  // Core
-  nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
-  baseUrl: z.string().url(),
-  port: envInt.default(3000),
+const configSchema = z
+  .object({
+    // Core
+    nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
+    baseUrl: z.string().url(),
+    port: envInt.default(3000),
 
-  // Database
-  databaseUrl: z.string().min(1),
-  dbPoolMax: envInt.pipe(z.number().int().min(1).max(100)).optional(),
-  dbIdleTimeout: envInt.pipe(z.number().int().min(1).max(3600)).default(20),
+    // Database
+    //
+    // Optional because a pooled fleet has no fleet-wide database: the workspace
+    // middleware resolves one per request from the Host header. `config.databaseUrl`
+    // throws rather than returning undefined so the ~5 single-workspace callers keep
+    // their `string` type and a pooled misuse is loud.
+    databaseUrl: z.string().min(1).optional(),
+    dbPoolMax: envInt.pipe(z.number().int().min(1).max(100)).optional(),
+    dbIdleTimeout: envInt.pipe(z.number().int().min(1).max(3600)).default(20),
 
-  // Auth
-  secretKey: z.string().min(32, 'SECRET_KEY must be at least 32 characters'),
-  // Rotation grace for OAuth refresh tokens (seconds). 0 disables healing
-  // and restores strict single-use rotation. See auth/refresh-grace.ts.
-  oauthRefreshGraceSeconds: envInt.default(7 * 24 * 60 * 60),
+    // Tenancy (SAAS-HOSTING-STACK.md §6)
+    //
+    // `single` is byte-for-byte today's behaviour: one process, one DATABASE_URL.
+    // `pooled` makes the `db` proxy resolve per request and refuse to serve
+    // without an explicit workspace scope.
+    tenancyMode: z.enum(['single', 'pooled']).default('single'),
+    /** Control-plane Postgres holding cp_workspace_registry / cp_workspace_hostnames. */
+    controlDatabaseUrl: z.string().min(1).optional(),
+    /**
+     * Connections per workspace pool. Small on purpose: a pooled instance holds N
+     * workspace pools, and the fleet pooler multiplexes anyway.
+     */
+    workspacePoolMax: envInt.pipe(z.number().int().min(1).max(20)).default(3),
+    /**
+     * Seconds a workspace pool may sit idle before it is closed. Must stay below
+     * BOTH the database suspend timeout (300s default) and Railway's 10-minute
+     * outbound-traffic sleep window, or an idle workspace costs compute forever.
+     */
+    workspacePoolIdleSeconds: envInt.pipe(z.number().int().min(5).max(600)).default(45),
+    /** LRU cap on live workspace pools per instance. */
+    workspacePoolMaxEntries: envInt.pipe(z.number().int().min(1).max(500)).default(50),
+    /** TTL for the in-process hostname → workspace record cache, milliseconds. */
+    workspaceRegistryTtlMs: envInt.pipe(z.number().int().min(0).max(600_000)).default(30_000),
+    /**
+     * The fleet root from which every workspace's `SECRET_KEY` is derived and every
+     * workspace's storage credential is sealed (`tenancy/vendor/fleet-secrets.ts`).
+     *
+     * Belongs in a sealed platform variable, never in a workspace record. The 32-char
+     * floor is enforced here as well as in the crypto because HKDF will stretch a
+     * short root into something indistinguishable from a real key, so nothing
+     * downstream can tell — the check has to happen where the value enters.
+     */
+    fleetRootKey: z
+      .string()
+      .min(32, 'QUACKBACK_FLEET_ROOT_KEY must be at least 32 characters')
+      .optional(),
 
-  // Redis (BullMQ background jobs)
-  redisUrl: z.string().min(1),
-  trustedProxyHops: envInt.pipe(z.number().int().min(0).max(10)).default(0),
+    // Auth
+    secretKey: z.string().min(32, 'SECRET_KEY must be at least 32 characters'),
+    // Rotation grace for OAuth refresh tokens (seconds). 0 disables healing
+    // and restores strict single-use rotation. See auth/refresh-grace.ts.
+    oauthRefreshGraceSeconds: envInt.default(7 * 24 * 60 * 60),
 
-  // Email (all optional)
-  emailFrom: z.string().optional(),
-  emailSmtpHost: z.string().optional(),
-  emailSmtpPort: envInt.optional(),
-  emailSmtpUser: z.string().optional(),
-  emailSmtpPass: z.string().optional(),
-  emailSmtpSecure: envBoolean,
-  emailResendApiKey: z.string().optional(),
+    trustedProxyHops: envInt.pipe(z.number().int().min(0).max(10)).default(0),
 
-  // S3 (optional)
-  s3Endpoint: z.string().optional(),
-  s3Bucket: z.string().optional(),
-  s3Region: z.string().optional(),
-  s3AccessKeyId: z.string().optional(),
-  s3SecretAccessKey: z.string().optional(),
-  s3ForcePathStyle: envBoolean,
-  s3PublicUrl: z.string().optional(),
-  s3Proxy: envBoolean,
+    // Email (all optional)
+    emailFrom: z.string().optional(),
+    emailSmtpHost: z.string().optional(),
+    emailSmtpPort: envInt.optional(),
+    emailSmtpUser: z.string().optional(),
+    emailSmtpPass: z.string().optional(),
+    emailSmtpSecure: envBoolean,
+    /** Credential for the inbound body fetch, not for sending. */
+    emailResendApiKey: z.string().optional(),
+    /**
+     * SES sending credentials. Deliberately not named `AWS_*` or `S3_*`: the
+     * object-storage keys below are a different principal against a different
+     * service, and a deployment that reused one for the other would
+     * authenticate successfully against the wrong account.
+     */
+    emailSesAccessKeyId: z.string().optional(),
+    emailSesSecretAccessKey: z.string().optional(),
+    /** Region the sending identity is verified in. Never defaulted: a verified
+     *  identity is regional, so a guess has every send rejected. */
+    emailSesRegion: z.string().optional(),
+    /** Configuration set applied to each send. Absent for a self-hoster. */
+    emailSesConfigurationSet: z.string().optional(),
+    /**
+     * SES credentials for VERIFYING a customer-owned sending domain. A
+     * different principal from the sending pair above with a different grant:
+     * creating identities consumes an account-wide quota, and the send path has
+     * no business carrying that. Absent on an install that offers no
+     * customer-owned sending domains, which refuses the feature by name rather
+     * than falling back to the sending credential.
+     */
+    emailSesIdentityAccessKeyId: z.string().optional(),
+    emailSesIdentitySecretAccessKey: z.string().optional(),
 
-  // AI (optional)
-  openaiApiKey: z.string().optional(),
-  openaiBaseUrl: z.string().optional(),
-  aiChatModel: z.string().optional(),
-  aiEmbeddingModel: z.string().optional(),
-  aiSummaryModel: z.string().optional(),
-  aiSentimentModel: z.string().optional(),
-  aiExtractionModel: z.string().optional(),
-  aiQualityGateModel: z.string().optional(),
-  aiInterpretationModel: z.string().optional(),
-  aiMergeModel: z.string().optional(),
-  aiHelpCenterModel: z.string().optional(),
-  aiHelpCenterTranslateModel: z.string().optional(),
-  aiAssistantModel: z.string().optional(),
-  aiAssistantVision: z.string().optional(),
-  aiInboxTranslationModel: z.string().optional(),
-  aiClassificationModel: z.string().optional(),
-  aiRequireParameters: envBoolean,
+    // S3 (optional)
+    s3Endpoint: z.string().optional(),
+    s3Bucket: z.string().optional(),
+    s3Region: z.string().optional(),
+    s3AccessKeyId: z.string().optional(),
+    s3SecretAccessKey: z.string().optional(),
+    s3ForcePathStyle: envBoolean,
+    s3PublicUrl: z.string().optional(),
+    s3Proxy: envBoolean,
 
-  // Telemetry (optional)
-  disableTelemetry: envBoolean,
-})
+    // AI (optional)
+    openaiApiKey: z.string().optional(),
+    openaiBaseUrl: z.string().optional(),
+    aiChatModel: z.string().optional(),
+    aiEmbeddingModel: z.string().optional(),
+    aiSummaryModel: z.string().optional(),
+    aiSentimentModel: z.string().optional(),
+    aiExtractionModel: z.string().optional(),
+    aiQualityGateModel: z.string().optional(),
+    aiInterpretationModel: z.string().optional(),
+    aiMergeModel: z.string().optional(),
+    aiHelpCenterModel: z.string().optional(),
+    aiHelpCenterTranslateModel: z.string().optional(),
+    aiAssistantModel: z.string().optional(),
+    aiAssistantVision: z.string().optional(),
+    aiInboxTranslationModel: z.string().optional(),
+    aiClassificationModel: z.string().optional(),
+    aiRequireParameters: envBoolean,
+    aiReasoningExclude: envBoolean,
+
+    // Telemetry (optional)
+    disableTelemetry: envBoolean,
+  })
+  .superRefine((cfg, ctx) => {
+    // A wildcard is a routing pattern, never an origin. Refused in every mode:
+    // there is no deployment in which `https://*.example.com` is a usable base
+    // URL, and the symptom of accepting one is a dead link in a customer's
+    // inbox rather than an error anyone sees (SAAS-HOSTING-STACK.md §9).
+    if (WILDCARD_HOST_RE.test(cfg.baseUrl)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['baseUrl'],
+        message:
+          `BASE_URL is ${cfg.baseUrl}, which is a wildcard pattern rather than an origin. ` +
+          'Once a wildcard custom domain is attached, RAILWAY_PUBLIC_DOMAIN becomes ' +
+          '`*.example.com`; under QUACKBACK_TENANCY=pooled the per-request origin comes ' +
+          'from the workspace record, so set BASE_URL to a real fleet hostname.',
+      })
+    }
+
+    // Exactly one database story per mode. A pooled fleet with a stray
+    // DATABASE_URL is the dangerous shape — a missing workspace scope would
+    // silently connect somewhere real — so pooled mode refuses to boot with one.
+    if (cfg.tenancyMode === 'single' && !cfg.databaseUrl) {
+      ctx.addIssue({ code: 'custom', path: ['databaseUrl'], message: 'DATABASE_URL is required' })
+    }
+    if (cfg.tenancyMode === 'pooled') {
+      if (!cfg.controlDatabaseUrl) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['controlDatabaseUrl'],
+          message: 'QUACKBACK_CONTROL_DATABASE_URL is required when QUACKBACK_TENANCY=pooled',
+        })
+      }
+      if (cfg.databaseUrl) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['databaseUrl'],
+          message:
+            'DATABASE_URL must be unset when QUACKBACK_TENANCY=pooled — the database is resolved per request',
+        })
+      }
+    }
+  })
 
 type Config = z.infer<typeof configSchema>
 
@@ -144,16 +263,23 @@ function buildConfigFromEnv(): unknown {
     port: env('PORT'),
 
     // Database
-    databaseUrl: process.env.DATABASE_URL,
+    databaseUrl: env('DATABASE_URL'),
     dbPoolMax: env('DB_POOL_MAX'),
     dbIdleTimeout: env('DB_IDLE_TIMEOUT'),
+
+    // Tenancy
+    tenancyMode: env('QUACKBACK_TENANCY'),
+    controlDatabaseUrl: env('QUACKBACK_CONTROL_DATABASE_URL'),
+    workspacePoolMax: env('WORKSPACE_POOL_MAX'),
+    workspacePoolIdleSeconds: env('WORKSPACE_POOL_IDLE_SECONDS'),
+    workspacePoolMaxEntries: env('WORKSPACE_POOL_MAX_ENTRIES'),
+    workspaceRegistryTtlMs: env('WORKSPACE_REGISTRY_TTL_MS'),
+    fleetRootKey: env('QUACKBACK_FLEET_ROOT_KEY'),
 
     // Auth
     secretKey: process.env.SECRET_KEY,
     oauthRefreshGraceSeconds: env('OAUTH_REFRESH_GRACE_SECONDS'),
 
-    // Redis
-    redisUrl: process.env.REDIS_URL,
     trustedProxyHops: env('TRUSTED_PROXY_HOPS'),
 
     // Email
@@ -164,6 +290,12 @@ function buildConfigFromEnv(): unknown {
     emailSmtpPass: env('EMAIL_SMTP_PASS'),
     emailSmtpSecure: env('EMAIL_SMTP_SECURE'),
     emailResendApiKey: env('EMAIL_RESEND_API_KEY'),
+    emailSesAccessKeyId: env('EMAIL_SES_ACCESS_KEY_ID'),
+    emailSesSecretAccessKey: env('EMAIL_SES_SECRET_ACCESS_KEY'),
+    emailSesRegion: env('EMAIL_SES_REGION'),
+    emailSesConfigurationSet: env('EMAIL_SES_CONFIGURATION_SET'),
+    emailSesIdentityAccessKeyId: env('EMAIL_SES_IDENTITY_ACCESS_KEY_ID'),
+    emailSesIdentitySecretAccessKey: env('EMAIL_SES_IDENTITY_SECRET_ACCESS_KEY'),
 
     // S3
     s3Endpoint: env('S3_ENDPOINT'),
@@ -193,6 +325,7 @@ function buildConfigFromEnv(): unknown {
     aiInboxTranslationModel: env('AI_INBOX_TRANSLATION_MODEL'),
     aiClassificationModel: env('AI_CLASSIFICATION_MODEL'),
     aiRequireParameters: env('AI_REQUIRE_PARAMETERS'),
+    aiReasoningExclude: env('AI_REASONING_EXCLUDE'),
 
     // Telemetry
     disableTelemetry: env('DISABLE_TELEMETRY'),
@@ -249,14 +382,69 @@ export const config = {
   get nodeEnv() {
     return loadConfig().nodeEnv
   },
+  /**
+   * The origin this request belongs to.
+   *
+   * Under pooled tenancy the fleet has no single origin: one process serves
+   * many hostnames, and `BASE_URL` is the platform's own domain. Every absolute
+   * URL the app produces resolves from here — email links, asset URLs,
+   * `__QUACKBACK_URL__` in the widget SDK, OAuth callbacks, the MCP resource
+   * metadata — as do better-auth's `trustedOrigins` and the cookie `secure`
+   * flag. So a fleet-wide value means **every workspace emails links to another
+   * workspace's hostname** (SAAS-HOSTING-STACK.md §9).
+   *
+   * The workspace record's `routing.baseUrl` is the answer, and it is already
+   * pinned to the workspace's primary hostname and validated to carry no path,
+   * query or wildcard. Resolving it here rather than at ~56 call sites is
+   * deliberate: a per-call-site fix is a list that goes stale on the next
+   * absolute URL anyone writes.
+   *
+   * Outside a workspace scope (single-workspace installs, boot, fleet paths) this is
+   * `BASE_URL` exactly as before.
+   */
   get baseUrl() {
-    return loadConfig().baseUrl
+    return getCurrentWorkspace()?.routing.baseUrl ?? loadConfig().baseUrl
   },
   get port() {
     return loadConfig().port
   },
+  /**
+   * The fleet-wide database. Throws under pooled tenancy, where there is no
+   * such thing — every caller must go through the request's workspace scope.
+   */
   get databaseUrl() {
-    return loadConfig().databaseUrl
+    const url = loadConfig().databaseUrl
+    if (!url) {
+      throw new Error(
+        'DATABASE_URL is not configured. Under QUACKBACK_TENANCY=pooled the database is ' +
+          'resolved per request from the workspace registry; use the workspace scope instead.'
+      )
+    }
+    return url
+  },
+  get tenancyMode() {
+    return loadConfig().tenancyMode
+  },
+  get isPooledTenancy() {
+    return loadConfig().tenancyMode === 'pooled'
+  },
+  get controlDatabaseUrl() {
+    return loadConfig().controlDatabaseUrl
+  },
+  get workspacePoolMax() {
+    return loadConfig().workspacePoolMax
+  },
+  get workspacePoolIdleSeconds() {
+    return loadConfig().workspacePoolIdleSeconds
+  },
+  get workspacePoolMaxEntries() {
+    return loadConfig().workspacePoolMaxEntries
+  },
+  get workspaceRegistryTtlMs() {
+    return loadConfig().workspaceRegistryTtlMs
+  },
+  get fleetRootKey() {
+    return loadConfig().fleetRootKey
   },
   get dbPoolMax() {
     const configured = loadConfig().dbPoolMax
@@ -273,10 +461,6 @@ export const config = {
     return loadConfig().oauthRefreshGraceSeconds
   },
 
-  // Redis
-  get redisUrl() {
-    return loadConfig().redisUrl
-  },
   get trustedProxyHops() {
     return loadConfig().trustedProxyHops
   },
@@ -302,6 +486,24 @@ export const config = {
   },
   get emailResendApiKey() {
     return loadConfig().emailResendApiKey
+  },
+  get emailSesAccessKeyId() {
+    return loadConfig().emailSesAccessKeyId
+  },
+  get emailSesSecretAccessKey() {
+    return loadConfig().emailSesSecretAccessKey
+  },
+  get emailSesRegion() {
+    return loadConfig().emailSesRegion
+  },
+  get emailSesConfigurationSet() {
+    return loadConfig().emailSesConfigurationSet
+  },
+  get emailSesIdentityAccessKeyId() {
+    return loadConfig().emailSesIdentityAccessKeyId
+  },
+  get emailSesIdentitySecretAccessKey() {
+    return loadConfig().emailSesIdentitySecretAccessKey
   },
 
   // S3
@@ -381,6 +583,9 @@ export const config = {
   },
   get aiRequireParameters() {
     return loadConfig().aiRequireParameters
+  },
+  get aiReasoningExclude() {
+    return loadConfig().aiReasoningExclude
   },
 
   // Telemetry

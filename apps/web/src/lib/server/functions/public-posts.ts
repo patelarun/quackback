@@ -23,7 +23,7 @@ import {
   hasAuthCredentials,
   policyActorFromAuth,
 } from './auth-helpers'
-import { readSettings } from './workspace'
+import { getSettings } from './workspace'
 import { workspaceAllowsAnonymous } from '@/lib/server/domains/settings/settings.types'
 import { listPublicPosts, getAllUserVotedPostIds } from '@/lib/server/domains/posts/post.public'
 import {
@@ -391,7 +391,7 @@ export const toggleVoteFn = createServerFn({ method: 'POST' })
         // getPortalConfig's permissive merged default (matches
         // createPublicPostFn / the vote-sidebar gate). The per-board vote
         // tier was already enforced above by assertPostVotable.
-        const settings = await readSettings()
+        const settings = await getSettings()
         if (!workspaceAllowsAnonymous(settings?.portalConfig)) {
           throw new Error('Anonymous interaction is not enabled')
         }
@@ -447,7 +447,7 @@ export const createPublicPostFn = createServerFn({ method: 'POST' })
       getPublicBoardById(boardId, actor),
       getMemberByUser(ctx.user.id as UserId),
       getDefaultStatus(),
-      readSettings(),
+      getSettings(),
     ])
 
     if (!board) {
@@ -464,7 +464,7 @@ export const createPublicPostFn = createServerFn({ method: 'POST' })
     // workspace-wide ceiling (collapsed in migration 0084).
     if (ctx.principal.type === 'anonymous') {
       // Fail closed on a missing flag (single source of truth; the per-board
-      // submit tier is the inner gate, existing tenants carry an explicit
+      // submit tier is the inner gate, existing workspaces carry an explicit
       // value from migration 0084).
       if (!workspaceAllowsAnonymous(settings.portalConfig)) {
         throw new Error('Anonymous interaction is not enabled')
@@ -752,7 +752,7 @@ export const getVoteSidebarDataFn = createServerFn({ method: 'GET' })
     // switch (collapsed from the legacy anonymousVoting flag in
     // migration 0084). The per-board vote tier is the inner ceiling.
     if (!hasAuthCredentials()) {
-      const settings = await readSettings()
+      const settings = await getSettings()
       const anonEnabled = workspaceAllowsAnonymous(settings?.portalConfig)
       const canVote = anonEnabled && voteDecision.allowed
       log.debug(
@@ -780,7 +780,7 @@ export const getVoteSidebarDataFn = createServerFn({ method: 'GET' })
     // anonymous sessions (sign-in cookie present but principal is anon).
     let canVote = voteDecision.allowed
     if (isAnonymous) {
-      const settings = await readSettings()
+      const settings = await getSettings()
       const anonEnabled = workspaceAllowsAnonymous(settings?.portalConfig)
       canVote = anonEnabled && voteDecision.allowed
     }

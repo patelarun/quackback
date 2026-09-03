@@ -78,6 +78,7 @@ const CONFIG: AssistantConfig = {
         documents: true,
         status: false,
       },
+      toolRules: {},
     },
     copilot: {
       capabilities: { qa: true },
@@ -86,11 +87,12 @@ const CONFIG: AssistantConfig = {
         posts: true,
         pastConversations: true,
         internalNotes: true,
-        tickets: false,
-        changelog: false,
+        tickets: true,
+        changelog: true,
         documents: true,
         status: true,
       },
+      toolRules: {},
     },
   },
 }

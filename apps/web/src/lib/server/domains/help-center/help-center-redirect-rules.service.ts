@@ -141,7 +141,10 @@ export async function createRedirectRule(
   } catch (error) {
     if (error instanceof ValidationError || error instanceof NotFoundError) throw error
     if (isUniqueViolation(error)) {
-      throw new ConflictError('HC_REDIRECT_PATH_TAKEN', `A redirect rule for "${path}" already exists`)
+      throw new ConflictError(
+        'HC_REDIRECT_PATH_TAKEN',
+        `A redirect rule for "${path}" already exists`
+      )
     }
     log.error({ err: error }, 'failed to create redirect rule')
     throw new InternalError('DATABASE_ERROR', 'Failed to create redirect rule', error)

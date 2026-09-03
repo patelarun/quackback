@@ -169,24 +169,22 @@ export const ticketsKnowledgeSource: KnowledgeSource = {
   sourceType: 'ticket',
   async retrieve(query, ceiling, opts) {
     const rows = await retrieveTicketSummaries(query, ceiling, { topK: opts.topK })
-    return rows.map(
-      (r): RetrievedItem => ({
+    return rows.map((r): RetrievedItem => ({
+      id: r.ticketId,
+      sourceType: 'ticket' as const,
+      title: TICKET_TITLE,
+      excerpt: r.summary.slice(0, KNOWLEDGE_SNIPPET_CHARS),
+      score: r.score,
+      updatedAt: r.createdAt.toISOString(),
+      citation: {
+        type: 'ticket' as const,
         id: r.ticketId,
-        sourceType: 'ticket' as const,
         title: TICKET_TITLE,
-        excerpt: r.summary.slice(0, KNOWLEDGE_SNIPPET_CHARS),
-        score: r.score,
-        updatedAt: r.createdAt.toISOString(),
-        citation: {
-          type: 'ticket' as const,
-          id: r.ticketId,
-          title: TICKET_TITLE,
-          url: ticketUrl(r.ticketId),
-          // A support ticket is never customer-facing knowledge: always
-          // flagged for the copilot leak gate, on every (team) surface.
-          internal: true,
-        },
-      })
-    )
+        url: ticketUrl(r.ticketId),
+        // A support ticket is never customer-facing knowledge: always
+        // flagged for the copilot leak gate, on every (team) surface.
+        internal: true,
+      },
+    }))
   },
 }

@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
+import { useIntl } from 'react-intl'
 import { PERMISSIONS } from '@/lib/shared/permissions'
 import { assertRoutePermission } from '@/lib/shared/route-permission'
-import { createFileRoute, Navigate } from '@tanstack/react-router'
+import { createFileRoute, Link, redirect } from '@tanstack/react-router'
 import {
   queryOptions,
   useMutation,
@@ -17,8 +18,10 @@ import {
   MoonIcon,
   PauseIcon,
 } from '@heroicons/react/24/outline'
-import type { FeatureFlags } from '@/lib/shared/types/settings'
+import { isProductEnabled } from '@/lib/shared/types/settings'
 import { slaTargetsSummary } from '@/lib/shared/conversation/sla'
+import { settingsQueries } from '@/lib/client/queries/settings'
+import { useUpdateDefaultSlaPolicy } from '@/lib/client/mutations/settings'
 import {
   archiveSlaPolicyFn,
   createSlaPolicyFn,
@@ -70,23 +73,21 @@ const slaOfficeHoursQuery = queryOptions({
 })
 
 export const Route = createFileRoute('/admin/settings/sla')({
+  beforeLoad: ({ context }) => {
+    if (!isProductEnabled(context.settings?.featureFlags, 'support')) {
+      throw redirect({ to: '/admin/settings/general' })
+    }
+  },
   loader: async ({ context }) => {
     assertRoutePermission(context.permissions, PERMISSIONS.SLA_MANAGE)
-    await context.queryClient.ensureQueryData(slaPoliciesQuery)
+    await Promise.all([
+      context.queryClient.ensureQueryData(slaPoliciesQuery),
+      context.queryClient.ensureQueryData(settingsQueries.defaultSlaPolicy()),
+    ])
     return {}
   },
-  component: SlaSettingsRoute,
+  component: SlaSettingsPage,
 })
-
-/** Gate behind the same experimental flag the rest of the Support area uses. */
-function SlaSettingsRoute() {
-  const { settings } = Route.useRouteContext()
-  const flags = settings?.featureFlags as FeatureFlags | undefined
-  if (!flags?.supportInbox) {
-    return <Navigate to="/admin/settings" />
-  }
-  return <SlaSettingsPage />
-}
 
 // ── Duration targets: integer + unit, stored as seconds ─────────────────────
 
@@ -128,14 +129,17 @@ type TargetKey = (typeof TARGET_FIELDS)[number]['key']
 
 /** Which policy the editor dialog holds: a fresh one, a clone seed, or an edit. */
 type EditorState =
-  | { mode: 'create'; seed: SlaPolicyDTO | null }
-  | { mode: 'edit'; policy: SlaPolicyDTO }
-  | null
+  { mode: 'create'; seed: SlaPolicyDTO | null } | { mode: 'edit'; policy: SlaPolicyDTO } | null
+
+const DEFAULT_SLA_NONE = '__none__'
 
 function SlaSettingsPage() {
+  const intl = useIntl()
   const queryClient = useQueryClient()
   const { data: policies } = useSuspenseQuery(slaPoliciesQuery)
   const { data: officeHours } = useQuery(slaOfficeHoursQuery)
+  const { data: defaultSla } = useQuery(settingsQueries.defaultSlaPolicy())
+  const updateDefaultSla = useUpdateDefaultSlaPolicy()
   const officeHoursEnabled = officeHours?.officeHoursEnabled ?? false
   const [tab, setTab] = useState<'live' | 'archived'>('live')
   const [editor, setEditor] = useState<EditorState>(null)
@@ -179,8 +183,51 @@ function SlaSettingsPage() {
       <PageHeader
         icon={ShieldCheckIcon}
         title="SLA policies"
-        description="Response and resolution targets your team commits to. Apply them to conversations from workflows."
+        description="Response and resolution targets your team commits to. A default can apply when a conversation starts; workflows can still replace it."
       />
+
+      <SettingsCard>
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-sm font-medium">
+              {intl.formatMessage({
+                id: 'settings.sla.defaultPolicy',
+                defaultMessage: 'Default policy',
+              })}
+            </div>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {intl.formatMessage({
+                id: 'settings.sla.defaultPolicyHint',
+                defaultMessage: 'Applied when a conversation starts',
+              })}
+            </p>
+          </div>
+          <Select
+            value={defaultSla?.policyId ?? DEFAULT_SLA_NONE}
+            onValueChange={(value) =>
+              updateDefaultSla.mutate({ policyId: value === DEFAULT_SLA_NONE ? null : value })
+            }
+            disabled={updateDefaultSla.isPending}
+          >
+            <SelectTrigger size="sm" className="w-[200px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={DEFAULT_SLA_NONE}>
+                {intl.formatMessage({
+                  id: 'settings.sla.defaultPolicyNone',
+                  defaultMessage: 'None',
+                })}
+              </SelectItem>
+              {live.map((policy) => (
+                <SelectItem key={policy.id} value={policy.id}>
+                  {policy.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </SettingsCard>
 
       <SettingsCard
         title="Policies"
@@ -246,8 +293,8 @@ function SlaSettingsPage() {
       >
         <ul className="list-disc space-y-1.5 pl-4 text-xs text-muted-foreground">
           <li>
-            Policies are applied by workflows only, through the Apply SLA action. There is no
-            default policy and nothing is matched automatically.
+            A default policy can be applied when a conversation starts. Workflows can still apply a
+            different policy through the Apply SLA action.
           </li>
           <li>
             A conversation carries one active SLA. Applying another policy replaces it and restarts
@@ -559,9 +606,17 @@ function PolicyEditorDialog({
           <div className="space-y-1.5">
             <Label>Business hours</Label>
             <p className="text-xs text-muted-foreground">
-              {officeHoursEnabled
-                ? 'Clocks count only time inside your workspace office hours.'
-                : 'Clocks run around the clock. Set office hours in Settings to make clocks count only open time.'}
+              {officeHoursEnabled ? (
+                'Clocks count only time inside your workspace office hours.'
+              ) : (
+                <>
+                  Clocks run around the clock.{' '}
+                  <Link to="/admin/settings/office-hours" className="font-medium text-primary">
+                    Set office hours
+                  </Link>{' '}
+                  to make clocks count only open time.
+                </>
+              )}
             </p>
           </div>
 

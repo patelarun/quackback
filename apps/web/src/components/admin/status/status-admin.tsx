@@ -20,13 +20,7 @@ import { StatusTemplatesView } from './status-templates-view'
 import { StatusSubscribersView } from './status-subscribers-view'
 
 export type StatusAdminView =
-  | 'overview'
-  | 'open'
-  | 'maintenance'
-  | 'all'
-  | 'components'
-  | 'templates'
-  | 'subscribers'
+  'overview' | 'open' | 'maintenance' | 'all' | 'components' | 'templates' | 'subscribers'
 
 function useIncidentCount(kind: 'incident' | 'maintenance', state: 'active' | 'all') {
   const { data } = useQuery({

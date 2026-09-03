@@ -6,22 +6,22 @@
  * - getHelpCenterConfig() parses and merges stored config
  * - updateHelpCenterConfig() partial merges and persists
  * - updateHelpCenterConfig() invalidates cache
- * - getTenantSettings() includes helpCenterConfig
+ * - getWorkspaceSettings() includes helpCenterConfig
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-// --- Redis cache mocks ---
+// --- Cache mocks ---
 const mockCacheGet = vi.fn()
 const mockCacheSet = vi.fn()
 const mockCacheDel = vi.fn()
 
-vi.mock('@/lib/server/redis', () => ({
+vi.mock('@/lib/server/cache', () => ({
   cacheGet: (...args: unknown[]) => mockCacheGet(...args),
   cacheSet: (...args: unknown[]) => mockCacheSet(...args),
   cacheDel: (...args: unknown[]) => mockCacheDel(...args),
   CACHE_KEYS: {
-    TENANT_SETTINGS: 'settings:tenant',
+    WORKSPACE_SETTINGS: 'settings:workspace',
     INTEGRATION_MAPPINGS: 'hooks:integration-mappings',
     ACTIVE_WEBHOOKS: 'hooks:webhooks-active',
     SLACK_CHANNELS: 'slack:channels',
@@ -108,7 +108,7 @@ function makeSettingsRow(overrides: Record<string, unknown> = {}) {
 const {
   getHelpCenterConfig,
   updateHelpCenterConfig,
-  getTenantSettings,
+  getWorkspaceSettings,
   enableHelpCenterLocale,
   disableHelpCenterLocale,
   updateHelpCenterLocaleChrome,
@@ -228,7 +228,7 @@ describe('updateHelpCenterConfig', () => {
 
     await updateHelpCenterConfig({ enabled: true })
 
-    expect(mockCacheDel).toHaveBeenCalledWith('settings:tenant', 'auth:registered-providers')
+    expect(mockCacheDel).toHaveBeenCalledWith('settings:workspace', 'auth:registered-providers')
   })
 
   it('can update nested seo config', async () => {
@@ -250,15 +250,15 @@ describe('updateHelpCenterConfig', () => {
 })
 
 // ============================================================================
-// getTenantSettings includes helpCenterConfig
+// getWorkspaceSettings includes helpCenterConfig
 // ============================================================================
 
-describe('getTenantSettings includes helpCenterConfig', () => {
+describe('getWorkspaceSettings includes helpCenterConfig', () => {
   it('includes default helpCenterConfig when DB column is null', async () => {
     mockCacheGet.mockResolvedValue(null)
     mockFindFirst.mockResolvedValue(makeSettingsRow({ helpCenterConfig: null }))
 
-    const result = await getTenantSettings()
+    const result = await getWorkspaceSettings()
 
     expect(result).not.toBeNull()
     expect(result!.helpCenterConfig).toEqual(DEFAULT_HELP_CENTER_CONFIG)
@@ -272,7 +272,7 @@ describe('getTenantSettings includes helpCenterConfig', () => {
     mockCacheGet.mockResolvedValue(null)
     mockFindFirst.mockResolvedValue(makeSettingsRow({ helpCenterConfig: stored }))
 
-    const result = await getTenantSettings()
+    const result = await getWorkspaceSettings()
 
     expect(result).not.toBeNull()
     expect(result!.helpCenterConfig.enabled).toBe(true)

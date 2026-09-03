@@ -1,8 +1,17 @@
 /**
- * Server functions for workspace data fetching.
+ * Workspace data reads shared by SSR loaders, other server functions and the
+ * API route handlers.
+ *
+ * These are deliberately plain async functions rather than `createServerFn`
+ * declarations. Nothing on the client calls them — every caller is already
+ * running on the server — so the RPC hop would only dispatch the server back
+ * into itself. It would also not survive the build: the server-function
+ * manifest is emitted from the registrations collected while the client graph
+ * is compiled, so a server function the client never references is absent from
+ * it and every call throws `Server function info not found`. Keep these plain;
+ * `bun run check:server-fn-manifest` guards the general case.
  */
 
-import { createServerFn } from '@tanstack/react-start'
 import type { Role } from '@/lib/shared/roles'
 import { db, principal, eq } from '@/lib/server/db'
 import { getSession } from '@/lib/server/auth/session'
@@ -15,21 +24,10 @@ const log = logger.child({ component: 'workspace' })
  *
  * Returns the RAW settings row: JSON config columns (featureFlags, authConfig,
  * portalConfig, ...) come back as unparsed text. For parsed, default-merged
- * reads use the settings domain service (getTenantSettings / isFeatureEnabled)
+ * reads use the settings domain service (getWorkspaceSettings / isFeatureEnabled)
  * instead of casting a column off this row.
  */
-export const getSettings = createServerFn({ method: 'GET' }).handler(async () => readSettings())
-
-/**
- * Plain (non-server-function) settings read, for callers that are ALREADY on the
- * server.
- *
- * Calling a server function from inside another one makes the compiler emit a
- * client RPC stub for the inner call, and that stub's id is never registered in
- * the server manifest — the call then fails at runtime with "Server function
- * info not found for <id>". Server-side callers must use this instead.
- */
-export async function readSettings() {
+export async function getSettings() {
   const org = await db.query.settings.findFirst()
   return org ?? null
 }
@@ -37,11 +35,27 @@ export async function readSettings() {
 /**
  * Get current user's role if logged in
  */
-export const getCurrentUserRole = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<Role | null> => readCurrentUserRole()
-)
+export async function getCurrentUserRole(): Promise<Role | null> {
+  log.debug('get current user role')
+  const session = await getSession()
+  if (!session?.user) {
+    log.debug('no session')
+    return null
+  }
 
-/** Plain current-user-role read for server-side callers. See {@link readSettings}. */
+  const principalRecord = await db.query.principal.findFirst({
+    where: eq(principal.userId, session.user.id),
+  })
+
+  if (!principalRecord) {
+    log.debug('no principal')
+    return null
+  }
+  log.debug({ role: principalRecord.role }, 'current user role')
+  return principalRecord.role as Role
+}
+
+/** Plain current-user-role read for server-side callers. See {@link getSettings}. */
 export async function readCurrentUserRole(): Promise<Role | null> {
   log.debug('get current user role')
   const session = await getSession()
@@ -65,7 +79,7 @@ export async function readCurrentUserRole(): Promise<Role | null> {
 /**
  * Validate API workspace access
  */
-export const validateApiWorkspaceAccess = createServerFn({ method: 'GET' }).handler(async () => {
+export async function validateApiWorkspaceAccess() {
   const session = await getSession()
   if (!session?.user) {
     return { success: false as const, error: 'Unauthorized', status: 401 as const }
@@ -92,6 +106,6 @@ export const validateApiWorkspaceAccess = createServerFn({ method: 'GET' }).hand
     principal: principalRecord,
     user: session.user,
   }
-})
+}
 
 export type ApiWorkspaceResult = Awaited<ReturnType<typeof validateApiWorkspaceAccess>>

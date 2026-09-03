@@ -4,6 +4,7 @@ import {
   type OutcomeTaskResolutions,
   type UseCaseType,
 } from '@/lib/shared/db-types'
+import type { ProductId } from '@/lib/shared/types/settings'
 
 export interface LaunchPermissions {
   settingsManage: boolean
@@ -17,19 +18,24 @@ export interface LaunchPermissions {
 export interface LaunchStatus {
   hasBoards: boolean
   hasPublicBoard?: boolean
+  publicBoardId?: string | null
+  publicBoardSlug?: string | null
+  publicBoardPath?: string | null
+  publicBoardLinkCopiedAt?: string | null
   hasInternalBoard?: boolean
   boardCount?: number
   maxBoards?: number | null
   memberCount: number
   hasBranding: boolean
-  hasWidgetEnabled: boolean
   hasWidgetInstalled?: boolean
-  widgetLastSeenAt?: string | null
   widgetOriginHost?: string | null
+  widgetLastDetectedAt?: string | null
+  widgetSdkVersion?: string | null
+  currentWidgetSdkVersion?: string
+  widgetSdkNeedsUpdate?: boolean
+  hasWidgetEnabled?: boolean
   hasMessengerEnabled?: boolean
   hasHelpArticle?: boolean
-  hasPublishedHelpArticle?: boolean
-  hasStatusComponent?: boolean
   hasIntegration?: boolean
   hasFirstWin?: boolean
   firstWinAt?: string | null
@@ -47,17 +53,20 @@ export interface LaunchStatus {
 export type LaunchTaskHref =
   | '/admin/settings/boards'
   | '/admin/settings/members'
-  | '/admin/settings/branding'
-  | '/admin/settings/widget'
-  | '/admin/settings/conversations'
+  | '/admin/settings/portal'
+  | '/admin/settings/widget/install'
   | '/admin/settings/integrations'
   | '/admin/help-center'
-  | '/admin/status'
   | '/admin/feedback'
   | '/admin/inbox'
 
 export type LaunchTaskAvailability = 'available' | 'blocked' | 'complete'
 export type LaunchTaskClassification = 'prerequisite' | 'polish' | 'first_win'
+
+export interface LaunchTaskBlocked {
+  kind: 'module-off' | 'plan-limit' | 'permission'
+  productId?: ProductId
+}
 
 export interface LaunchTask {
   id: string
@@ -66,8 +75,8 @@ export interface LaunchTask {
   availability: LaunchTaskAvailability
   classification: LaunchTaskClassification
   isCompleted: boolean
-  isDeferred: boolean
-  isDismissed: boolean
+  isSkipped: boolean
+  blocked?: LaunchTaskBlocked
   blockedReason?: string
   href?: LaunchTaskHref
   actionLabel?: string
@@ -76,11 +85,28 @@ export interface LaunchTask {
 
 interface LaunchTaskInput extends Omit<
   LaunchTask,
-  'availability' | 'isCompleted' | 'isDeferred' | 'isDismissed' | 'blockedReason'
+  'availability' | 'isCompleted' | 'isSkipped' | 'blocked' | 'blockedReason'
 > {
   completed: boolean
   canAct?: boolean
   unavailableReason?: string
+  blocked?: LaunchTaskBlocked
+}
+
+function blockedReasonFrom(blocked: LaunchTaskBlocked): string {
+  if (blocked.kind === 'module-off') {
+    const label =
+      blocked.productId === 'helpCenter'
+        ? 'Help Center'
+        : blocked.productId === 'support'
+          ? 'Customer support'
+          : 'This product'
+    return `${label} is turned off for this workspace. Ask a workspace admin to enable it in Settings → General.`
+  }
+  if (blocked.kind === 'plan-limit') {
+    return "You've reached the board limit for your plan. Remove a board or upgrade to continue."
+  }
+  return 'Ask a workspace admin to complete this step.'
 }
 
 export function normalizeOutcome(useCase?: UseCaseType | null): OnboardingOutcome {
@@ -101,6 +127,13 @@ export const OUTCOME_HOME: Record<OnboardingOutcome, { label: string; href: Laun
   internal: { label: 'Open feedback', href: '/admin/feedback' },
 }
 
+export const FIRST_WIN_NOUN: Record<OnboardingOutcome, string> = {
+  product_feedback: 'customer post or vote',
+  customer_support: 'customer conversation',
+  help_center: 'published article',
+  internal: 'team idea',
+}
+
 const ALLOW_ALL: LaunchPermissions = {
   settingsManage: true,
   boardManage: true,
@@ -116,14 +149,13 @@ function materializeTask(
   resolutions: OutcomeTaskResolutions | undefined
 ): LaunchTask {
   const stored = resolutions?.[outcome]?.[task.id]
-  const isDeferred = !task.completed && stored?.resolution === 'deferred'
-  const isDismissed =
-    !task.completed && task.classification === 'polish' && stored?.resolution === 'dismissed'
-  const blockedReason =
-    !task.completed && !isDismissed
-      ? (task.unavailableReason ??
-        (task.canAct === false ? 'Ask a workspace admin to complete this step.' : undefined))
+  const isSkipped =
+    !task.completed && (stored?.resolution === 'dismissed' || stored?.resolution === 'deferred')
+  const blocked: LaunchTaskBlocked | undefined =
+    !task.completed && !isSkipped
+      ? (task.blocked ?? (task.canAct === false ? { kind: 'permission' } : undefined))
       : undefined
+  const blockedReason = blocked ? (task.unavailableReason ?? blockedReasonFrom(blocked)) : undefined
   return {
     id: task.id,
     title: task.title,
@@ -131,8 +163,8 @@ function materializeTask(
     classification: task.classification,
     availability: task.completed ? 'complete' : blockedReason ? 'blocked' : 'available',
     isCompleted: task.completed,
-    isDeferred,
-    isDismissed,
+    isSkipped,
+    ...(blocked ? { blocked } : {}),
     ...(blockedReason ? { blockedReason } : {}),
     ...(task.href && task.canAct !== false ? { href: task.href } : {}),
     ...(task.actionLabel ? { actionLabel: task.actionLabel } : {}),
@@ -147,9 +179,9 @@ export function buildLaunchTasks(
   const outcome = outcomeOverride ?? normalizeOutcome(status.useCase)
   const permissions = status.permissions ?? ALLOW_ALL
   const features = status.features ?? {
-    supportInbox: true,
-    helpCenter: true,
-    statusPage: true,
+    supportInbox: false,
+    helpCenter: false,
+    statusPage: false,
     integrations: true,
   }
   const hasGoalBoard =
@@ -167,55 +199,67 @@ export function buildLaunchTasks(
         : 'Give customers a place to submit and vote on ideas.',
     completed: hasGoalBoard,
     canAct: permissions.boardManage,
-    unavailableReason: boardCapacityBlocked
-      ? "You've reached the board limit for your plan. Remove a board or upgrade to continue."
-      : undefined,
+    ...(boardCapacityBlocked
+      ? {
+          blocked: { kind: 'plan-limit' as const },
+          unavailableReason:
+            "You've reached the board limit for your plan. Remove a board or upgrade to continue.",
+        }
+      : {}),
     classification: 'prerequisite',
     href: '/admin/settings/boards',
     actionLabel: 'Create board',
     completedLabel: 'View boards',
   }
-  const widgetInstalled: LaunchTaskInput = {
-    id: outcome === 'customer_support' ? 'install-messenger' : 'add-to-site',
-    title: outcome === 'customer_support' ? 'Install Messenger' : 'Share or install feedback',
-    description: status.hasWidgetEnabled
-      ? status.widgetLastSeenAt
-        ? `Installed on ${status.widgetOriginHost ?? 'your site'}.`
-        : 'Add the widget to your website so customers can reach you.'
-      : 'Set up the widget, then add it to your website.',
-    completed: status.hasWidgetInstalled === true,
-    canAct: permissions.settingsManage,
+  const widgetDistributed = status.hasWidgetInstalled === true && status.hasWidgetEnabled === true
+  const distributionComplete =
+    Boolean(status.publicBoardLinkCopiedAt) || widgetDistributed || status.hasFirstWin === true
+  const distributeFeedback: LaunchTaskInput = {
+    id: 'distribute-feedback',
+    title: 'Share your feedback board',
+    description: status.publicBoardLinkCopiedAt
+      ? 'Your public board link has been copied.'
+      : widgetDistributed
+        ? `Your feedback widget was found on ${status.widgetOriginHost ?? 'your site'}.`
+        : 'Copy the public board link and share it with customers.',
+    completed: distributionComplete,
+    canAct: permissions.boardManage && hasGoalBoard,
+    unavailableReason: hasGoalBoard ? undefined : 'Create a public feedback board first.',
     classification: 'prerequisite',
-    href: '/admin/settings/widget',
-    actionLabel: 'Install widget',
-    completedLabel: 'View widget setup',
+    actionLabel: 'Copy board link',
+    completedLabel: 'Board distributed',
   }
-  const messenger: LaunchTaskInput = {
-    id: 'messenger',
-    title: 'Configure Messenger',
-    description: 'Choose how customers can start and continue conversations.',
-    completed: Boolean(status.hasMessengerEnabled),
+  const connectMessenger: LaunchTaskInput = {
+    id: 'connect-messenger',
+    title: 'Connect Messenger',
+    description: status.hasWidgetInstalled
+      ? `Messenger was found on ${status.widgetOriginHost ?? 'your site'}.`
+      : 'Add the SDK to your website to connect it.',
+    completed:
+      status.hasWidgetInstalled === true &&
+      status.hasWidgetEnabled === true &&
+      features.supportInbox,
     canAct: permissions.settingsManage,
-    unavailableReason: features.supportInbox
-      ? undefined
-      : 'Customer support is turned off for this workspace. Ask a workspace admin to enable it.',
+    ...(features.supportInbox
+      ? {}
+      : { blocked: { kind: 'module-off' as const, productId: 'support' as const } }),
     classification: 'prerequisite',
-    href: '/admin/settings/widget',
-    actionLabel: 'Configure',
-    completedLabel: 'Manage Messenger',
+    href: '/admin/settings/widget/install',
+    actionLabel: 'Connect Messenger',
+    completedLabel: 'View installation',
   }
   const helpDraft: LaunchTaskInput = {
     id: 'help-article',
-    title: 'Prepare your first article',
-    description: 'Turn your draft into a useful answer for customers.',
-    completed: Boolean(status.hasHelpArticle),
+    title: 'Write your first article',
+    description: 'Draft the first answer your customers should find.',
+    completed: Boolean(status.hasHelpArticle) && features.helpCenter,
     canAct: permissions.helpCenterManage,
-    unavailableReason: features.helpCenter
-      ? undefined
-      : 'Help Center is turned off for this workspace. Ask a workspace admin to enable it.',
+    ...(features.helpCenter
+      ? {}
+      : { blocked: { kind: 'module-off' as const, productId: 'helpCenter' as const } }),
     classification: 'prerequisite',
     href: '/admin/help-center',
-    actionLabel: 'Continue article',
+    actionLabel: 'Write article',
     completedLabel: 'Open article',
   }
   const invite: LaunchTaskInput = {
@@ -224,7 +268,7 @@ export function buildLaunchTasks(
     description: 'Bring in someone to help respond, publish, or manage feedback.',
     completed: status.memberCount > 1,
     canAct: permissions.memberManage,
-    classification: 'prerequisite',
+    classification: outcome === 'internal' ? 'prerequisite' : 'polish',
     href: '/admin/settings/members',
     actionLabel: 'Invite teammate',
     completedLabel: 'Manage team',
@@ -236,7 +280,7 @@ export function buildLaunchTasks(
     completed: status.hasBranding,
     canAct: permissions.brandingManage,
     classification: 'polish',
-    href: '/admin/settings/branding',
+    href: '/admin/settings/portal',
     actionLabel: 'Add logo',
     completedLabel: 'Edit branding',
   }
@@ -246,9 +290,12 @@ export function buildLaunchTasks(
     description: 'Keep Quackback in sync with the tools your team already uses.',
     completed: Boolean(status.hasIntegration),
     canAct: permissions.integrationManage,
-    unavailableReason: features.integrations
-      ? undefined
-      : 'Integrations are not included in your current plan.',
+    ...(features.integrations
+      ? {}
+      : {
+          blocked: { kind: 'plan-limit' as const },
+          unavailableReason: 'Integrations are not included in your current plan.',
+        }),
     classification: 'polish',
     href: '/admin/settings/integrations',
     actionLabel: 'Connect',
@@ -273,7 +320,7 @@ export function buildLaunchTasks(
   let inputs: LaunchTaskInput[]
   switch (outcome) {
     case 'customer_support':
-      inputs = [messenger, widgetInstalled, invite, branding, integration, firstWin]
+      inputs = [connectMessenger, invite, branding, integration, firstWin]
       break
     case 'help_center':
       inputs = [helpDraft, invite, branding, firstWin]
@@ -283,25 +330,11 @@ export function buildLaunchTasks(
       break
     case 'product_feedback':
     default:
-      inputs = [board, widgetInstalled, invite, branding, integration, firstWin]
+      inputs = [board, distributeFeedback, invite, branding, integration, firstWin]
       break
   }
 
-  const tasks = inputs.map((task) => materializeTask(task, outcome, status.taskResolutions))
-  const hasOtherActionablePrerequisite = tasks.some(
-    (task) =>
-      task.classification === 'prerequisite' &&
-      task.availability === 'available' &&
-      !task.isDeferred
-  )
-  if (!hasOtherActionablePrerequisite) return tasks
-
-  const prerequisites = tasks.filter((task) => task.classification === 'prerequisite')
-  return [
-    ...prerequisites.filter((task) => !task.isDeferred),
-    ...prerequisites.filter((task) => task.isDeferred),
-    ...tasks.filter((task) => task.classification !== 'prerequisite'),
-  ]
+  return inputs.map((task) => materializeTask(task, outcome, status.taskResolutions))
 }
 
 export function launchChecklistSummary(
@@ -309,6 +342,7 @@ export function launchChecklistSummary(
   outcomeOverride?: OnboardingOutcome
 ): {
   tasks: LaunchTask[]
+  skippedTasks: LaunchTask[]
   outcome: OnboardingOutcome
   doneCount: number
   denominator: number
@@ -321,34 +355,45 @@ export function launchChecklistSummary(
 } {
   const outcome = outcomeOverride ?? normalizeOutcome(status.useCase)
   const tasks = buildLaunchTasks(status, outcome)
-  const availableSteps = tasks.filter(
-    (task) => task.classification === 'prerequisite' && task.availability !== 'blocked'
-  )
-  const doneCount = availableSteps.filter((task) => task.isCompleted).length
-  const remaining = availableSteps.filter((task) => !task.isCompleted).length
-  const blockedCount = tasks.filter(
-    (task) => task.classification === 'prerequisite' && task.availability === 'blocked'
-  ).length
+  const prerequisites = tasks.filter((task) => task.classification === 'prerequisite')
+  const skippedTasks = tasks.filter((task) => task.isSkipped && task.classification !== 'first_win')
+  const counted = prerequisites.filter((task) => !task.isSkipped)
+  const doneCount = counted.filter((task) => task.isCompleted).length
+  const remaining = counted.filter((task) => !task.isCompleted).length
+  const blockedCount = counted.filter((task) => task.availability === 'blocked').length
   const firstWinComplete = tasks.some(
     (task) => task.classification === 'first_win' && task.isCompleted
   )
+  const hasAvailable = counted.some(
+    (task) => task.availability === 'available' && !task.isCompleted
+  )
   const allComplete = remaining === 0
+  const winNoun = FIRST_WIN_NOUN[outcome]
   return {
     tasks,
+    skippedTasks,
     outcome,
     doneCount,
-    denominator: availableSteps.length,
+    denominator: counted.length,
     remaining,
     blockedCount,
     allComplete,
     firstWinComplete,
-    resolved: allComplete && firstWinComplete,
+    resolved: allComplete,
     headline: firstWinComplete
       ? 'You’re up and running'
-      : blockedCount > 0 && remaining === 0
-        ? 'Your workspace needs attention before you can launch'
-        : allComplete
-          ? 'Everything is ready for your first result'
-          : `${remaining} setup step${remaining === 1 ? '' : 's'} to go`,
+      : blockedCount > 0 && !hasAvailable
+        ? 'One thing needs attention before you can launch'
+        : remaining === 0
+          ? `You’re ready for your first ${winNoun}`
+          : `${remaining} step${remaining === 1 ? '' : 's'} to your first ${winNoun}`,
   }
+}
+
+/** Sidebar still shows Getting Started until essentials resolve and the first win lands. */
+export function isLaunchPlanActive(summary: {
+  resolved: boolean
+  firstWinComplete: boolean
+}): boolean {
+  return !summary.resolved || !summary.firstWinComplete
 }

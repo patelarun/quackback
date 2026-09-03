@@ -3,9 +3,8 @@
  * Build-time constants are injected via Vite `define`; runtime info is read at call time.
  */
 import { logger } from '@/lib/server/logger'
-import { closeAllWorkers, initAllWorkers } from './queue/worker-registry'
-import { getProcessRole, shouldRunWorkers } from './queue/role'
-import { validateRuntimeConfig } from './config'
+import { getProcessRole, shouldRunWorkers } from './process-role'
+import { config, validateRuntimeConfig } from './config'
 
 const log = logger.child({ component: 'startup' })
 
@@ -13,14 +12,13 @@ let _logged = false
 let _shutdownWired = false
 
 /**
- * Wire SIGTERM/SIGINT to gracefully drain BullMQ queues + workers and
- * close the shared Redis connection. BullMQ's stalled-job checker
- * recovers any in-flight jobs on the next startup, but shutting down
- * cleanly avoids spurious "stalled" reports and double-billing on
- * AI/webhook handlers that are mid-flight.
+ * Wire SIGTERM/SIGINT to drain the job worker and close the remaining Postgres
+ * connections cleanly. A job left mid-flight is not lost — its lease lapses and
+ * the reaper adjudicates it — but draining avoids abandoning work that was
+ * seconds from finishing, and avoids double-billing an AI call.
  *
- * 30s overall budget — if any worker hangs (e.g. a 60s OpenAI call),
- * we force-exit so k8s/systemd doesn't SIGKILL us mid-cleanup.
+ * 30s overall budget — if a handler hangs (e.g. a 60s AI call), we force-exit
+ * so the supervisor doesn't SIGKILL us mid-cleanup.
  */
 function wireGracefulShutdown(): void {
   if (_shutdownWired) return
@@ -42,21 +40,16 @@ function wireGracefulShutdown(): void {
 
     void (async () => {
       try {
-        // Stop the relay before closing BullMQ/Redis so a final poll cannot
-        // enqueue into a queue that is already draining.
-        await import('./events/relay').then(({ stopOutboxRelay }) => stopOutboxRelay())
-
-        // Drain every registered queue/worker. One list drives boot and
-        // shutdown, so nothing can be booted but left undrained.
-        await closeAllWorkers()
+        // Stop the job worker. Jobs already running are awaited
+        // within the budget below; anything still in flight when the process
+        // dies is NOT re-run blindly — its lease lapses and the reaper
+        // adjudicates it, which for a no-retry job means terminal rather than
+        // a second run.
+        await import('./jobs/worker').then(({ stopJobWorker }) => stopJobWorker())
 
         // Drain the conversation pub/sub subscriber connection before the
         // shared client closes — it's a separate long-lived socket.
         await import('./realtime/pubsub').then(({ closeSubscriber }) => closeSubscriber())
-
-        // After all queues + workers have closed, quit the shared
-        // IORedis client so we don't leave a half-open socket behind.
-        await import('./queue/redis-config').then(({ closeQueueRedis }) => closeQueueRedis())
 
         clearTimeout(forceExit)
         log.info('shutdown complete')
@@ -70,6 +63,27 @@ function wireGracefulShutdown(): void {
 
   process.on('SIGTERM', () => shutdown('SIGTERM'))
   process.on('SIGINT', () => shutdown('SIGINT'))
+}
+
+/**
+ * Run one cron job to completion, then exit with a status the platform can see.
+ *
+ * An unknown job name exits 1 rather than 0: a cron service pointed at a job
+ * that no longer exists would otherwise report a green history forever while
+ * sweeping nothing, which is the one failure mode a cron service really has.
+ */
+async function runCronJobAndExit(name: string): Promise<never> {
+  const { isFleetCronJobName, runFleetCronJob, FLEET_CRON_JOBS } =
+    await import('@/lib/server/cron/fleet-jobs')
+  if (!isFleetCronJobName(name)) {
+    log.error(
+      { job: name, known: Object.keys(FLEET_CRON_JOBS) },
+      'QUACKBACK_CRON_JOB names no known job'
+    )
+    process.exit(1)
+  }
+  const ok = await runFleetCronJob(name)
+  process.exit(ok ? 0 : 1)
 }
 
 export function logStartupBanner(): void {
@@ -99,14 +113,61 @@ export function logStartupBanner(): void {
     'server started'
   )
 
+  // One-shot override: run a named fleet job and exit. The live fleet does
+  // not use this — hourly and daily sweeps run on the always-on worker — but
+  // a container that should do one pass and stop still needs a way to say so.
+  // Start none of the long-lived work below, or the process would never exit.
+  const cronJob = process.env.QUACKBACK_CRON_JOB?.trim()
+  if (cronJob) {
+    void runCronJobAndExit(cronJob)
+    return
+  }
+
+  // Surface a mail domain that names no domain, for the same reason as the AI
+  // check below: the failure is otherwise entirely silent. Every reader treats
+  // an unusable value as absent, which is the safe behaviour — nothing is minted
+  // and inbound mail is deferred rather than bounced — and safe here means the
+  // channel simply stops working with no line anywhere saying why. A stray comma
+  // in the domain a cutover is being carried on is exactly the typo this catches.
+  import('@/lib/server/domains/conversation/conversation.email-channel')
+    .then(({ invalidInboundDomainValues }) => {
+      for (const { variable, value } of invalidInboundDomainValues()) {
+        log.error(
+          { variable, value },
+          'inbound mail domain names no usable domain, so it is being ignored: no reply ' +
+            'address is minted on it and no mail is accepted for it'
+        )
+      }
+    })
+    .catch((err) => log.error({ err }, 'inbound mail domain validation failed'))
+
   // Surface half-configured AI loudly instead of failing silently (see #180).
   import('@/lib/server/domains/ai/config')
     .then(({ validateAiConfig }) => validateAiConfig())
     .catch((err) => log.error({ err }, 'ai config validation failed'))
 
-  import('@/integrations/segment/server/user-sync')
-    .then(({ warnIfSegmentInboundIsInsecure }) => warnIfSegmentInboundIsInsecure())
-    .catch((err) => log.error({ err }, 'failed to validate Segment inbound configuration'))
+  // Reads the workspace's integration rows, so it is per-database work. Under
+  // pooled tenancy it runs once per workspace — and, like the startup backfill
+  // below, only on a replica that already does background work. A fleet-wide
+  // read on every web boot would be extra connections from the HTTP tier.
+  //
+  // This one was found by the `db` proxy's own scope tripwire rather than by the
+  // sweep that preceded it: it is a boot-time configuration warning, which is
+  // not where anyone looks for a database query.
+  if (config.isPooledTenancy && !shouldRunWorkers()) {
+    log.info(
+      'pooled tenancy on a web replica — integration config validation runs on the worker tier'
+    )
+  } else {
+    Promise.all([
+      import('@/integrations/segment/server/user-sync'),
+      import('@/lib/server/workspaces/fleet'),
+    ])
+      .then(([{ warnIfSegmentInboundIsInsecure }, { runFleetPass }]) =>
+        runFleetPass('sweep', () => warnIfSegmentInboundIsInsecure())
+      )
+      .catch((err) => log.error({ err }, 'failed to validate Segment inbound configuration'))
+  }
 
   // Wire SIGTERM/SIGINT once — the rest of this function spawns
   // long-lived workers + sweepers, so register the drain handler before
@@ -116,224 +177,151 @@ export function logStartupBanner(): void {
   // One-time in-place data backfills (idempotent, advisory-locked). Runs the
   // custom-oidc → identity_provider migration that needs SECRET_KEY to decrypt
   // its credential and so can't live in the SQL migration bundle.
-  import('@/lib/server/auth/backfill-custom-oidc-provider')
-    .then(({ runStartupBackfills }) => runStartupBackfills())
-    .catch((err) => log.error({ err }, 'failed to run startup backfills'))
+  //
+  // Per-database work, so under pooled tenancy it runs once per workspace — but
+  // only on a replica that already runs background work. A fleet-wide backfill
+  // on every web boot would open a connection to every workspace database from
+  // the HTTP tier; one-shot per-database work belongs with the worker. The
+  // backfill is idempotent and advisory-locked, which is what makes fanning it
+  // out safe rather than merely convenient.
+  if (config.isPooledTenancy && !shouldRunWorkers()) {
+    log.info('pooled tenancy on a web replica — startup backfills are left to the worker tier')
+  } else {
+    Promise.all([
+      import('@/lib/server/auth/backfill-custom-oidc-provider'),
+      import('@/lib/server/workspaces/fleet'),
+    ])
+      .then(([{ runStartupBackfills }, { runFleetPass }]) =>
+        runFleetPass('sweep', () => runStartupBackfills())
+      )
+      .catch((err) => log.error({ err }, 'failed to run startup backfills'))
+  }
 
   // Quackback config file watcher — reconciles managed fields from
   // /etc/quackback/config.yaml on every change. No-op when the file
   // is absent (self-host default).
-  import('@/lib/server/config-file')
-    .then(({ startQuackbackConfigWatcher }) => startQuackbackConfigWatcher())
-    .catch((err) => log.error({ err }, 'failed to start config-file watcher'))
+  //
+  // Deliberately NOT started under pooled tenancy. The mechanism is a single
+  // file at a single path with no workspace parameter anywhere in `ReconcileDeps`,
+  // and you cannot mount N files at one path — so it has to be replaced by a
+  // workspace-keyed entrypoint behind an authenticated control-plane route, not
+  // adapted. Starting it here would reconcile whichever workspace the fleet pass
+  // happened to visit with one file's contents (SAAS-HOSTING-STACK.md §8).
+  if (config.isPooledTenancy) {
+    log.info(
+      'pooled tenancy — the /etc/quackback/config.yaml watcher is not started; ' +
+        'per-workspace config arrives through the control plane'
+    )
+  } else {
+    import('@/lib/server/config-file')
+      .then(({ startQuackbackConfigWatcher }) => startQuackbackConfigWatcher())
+      .catch((err) => log.error({ err }, 'failed to start config-file watcher'))
+  }
 
   // Background processing is role-gated: QUACKBACK_ROLE=web replicas serve
-  // HTTP and enqueue only, so scaling them never scales queue consumption.
+  // HTTP and enqueue only. Cloud runs a dedicated worker replica.
   if (shouldRunWorkers()) {
     startBackgroundProcessing()
   } else {
-    // Web replicas write domain events to the durable outbox but do NOT drain it
-    // — the relay runs worker-side only. Since EVENTING-V2's cutover made the
-    // outbox the SOLE delivery path, a deployment that scales web replicas MUST
-    // also run at least one worker-role (or 'all') replica, or every webhook /
-    // notification / workflow will pile up unpublished. Warn (not info) so a
-    // web-only topology is loud in the logs.
+    // Web replicas write domain events and enqueue jobs but do NOT claim them.
+    // Since EVENTING-V2's cutover made the job-owned outbox the SOLE delivery
+    // path, a deployment that scales web replicas MUST also run at least one
+    // worker-role (or 'all') replica, or every webhook / notification /
+    // workflow will pile up unpublished. Warn (not info) so a web-only
+    // topology is loud in the logs.
     log.warn(
-      'QUACKBACK_ROLE=web — queue workers and the outbox relay are worker-side; ' +
+      'QUACKBACK_ROLE=web — queue workers are worker-side; ' +
         'ensure a worker (or role=all) replica is running or events will not be delivered'
     )
   }
 }
 
 /**
- * Boot queue workers and periodic sweepers. Runs under QUACKBACK_ROLE=worker
- * and the single-process default ('all') — never on web-role replicas. Every
- * sweeper additionally holds a cross-instance sweep lock, so multiple worker
- * replicas stay safe.
+ * Boot the background tiers and the periodic sweepers. Runs under
+ * `QUACKBACK_ROLE=worker` and the single-process default (`all`), never on
+ * web-role replicas. Every sweeper holds a cross-instance sweep lock, so
+ * multiple worker replicas stay safe.
+ *
+ * Under pooled tenancy the same timers run: compute and Postgres stay up, so
+ * fanning a tick across the fleet is just the work, not a reason to park it
+ * on a cron container that starts, sweeps, and exits.
  */
 function startBackgroundProcessing(): void {
-  // Boot every eagerly-initialized queue worker from the registry. Each init
-  // is isolated: one failure is logged without blocking the rest.
-  initAllWorkers()
+  // The job worker — every background queue in the process. It runs
+  // under BOTH tenancy modes, because a job row lives in the workspace's own
+  // database and the job worker opens a real workspace scope around every claim.
+  import('./jobs/worker')
+    .then(({ startJobWorker }) => startJobWorker())
+    .catch((err) => log.error({ err }, 'failed to start the job worker'))
 
-  // Durable event outbox relay (EVENTING-V2 WO-3). Leader-elected, so multiple
-  // worker replicas stay safe. Post-cutover (WO-18) the outbox is the SOLE
-  // delivery path, so the relay always runs here — the only gate is
-  // QUACKBACK_ROLE (worker/all), enforced inside startOutboxRelay().
-  import('./events/relay')
-    .then(({ startOutboxRelay }) => startOutboxRelay())
-    .catch((err) => log.error({ err }, 'failed to start outbox relay'))
-
-  // Audit-log retention sweep + expired portal/team invite sweep.
-  // Daily maintenance runs under a cross-instance lock so only one
-  // replica executes per tick in multi-instance deployments.
+  // Boot-time page_views partition ensure. It stays at boot rather than
+  // waiting for the 02:30 slot because beacons are dropped while a day has no
+  // partition, and an instance that was down long enough to exhaust its
+  // week-ahead window would otherwise lose a day of them.
   Promise.all([
-    import('@/lib/server/audit/log'),
-    import('@/lib/server/audit/invite-sweep'),
-    import('./events/events-sweep'),
-    import('./domains/ai/usage-log'),
-    import('./domains/assistant/tool-audit'),
-    import('./domains/conversation/conversation-translation.service'),
-    import('@/lib/server/sweep-lock'),
+    import('./domains/analytics/partition-maintenance-queue'),
+    import('@/lib/server/workspaces/fleet'),
   ])
-    .then(
-      ([
-        { pruneAuditLog },
-        { sweepExpiredPortalInvites },
-        { pruneEventsOutbox },
-        { cleanupExpiredLogs },
-        { cleanupExpiredToolCalls, cleanupExpiredAssistantEvents },
-        { cleanupExpiredMessageTranslations },
-        { withSweepLock },
-      ]) => {
-        const runDailyAuditMaintenance = async () => {
-          // TTL = 1 hour — each sweeper takes < 1s. Extending generously
-          // so a slow DB or large table doesn't cause premature expiry.
-          const ONE_HOUR = 60 * 60 * 1000
-          await withSweepLock('audit_prune', ONE_HOUR, async () => {
-            await pruneAuditLog().catch((err) => log.error({ err }, 'audit-log prune failed'))
-          })
-          await withSweepLock('invite_sweep', ONE_HOUR, async () => {
-            await sweepExpiredPortalInvites().catch((err) =>
-              log.error({ err }, 'invite sweep failed')
-            )
-          })
-          // EVENTING-V2 outbox retention (WO-20): prune published rows past the
-          // window; unpublished rows are never touched.
-          await withSweepLock('events_prune', ONE_HOUR, async () => {
-            await pruneEventsOutbox().catch((err) =>
-              log.error({ err }, 'events outbox prune failed')
-            )
-          })
-          // Log/telemetry retention: ai_usage_log + operational tables
-          // (hook deliveries, unsubscribe tokens, in-app notifications),
-          // assistant tool-audit + events, and message translations.
-          await withSweepLock('logs_retention', ONE_HOUR, async () => {
-            await Promise.all([
-              cleanupExpiredLogs(),
-              cleanupExpiredToolCalls(),
-              cleanupExpiredAssistantEvents(),
-              cleanupExpiredMessageTranslations(),
-            ]).catch((err) => log.error({ err }, 'logs retention cleanup failed'))
-          })
-        }
-        setTimeout(() => {
-          void runDailyAuditMaintenance()
-        }, 30_000)
-        setInterval(
-          () => {
-            void runDailyAuditMaintenance()
-          },
-          24 * 60 * 60 * 1000
-        )
-      }
+    .then(([{ ensurePageViewPartitionsAtBoot }, { runFleetPass }]) =>
+      runFleetPass('sweep', () => ensurePageViewPartitionsAtBoot())
     )
-    .catch((err) => log.error({ err }, 'failed to init audit-log maintenance'))
+    .catch((err) => log.error({ err }, 'boot-time partition ensure failed'))
 
-  // Start periodic summary sweep (refreshes stale/missing post summaries).
-  // Runs under a cross-instance lock — AI calls are expensive, so only
-  // one replica should generate summaries per tick.
-  // Runs once at startup (after a short delay) then every 30 minutes.
-  Promise.all([import('./domains/summary/summary.service'), import('@/lib/server/sweep-lock')])
-    .then(([{ refreshStaleSummaries }, { withSweepLock }]) => {
-      const ONE_HOUR = 60 * 60 * 1000
-      setTimeout(() => {
-        void withSweepLock('summary_sweep', ONE_HOUR, () =>
-          refreshStaleSummaries().catch((err) => log.error({ err }, 'initial summary sweep failed'))
-        )
-      }, 5_000) // 5s delay to let other startup tasks finish
-      setInterval(
-        () => {
-          void withSweepLock('summary_sweep', ONE_HOUR, () =>
-            refreshStaleSummaries().catch((err) => log.error({ err }, 'summary sweep failed'))
-          )
-        },
-        30 * 60 * 1000
-      ) // Every 30 minutes
-    })
-    .catch((err) => log.error({ err }, 'failed to init summary sweep'))
+  // Telemetry used to live on the daily cron container (a web replica does
+  // not arm it from bootstrap). The always-on worker owns it now. Detach
+  // from any inherited request scope so withSweepLock fans out fleet-wide.
+  import('@/lib/server/log-context')
+    .then(({ runWithoutLogContext }) =>
+      runWithoutLogContext(async () => {
+        const { startTelemetry } = await import('@/lib/server/telemetry')
+        await startTelemetry()
+      })
+    )
+    .catch((err) => log.error({ err }, 'failed to start telemetry'))
 
-  // Start periodic merge suggestion sweep (detects duplicate posts).
-  // Runs under a cross-instance lock — AI calls are expensive and duplicate
-  // merge suggestions are user-visible, so only one replica per tick.
-  // Runs once at startup (after a short delay) then every 30 minutes.
-  Promise.all([
-    import('./domains/merge-suggestions/merge-check.service'),
-    import('@/lib/server/sweep-lock'),
-  ])
-    .then(([{ sweepMergeSuggestions }, { withSweepLock }]) => {
-      const ONE_HOUR = 60 * 60 * 1000
-      setTimeout(() => {
-        void withSweepLock('merge_sweep', ONE_HOUR, () =>
-          sweepMergeSuggestions().catch((err) =>
-            log.error({ err }, 'initial merge suggestion sweep failed')
-          )
-        )
-      }, 15_000) // 15s delay (stagger after summary's 5s)
-      setInterval(
-        () => {
-          void withSweepLock('merge_sweep', ONE_HOUR, () =>
-            sweepMergeSuggestions().catch((err) =>
-              log.error({ err }, 'merge suggestion sweep failed')
-            )
-          )
-        },
-        30 * 60 * 1000
-      ) // Every 30 minutes
-    })
-    .catch((err) => log.error({ err }, 'failed to init merge suggestion sweep'))
+  // The scheduled sweeps. Bodies live in `cron/fleet-jobs.ts` so a one-shot
+  // `QUACKBACK_CRON_JOB` run and this timer schedule execute the same code.
+  import('@/lib/server/cron/fleet-jobs')
+    .then((jobs) => {
+      // Space reclamation for the tables that replaced Redis (kv_store,
+      // rate_bucket, kv_set_member, presence_stream, realtime_overflow).
+      // Hourly rather than daily because rate buckets churn per request.
+      setTimeout(() => void jobs.runKvSweep(), 45_000)
+      setInterval(() => void jobs.runKvSweep(), 60 * 60 * 1000)
 
-  // Changelog publish-notification reconciler: announces any live entry whose
-  // notification was missed (a dropped delayed-publish job, or a dispatch that
-  // failed after the synchronous publish). Cross-instance lock so only one
-  // replica notifies per tick; the per-entry atomic claim guards the rest.
-  // Runs shortly after startup, then every 5 minutes.
-  Promise.all([import('./domains/changelog/changelog.service'), import('@/lib/server/sweep-lock')])
-    .then(([{ reconcileChangelogNotifications }, { withSweepLock }]) => {
-      const TEN_MIN = 10 * 60 * 1000
-      const runReconcile = () =>
-        withSweepLock('changelog_notify', TEN_MIN, async () => {
-          await reconcileChangelogNotifications().catch((err) =>
-            log.error({ err }, 'changelog notify reconcile failed')
-          )
-        })
-      setTimeout(() => void runReconcile(), 25_000) // 25s delay (stagger after merge's 15s)
-      setInterval(() => void runReconcile(), 5 * 60 * 1000) // Every 5 minutes
-    })
-    .catch((err) => log.error({ err }, 'failed to init changelog notify reconciler'))
+      // Daily maintenance: audit prune, invite sweep, outbox retention, logs.
+      setTimeout(() => void jobs.runDailyMaintenance(), 30_000)
+      setInterval(() => void jobs.runDailyMaintenance(), 24 * 60 * 60 * 1000)
 
-  // Status page publish-notification reconciler: same shape as the changelog
-  // one above, for status_incidents.notified_at (Status Product Spec §9).
-  // Runs shortly after startup, then every 5 minutes.
-  Promise.all([import('./domains/status/status.service'), import('@/lib/server/sweep-lock')])
-    .then(([{ reconcileStatusNotifications }, { withSweepLock }]) => {
-      const TEN_MIN = 10 * 60 * 1000
-      const runReconcile = () =>
-        withSweepLock('status_notify', TEN_MIN, async () => {
-          await reconcileStatusNotifications().catch((err) =>
-            log.error({ err }, 'status notify reconcile failed')
-          )
-        })
-      setTimeout(() => void runReconcile(), 28_000) // 28s delay (stagger after changelog's 25s)
-      setInterval(() => void runReconcile(), 5 * 60 * 1000) // Every 5 minutes
-    })
-    .catch((err) => log.error({ err }, 'failed to init status notify reconciler'))
+      // Stale/missing post summaries. AI calls are expensive, so the sweep lock
+      // keeps it to one replica per tick. 5s delay lets other startup finish.
+      setTimeout(() => void jobs.runSummarySweep(), 5_000)
+      setInterval(() => void jobs.runSummarySweep(), 30 * 60 * 1000)
 
-  // Scheduled-maintenance boot sweep: catches window start/complete
-  // transitions missed while the process was down (Status Product Spec §9).
-  // Runs shortly after startup, then every 5 minutes; each handler is
-  // idempotent so overlap with a live delayed job is harmless.
-  Promise.all([import('./domains/status/status.maintenance'), import('@/lib/server/sweep-lock')])
-    .then(([{ reconcileMaintenanceWindows }, { withSweepLock }]) => {
-      const TEN_MIN = 10 * 60 * 1000
-      const runReconcile = () =>
-        withSweepLock('status_maintenance_sweep', TEN_MIN, async () => {
-          await reconcileMaintenanceWindows().catch((err) =>
-            log.error({ err }, 'status maintenance window reconcile failed')
-          )
-        })
-      setTimeout(() => void runReconcile(), 31_000) // 31s delay (stagger after status notify's 28s)
-      setInterval(() => void runReconcile(), 5 * 60 * 1000) // Every 5 minutes
+      // Duplicate-post detection. 15s delay staggers after summary's 5s.
+      setTimeout(() => void jobs.runMergeSweep(), 15_000)
+      setInterval(() => void jobs.runMergeSweep(), 30 * 60 * 1000)
+
+      // Changelog publish-notification reconciler: announces any live entry
+      // whose notification was missed (a dropped delayed-publish job, or a
+      // dispatch that failed after the synchronous publish).
+      setTimeout(() => void jobs.runChangelogNotifyReconcile(), 25_000)
+      setInterval(() => void jobs.runChangelogNotifyReconcile(), 5 * 60 * 1000)
+
+      // Same shape, for status_incidents.notified_at.
+      setTimeout(() => void jobs.runStatusNotifyReconcile(), 28_000)
+      setInterval(() => void jobs.runStatusNotifyReconcile(), 5 * 60 * 1000)
+
+      // Scheduled-maintenance boot sweep: catches window start/complete
+      // transitions missed while the process was down. Each handler is
+      // idempotent, so overlap with a live delayed job is harmless.
+      setTimeout(() => void jobs.runStatusMaintenanceSweep(), 31_000)
+      setInterval(() => void jobs.runStatusMaintenanceSweep(), 5 * 60 * 1000)
+
+      setTimeout(() => void jobs.runFleetMigratorPass(), 90_000)
+      setInterval(() => void jobs.runFleetMigratorPass(), 60 * 60 * 1000)
+
+      log.info({ event: 'sweeps.armed' }, 'scheduled sweeps armed')
     })
-    .catch((err) => log.error({ err }, 'failed to init status maintenance sweep'))
+    .catch((err) => log.error({ err }, 'failed to init the scheduled sweeps'))
 }

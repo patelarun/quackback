@@ -66,7 +66,7 @@ export type AuthProviderId =
  * the policy table operates on. Returns `null` for paths that aren't
  * sign-in flows (sign-out, session reads, JWT, MCP OAuth, etc.).
  *
- * Path templates verified against installed Better-Auth 1.6.5 source:
+ * Path templates verified against installed Better-Auth 1.6.16 source:
  *   - /sign-in/email                            -> credential
  *   - /sign-in/magic-link                       -> magic-link (send)
  *   - /magic-link/verify                        -> magic-link (verify)
@@ -152,6 +152,26 @@ const NO_EMAIL_BEFORE_PATHS = new Set<string>([
 ])
 
 /**
+ * Email-bearing paths that bring a NEW account into existence when no user
+ * holds the address yet — the ones `openSignup` is about.
+ *
+ * `/sign-in/email` is deliberately absent: a password sign-in against an
+ * address with no account simply fails, so gating it would turn a wrong
+ * password into an account-existence oracle.
+ *
+ * `/magic-link/verify` is absent for a different reason: it carries its email
+ * inside the consumed token rather than in the body, so there is nothing here
+ * to gate on. Its send side is listed, and the creation itself is covered by
+ * the `user.create.before` backstop in `auth/index.ts`.
+ */
+const ACCOUNT_CREATING_EMAIL_PATHS = new Set<string>([
+  '/sign-up/email',
+  '/sign-in/magic-link',
+  '/email-otp/send-verification-otp',
+  '/sign-in/email-otp',
+])
+
+/**
  * Layer B — pre-session per-endpoint gate.
  *
  * Runs for paths where the email is in `ctx.body` (password,
@@ -228,7 +248,7 @@ export async function handleSignInPreCheck(ctx: {
   // from linking while being unable to verify the address either, since the
   // transport refuses to deliver there.
   //
-  // Checked before the tenant load and the rate limiter: it is the cheapest
+  // Checked before the workspace load and the rate limiter: it is the cheapest
   // possible rejection and it keeps the reserved domain out of the rate-limit
   // keyspace.
   if (isSyntheticAnonEmail(email)) {
@@ -237,7 +257,7 @@ export async function handleSignInPreCheck(ctx: {
 
   // Rate-limit before any DB load. Generic redirect on block so the
   // response doesn't leak which dimension hit the cap. Sequential
-  // with the tenant fetch so a DB hiccup can't mask a 429 with a 500.
+  // with the workspace fetch so a DB hiccup can't mask a 429 with a 500.
   const headers = getRequestHeaders()
   const ip = getClientIp(headers)
   const rateLimiter = selectSignInRateLimiter(provider)
@@ -275,8 +295,8 @@ export async function handleSignInPreCheck(ctx: {
     )
   }
 
-  const { getTenantSettings } = await import('@/lib/server/domains/settings/settings.service')
-  const tenant = await getTenantSettings()
+  const { getWorkspaceSettings } = await import('@/lib/server/domains/settings/settings.service')
+  const workspace = await getWorkspaceSettings()
 
   const { isHardBound, isAuthMethodAllowed } = await import('./auth-restrictions')
 
@@ -318,9 +338,45 @@ export async function handleSignInPreCheck(ctx: {
     throw ctx.redirect('/?auth=signin&callbackUrl=/admin&error=verified_domain_requires_sso')
   }
 
+  // `openSignup`, enforced. Only for the paths that would CREATE an account and
+  // only when no user holds the address — the same exemption the policy itself
+  // opens with, checked here so the common case costs no extra query.
+  //
+  // Sits after hard-binding, which is the stronger statement about the same
+  // attempt and should be the one reported, and before the `!principalRow`
+  // return below — that early exit exists for exactly the brand-new sign-up
+  // this gate is about, so a gate placed after it would never run.
+  //
+  // This redirect IS distinguishable per address: an address that holds an
+  // account, or that a pending invitation names, gets the endpoint's normal
+  // answer instead. It is bounded rather than closed, because it sits behind
+  // the magic-link limiter above — 3 per (ip, address) per 15 minutes and 20
+  // per IP — which is spent before the question is asked, so probing costs the
+  // same budget as sending. `/api/auth/portal-signin` is the same question
+  // asked without a limiter in front of it, which is why that route answers
+  // identically either way and mails the refusal instead.
+  //
+  // The PORTAL door, because nothing here names an audience and the creation
+  // does. This gate sits before the `!principalRow` return by design, so there
+  // is no role to read; the four gated paths are each reachable from the portal
+  // dialog and the team login alike, and the one body field that would hint —
+  // `callbackURL` — is sent by none of this app's callers of them and is chosen
+  // by whoever is asking, so honouring it would let a caller pick which of the
+  // workspace's two answers to be judged by. What settles it is what the
+  // request would produce: `user.create.after` writes `role: 'user'` for every
+  // new account without consulting anything, so this creates a portal account
+  // or nothing. Team membership arrives by invitation or the bootstrap claim,
+  // and the policy exempts both.
+  if (!userRow && ACCOUNT_CREATING_EMAIL_PATHS.has(ctx.path ?? '')) {
+    const { isAccountCreationAllowed, SIGNUP_NOT_ALLOWED } = await import('./signup-policy')
+    if (!(await isAccountCreationAllowed(email, 'portal'))) {
+      throw ctx.redirect(`/?auth=signin&error=${SIGNUP_NOT_ALLOWED}`)
+    }
+  }
+
   if (!principalRow) return
 
-  const result = await isAuthMethodAllowed(provider, role, registeredOidcIds, tenant)
+  const result = await isAuthMethodAllowed(provider, role, registeredOidcIds, workspace)
   if (!result.allowed) {
     const isTeamRole = role === 'admin' || role === 'member'
     const errorCode = result.error ?? 'auth_method_blocked'
@@ -374,6 +430,13 @@ export const hooksBefore = createAuthMiddleware(async (ctx) => {
  * first internet visitor to a declared public provider would seize admin
  * on a fresh / recovered workspace. The `lastSsoSignInAt` stamp is
  * provider-independent (it lives on `principal`) and runs unconditionally.
+ *
+ * On top of H8, promotion also requires `isOpenToBootstrapClaim`: on a
+ * workspace a control plane created, the owner is recorded where it was
+ * created and arriving is not how the admin is decided, whatever the IdP
+ * attests. The cost is that such a workspace cannot recover a deleted admin
+ * through SSO — it recovers through the control plane that owns it, which is
+ * the same place its owner came from.
  */
 export async function handleSsoCallbackAfter(
   ctx: {
@@ -403,7 +466,9 @@ export async function handleSsoCallbackAfter(
   const callbackProvider = providers.find((p) => p.registrationId === providerId)
   const eligibleForBootstrap = shouldBootstrapPromote(email, callbackProvider)
 
-  const { db, principal: principalTable, and, eq, sql } = await import('@/lib/server/db')
+  const { db } = await import('@/lib/server/db')
+  const { bootstrapAdminLock, findHumanAdmin, isOpenToBootstrapClaim } =
+    await import('@/lib/server/domains/principals/bootstrap-admin')
   const { setPrincipalRole, updatePrincipalFields } =
     await import('@/lib/server/domains/principals/principal.factory')
   // Cast through the typeid-branded type so Drizzle's eq() narrows.
@@ -413,23 +478,33 @@ export async function handleSsoCallbackAfter(
   // Captured inside the tx (only the role promotion busts), drained after commit.
   let bootstrapCacheKeys: readonly string[] = []
   await db.transaction(async (tx) => {
-    // Workspace-scoped advisory lock so concurrent first-SSO sign-ins
-    // serialise. Hash key is stable across pods. Released on commit.
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('quackback:sso_bootstrap'))`)
+    // The shared bootstrap lock, not a private one: this path and the
+    // onboarding workspace step both hand out the first admin, and two
+    // different lock keys exclude nothing. Released on commit.
+    await tx.execute(bootstrapAdminLock())
 
     // Bootstrap admin promotion: only fires when the H8 gate passed AND no
     // human admin exists. A healthy workspace post-/admin/setup always has
     // one, so this branch is recovery-scoped (deleted admin, skipped
-    // onboarding, config-file provisioning before any admin existed). Filter
-    // to type='user' so a service-principal admin (e.g. a config-file-
-    // provisioned API key) doesn't block the first real user from self-
-    // promoting.
+    // onboarding, config-file provisioning before any admin existed).
     if (eligibleForBootstrap) {
-      const existingAdmin = await tx.query.principal.findFirst({
-        where: and(eq(principalTable.role, 'admin'), eq(principalTable.type, 'user')),
-        columns: { id: true },
-      })
-      if (!existingAdmin) {
+      // The same three facts the onboarding promoter and the unauthenticated
+      // claim screen decide on, asked on the same transaction inside the same
+      // lock. Two of them used to be asked here and the third was not, which
+      // is the disagreement the shared module exists to prevent, inverted: the
+      // screen told the browser `openToClaim: false` while this path promoted
+      // the first arrival anyway.
+      const [existingAdmin, openToClaim] = await Promise.all([
+        findHumanAdmin(tx),
+        isOpenToBootstrapClaim(tx),
+      ])
+      if (!existingAdmin && !openToClaim) {
+        log.warn(
+          { user_id: userId, provider_id: providerId },
+          'sso bootstrap admin promotion refused: workspace is provisioned'
+        )
+      }
+      if (!existingAdmin && openToClaim) {
         const { cacheKeysToBust } = await setPrincipalRole({ userId: userIdTyped }, 'admin', {
           executor: tx,
         })
@@ -450,7 +525,7 @@ export async function handleSsoCallbackAfter(
   })
 
   if (bootstrapCacheKeys.length) {
-    const { cacheDel } = await import('@/lib/server/redis')
+    const { cacheDel } = await import('@/lib/server/cache')
     await cacheDel(...bootstrapCacheKeys)
   }
 }
@@ -732,8 +807,8 @@ export async function handleCallbackPolicyCleanup(
     redirect: (url: string) => Error
     setCookie?: (name: string, value: string, opts?: Record<string, unknown>) => string
   },
-  tenant: Awaited<
-    ReturnType<typeof import('@/lib/server/domains/settings/settings.service').getTenantSettings>
+  workspace: Awaited<
+    ReturnType<typeof import('@/lib/server/domains/settings/settings.service').getWorkspaceSettings>
   >,
   /** Identity providers + their verified domains (from listIdentityProviders). */
   providers: Awaited<
@@ -840,7 +915,7 @@ export async function handleCallbackPolicyCleanup(
 
   if (!principalRow) return
 
-  const result = await isAuthMethodAllowed(provider, role, registeredOidcIds, tenant)
+  const result = await isAuthMethodAllowed(provider, role, registeredOidcIds, workspace)
   if (result.allowed) return
 
   await blockSignIn(result.error ?? 'auth_method_blocked')
@@ -1238,8 +1313,8 @@ export const hooksAfter = createAuthMiddleware(async (ctx) => {
 
   // One settings fetch shared across all helpers below so we don't
   // make 2-3 sequential cache round-trips per sign-in.
-  const { getTenantSettings } = await import('@/lib/server/domains/settings/settings.service')
-  const tenant = await getTenantSettings()
+  const { getWorkspaceSettings } = await import('@/lib/server/domains/settings/settings.service')
+  const workspace = await getWorkspaceSettings()
 
   await handleAutoProvisionAfter(
     ctx as Parameters<typeof handleAutoProvisionAfter>[0],
@@ -1248,7 +1323,7 @@ export const hooksAfter = createAuthMiddleware(async (ctx) => {
   )
   await handleCallbackPolicyCleanup(
     ctx as Parameters<typeof handleCallbackPolicyCleanup>[0],
-    tenant,
+    workspace,
     providers,
     registeredOidcIds
   )

@@ -37,8 +37,7 @@ export function resolveInboxSort(sort: InboxSort | undefined, search?: string): 
 
 /** A reference to one inbox item, discriminated by kind. */
 export type InboxItemRef =
-  | { kind: 'conversation'; id: ConversationId }
-  | { kind: 'ticket'; id: TicketId }
+  { kind: 'conversation'; id: ConversationId } | { kind: 'ticket'; id: TicketId }
 
 /** The linked customer ticket's summary, carried on a conversation item so the
  *  list row can render its ticket line (`#N · <title>`) without a second fetch
