@@ -348,6 +348,7 @@ describe('replayGateVerdict', () => {
       '0271_widget_installed_sdk_version',
       '0272_kb_url_id',
       '0273_kb_articles_base_locale',
+      '0274_repair_skipped_upstream_0249',
     ])
     const verdict = replayGateVerdict(before, verdictsFor(replaySetFor(before)), false)
     expect(verdict.ok).toBe(false)

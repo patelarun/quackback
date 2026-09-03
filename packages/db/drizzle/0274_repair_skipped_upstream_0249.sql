@@ -1,0 +1,20 @@
+-- Repair for a migration this fork caused to be skipped.
+--
+-- The fork and upstream each authored a migration numbered 0249, and both
+-- carried the same journal timestamp (1785700000007). Drizzle applies entries
+-- whose `when` is strictly GREATER than the newest applied `created_at`, so on
+-- any install that had already applied the fork's
+-- 0249_kb_articles_base_locale, upstream's 0249_identity_provider_last_test_capture
+-- was never `>` the ledger high-water mark and was silently passed over.
+-- 0250 onward (…008 and up) applied normally, which is why only this one
+-- column went missing and every query naming it began throwing
+-- `column "last_test_capture" does not exist`.
+--
+-- Renumbering the fork's migration to 0273 during the upstream merge fixed the
+-- filename clash but could not fix this: the ledger row was already written.
+-- So the column is re-added here, under a timestamp above the whole span.
+--
+-- IF NOT EXISTS: a fresh install runs upstream's 0249 normally and reaches this
+-- file with the column already present, where it is a no-op. Matches upstream's
+-- own statement exactly, so both paths land on the same schema.
+ALTER TABLE "identity_provider" ADD COLUMN IF NOT EXISTS "last_test_capture" jsonb;
