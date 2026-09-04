@@ -1,6 +1,7 @@
 import { Button, Heading, Section, Text } from '@react-email/components'
 import { EmailLayout, NotificationFooter } from './email-layout'
 import { typography, button, colors } from './shared-styles'
+import { emailText } from '../messages'
 
 interface StatusChangeEmailProps {
   postTitle: string
@@ -48,17 +49,15 @@ export function StatusChangeEmail({
 
   return (
     <EmailLayout
-      preview={`${emoji} Your feedback is now ${formattedNewStatus}`}
+      preview={emailText('statusChange.preview', { emoji, status: formattedNewStatus })}
       logoUrl={logoUrl}
       logoAlt={organizationName}
     >
       {/* Content */}
       <Heading style={typography.h1}>
-        {emoji} Your feedback is now {formattedNewStatus}!
+        {emailText('statusChange.heading', { emoji, status: formattedNewStatus })}
       </Heading>
-      <Text style={typography.text}>
-        Great news! The status of your feedback has been updated on {organizationName}.
-      </Text>
+      <Text style={typography.text}>{emailText('statusChange.body', { organizationName })}</Text>
 
       {/* Post Title */}
       <Section
@@ -84,13 +83,13 @@ export function StatusChangeEmail({
       {/* CTA Button */}
       <Section style={{ textAlign: 'center', marginTop: '32px', marginBottom: '32px' }}>
         <Button style={button.primary} href={postUrl}>
-          View Feedback
+          {emailText('statusChange.cta')}
         </Button>
       </Section>
 
       {/* Footer */}
       <NotificationFooter
-        reason="You received this email because you submitted or subscribed to this feedback."
+        reason={emailText('common.reason.feedbackSubscribed')}
         unsubscribeUrl={unsubscribeUrl}
         preferencesUrl={preferencesUrl}
       />

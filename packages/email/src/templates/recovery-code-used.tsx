@@ -1,6 +1,7 @@
 import { Heading, Section, Text } from '@react-email/components'
 import { EmailLayout, TransactionalFooter } from './email-layout'
 import { typography } from './shared-styles'
+import { emailText } from '../messages'
 
 interface RecoveryCodeUsedEmailProps {
   workspaceName?: string
@@ -23,42 +24,44 @@ export function RecoveryCodeUsedEmail({
   occurredAt,
   logoUrl,
 }: RecoveryCodeUsedEmailProps) {
-  const workspaceLabel = workspaceName ? ` for ${workspaceName}` : ''
   return (
-    <EmailLayout preview={`A recovery code was used to sign in${workspaceLabel}`} logoUrl={logoUrl}>
-      <Heading style={{ ...typography.h1, textAlign: 'center' }}>A recovery code was used</Heading>
+    <EmailLayout
+      preview={
+        workspaceName
+          ? emailText('recoveryCodeUsed.previewFor', { workspaceName })
+          : emailText('recoveryCodeUsed.preview')
+      }
+      logoUrl={logoUrl}
+    >
+      <Heading style={{ ...typography.h1, textAlign: 'center' }}>
+        {emailText('recoveryCodeUsed.heading')}
+      </Heading>
       <Text style={{ ...typography.text, textAlign: 'center' }}>
-        Someone signed in to your account{workspaceLabel} using one of your saved recovery codes.
+        {workspaceName
+          ? emailText('recoveryCodeUsed.bodyFor', { workspaceName })
+          : emailText('recoveryCodeUsed.body')}
       </Text>
 
       <Section style={{ marginTop: '24px', marginBottom: '24px' }}>
         <Text style={typography.textSmall}>
-          <strong>When:</strong> {occurredAt}
+          <strong>{emailText('common.label.when')}</strong> {occurredAt}
         </Text>
         {ipAddress ? (
           <Text style={typography.textSmall}>
-            <strong>IP address:</strong> {ipAddress}
+            <strong>{emailText('recoveryCodeUsed.label.ip')}</strong> {ipAddress}
           </Text>
         ) : null}
         {userAgent ? (
           <Text style={typography.textSmall}>
-            <strong>Device:</strong> {userAgent}
+            <strong>{emailText('common.label.device')}</strong> {userAgent}
           </Text>
         ) : null}
       </Section>
 
-      <Text style={typography.text}>
-        If this was you, no action is needed. The code is now spent and can&apos;t be reused.
-      </Text>
-      <Text style={typography.text}>
-        If this wasn&apos;t you, sign in and rotate your recovery codes immediately. The person who
-        used the code now has an active session — revoke it from your security settings.
-      </Text>
+      <Text style={typography.text}>{emailText('recoveryCodeUsed.adviceYou')}</Text>
+      <Text style={typography.text}>{emailText('recoveryCodeUsed.adviceNotYou')}</Text>
 
-      <TransactionalFooter>
-        You&apos;re receiving this because a recovery code on your account was just used. These
-        alerts are required and can&apos;t be disabled.
-      </TransactionalFooter>
+      <TransactionalFooter>{emailText('recoveryCodeUsed.footer')}</TransactionalFooter>
     </EmailLayout>
   )
 }

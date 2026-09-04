@@ -1,6 +1,7 @@
 import { Button, Column, Heading, Row, Section, Text } from '@react-email/components'
 import { EmailLayout, NotificationFooter } from './email-layout'
 import { typography, button, colors } from './shared-styles'
+import { emailText } from '../messages'
 
 export interface PostMentionEmailProps {
   mentionerName: string
@@ -29,14 +30,14 @@ export function PostMentionEmail({
 
   return (
     <EmailLayout
-      preview={`${displayName} mentioned you in "${postTitle}"`}
+      preview={emailText('postMention.preview', { displayName, postTitle })}
       logoUrl={logoUrl}
       logoAlt={workspaceName}
     >
       {/* Content */}
-      <Heading style={typography.h1}>You were mentioned</Heading>
+      <Heading style={typography.h1}>{emailText('postMention.heading')}</Heading>
       <Text style={typography.text}>
-        {displayName} mentioned you in {postTitle}.
+        {emailText('postMention.body', { displayName, postTitle })}
       </Text>
 
       {/* Post Title */}
@@ -56,7 +57,7 @@ export function PostMentionEmail({
             color: colors.textMuted,
           }}
         >
-          Feedback
+          {emailText('common.label.feedback')}
         </Text>
         <Text style={{ ...typography.text, marginTop: '0', marginBottom: '0', fontWeight: '600' }}>
           {postTitle}
@@ -85,21 +86,19 @@ export function PostMentionEmail({
       {/* CTA Button */}
       <Section style={{ textAlign: 'center', marginTop: '32px', marginBottom: '32px' }}>
         <Button style={button.primary} href={postUrl}>
-          View Feedback
+          {emailText('postMention.cta')}
         </Button>
       </Section>
 
       {/* Footer */}
       {unsubscribeUrl ? (
         <NotificationFooter
-          reason={`You received this email because you were mentioned in ${workspaceName}.`}
+          reason={emailText('mention.reason', { workspaceName })}
           unsubscribeUrl={unsubscribeUrl}
           preferencesUrl={preferencesUrl}
         />
       ) : (
-        <Text style={typography.footer}>
-          You received this email because you were mentioned in {workspaceName}.
-        </Text>
+        <Text style={typography.footer}>{emailText('mention.reason', { workspaceName })}</Text>
       )}
     </EmailLayout>
   )

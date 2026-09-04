@@ -12,6 +12,7 @@ import {
 import { layout, branding, typography, utils, colors, DEFAULT_LOGO_URL } from './shared-styles'
 import { useEmailShowPoweredBy } from '../powered-by'
 import { readEmailFooterBranding } from '../footer-branding'
+import { emailText } from '../messages'
 
 interface EmailLayoutProps {
   preview: string
@@ -105,7 +106,7 @@ export function TransactionalFooter({ children }: { children: React.ReactNode })
 export function NotificationFooter({
   reason,
   unsubscribeUrl,
-  unsubscribeLabel = 'Unsubscribe from this post',
+  unsubscribeLabel,
   preferencesUrl,
 }: {
   reason: string
@@ -113,18 +114,19 @@ export function NotificationFooter({
   unsubscribeLabel?: string
   preferencesUrl?: string
 }) {
+  const label = unsubscribeLabel ?? emailText('footer.unsubscribePost')
   return (
     <Text style={typography.footer}>
       {reason}
       <br />
       <Link href={unsubscribeUrl} style={{ ...utils.link, fontSize: '13px' }}>
-        {unsubscribeLabel}
+        {label}
       </Link>
       {preferencesUrl ? (
         <>
           {' · '}
           <Link href={preferencesUrl} style={{ ...utils.link, fontSize: '13px' }}>
-            Manage notification preferences
+            {emailText('footer.managePreferences')}
           </Link>
         </>
       ) : null}

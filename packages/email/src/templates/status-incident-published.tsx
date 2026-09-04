@@ -1,6 +1,7 @@
 import { Button, Heading, Section, Text } from '@react-email/components'
 import { EmailLayout, NotificationFooter } from './email-layout'
 import { typography, button, colors } from './shared-styles'
+import { emailText, type EmailMessageKey } from '../messages'
 
 export type IncidentImpact = 'none' | 'minor' | 'major' | 'critical'
 
@@ -32,11 +33,12 @@ const impactColors: Record<IncidentImpact, string> = {
   critical: '#ef4444',
 }
 
-const impactLabels: Record<IncidentImpact, string> = {
-  none: 'No impact',
-  minor: 'Minor impact',
-  major: 'Major impact',
-  critical: 'Critical impact',
+/** Catalogue keys, resolved at render — the labels themselves are translated. */
+const impactLabelKeys: Record<IncidentImpact, EmailMessageKey> = {
+  none: 'statusIncident.impact.none',
+  minor: 'statusIncident.impact.minor',
+  major: 'statusIncident.impact.major',
+  critical: 'statusIncident.impact.critical',
 }
 
 export function StatusIncidentPublishedEmail({
@@ -55,13 +57,13 @@ export function StatusIncidentPublishedEmail({
 
   return (
     <EmailLayout
-      preview={`${incidentTitle} (${statusLabel})`}
+      preview={emailText('statusIncident.preview', { incidentTitle, statusLabel })}
       logoUrl={logoUrl}
       logoAlt={workspaceName}
     >
       {/* Content */}
-      <Heading style={typography.h1}>New incident reported</Heading>
-      <Text style={typography.text}>{workspaceName} just posted an update to its status page.</Text>
+      <Heading style={typography.h1}>{emailText('statusIncident.heading')}</Heading>
+      <Text style={typography.text}>{emailText('statusIncident.body', { workspaceName })}</Text>
 
       {/* Impact bar */}
       <Section
@@ -82,7 +84,7 @@ export function StatusIncidentPublishedEmail({
             marginBottom: '0',
           }}
         >
-          {impactLabels[impact]} &middot; {statusLabel}
+          {emailText(impactLabelKeys[impact])} &middot; {statusLabel}
         </Text>
       </Section>
 
@@ -122,7 +124,7 @@ export function StatusIncidentPublishedEmail({
               marginBottom: '8px',
             }}
           >
-            Affected components
+            {emailText('status.affectedComponents')}
           </Text>
           {affectedComponents.map((component) => (
             <Text
@@ -138,13 +140,13 @@ export function StatusIncidentPublishedEmail({
       {/* CTA Button */}
       <Section style={{ textAlign: 'center', marginTop: '32px', marginBottom: '32px' }}>
         <Button style={button.primary} href={incidentUrl}>
-          View live status
+          {emailText('statusIncident.cta')}
         </Button>
       </Section>
 
       {/* Footer */}
       <NotificationFooter
-        reason="You received this email because you're subscribed to status updates."
+        reason={emailText('status.reason')}
         unsubscribeUrl={unsubscribeUrl}
         preferencesUrl={preferencesUrl}
       />

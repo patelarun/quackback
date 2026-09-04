@@ -1,4 +1,5 @@
 import { Body, Head, Html, Link, Preview, Text } from '@react-email/components'
+import { emailText } from '../messages'
 
 /**
  * Human correspondence for the email channel: the agent's words are the body.
@@ -118,12 +119,12 @@ export function ConversationReplyEmail({
         <hr style={rule} />
 
         <Text style={footer}>
-          Reply to this email to continue the conversation
+          {emailText('conversationReply.replyHint')}
           {viewUrl ? (
             <>
               {' · '}
               <Link href={viewUrl} style={footerLink}>
-                View it online
+                {emailText('common.viewOnline')}
               </Link>
             </>
           ) : null}
@@ -131,9 +132,14 @@ export function ConversationReplyEmail({
 
         {quotedPrevious ? (
           <Text style={quote}>
-            On {quoteDate}
-            {quoteDate ? ', ' : ''}
-            {quotedPrevious.name} wrote:
+            {quoteDate
+              ? emailText('conversationReply.quoteAttribution', {
+                  quoteDate,
+                  name: quotedPrevious.name,
+                })
+              : emailText('conversationReply.quoteAttributionNoDate', {
+                  name: quotedPrevious.name,
+                })}
             <br />
             {quoteExcerpt(quotedPrevious.text)}
           </Text>

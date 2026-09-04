@@ -1,6 +1,7 @@
 import { Button, Heading, Link, Section, Text } from '@react-email/components'
 import { EmailLayout, TransactionalFooter } from './email-layout'
 import { typography, button, utils } from './shared-styles'
+import { emailText } from '../messages'
 
 interface InvitationEmailProps {
   invitedByName: string
@@ -19,38 +20,37 @@ export function InvitationEmail({
 }: InvitationEmailProps) {
   return (
     <EmailLayout
-      preview={`Join ${organizationName} on Quackback`}
+      preview={emailText('invitation.preview', { organizationName })}
       logoUrl={logoUrl}
       logoAlt={organizationName}
     >
       {/* Content */}
       <Heading style={typography.h1}>
-        {inviteeName ? `Hi ${inviteeName}, you're invited!` : "You're invited!"}
+        {inviteeName
+          ? emailText('invitation.headingNamed', { inviteeName })
+          : emailText('invitation.heading')}
       </Heading>
       <Text style={typography.text}>
-        <strong>{invitedByName}</strong> has invited you to join <strong>{organizationName}</strong>{' '}
-        on Quackback.
+        {emailText('invitation.body', { invitedByName, organizationName })}
       </Text>
 
       {/* CTA Button */}
       <Section style={{ textAlign: 'center', marginTop: '32px', marginBottom: '32px' }}>
         <Button style={button.primary} href={inviteLink}>
-          Accept Invitation
+          {emailText('invitation.cta')}
         </Button>
       </Section>
 
       {/* Fallback Link */}
       <Text style={typography.textSmall}>
-        Or copy and paste this link into your browser:{' '}
+        {emailText('common.copyLink')}{' '}
         <Link href={inviteLink} style={utils.link}>
           {inviteLink}
         </Link>
       </Text>
 
       {/* Footer */}
-      <TransactionalFooter>
-        If you weren&apos;t expecting this invitation, you can ignore this email.
-      </TransactionalFooter>
+      <TransactionalFooter>{emailText('invitation.ignore')}</TransactionalFooter>
     </EmailLayout>
   )
 }

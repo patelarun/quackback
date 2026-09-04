@@ -1,6 +1,7 @@
 import { Button, Heading, Section, Text } from '@react-email/components'
 import { EmailLayout, NotificationFooter } from './email-layout'
 import { typography, button, colors } from './shared-styles'
+import { emailText } from '../messages'
 
 interface TicketEventEmailProps {
   heading: string
@@ -128,7 +129,7 @@ export function TicketEventEmail({
       <NotificationFooter
         reason={reason}
         unsubscribeUrl={preferencesUrl ?? ctaUrl}
-        unsubscribeLabel="Manage notification preferences"
+        unsubscribeLabel={emailText('footer.managePreferences')}
       />
     </EmailLayout>
   )

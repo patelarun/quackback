@@ -1,6 +1,7 @@
 import { Button, Column, Heading, Row, Section, Text } from '@react-email/components'
 import { EmailLayout, TransactionalFooter } from './email-layout'
 import { typography, button, colors } from './shared-styles'
+import { emailText } from '../messages'
 
 interface WelcomeEmailProps {
   name: string
@@ -12,24 +13,21 @@ interface WelcomeEmailProps {
 export function WelcomeEmail({ name, workspaceName, dashboardUrl, logoUrl }: WelcomeEmailProps) {
   return (
     <EmailLayout
-      preview={`Welcome to ${workspaceName} on Quackback`}
+      preview={emailText('welcome.preview', { workspaceName })}
       logoUrl={logoUrl}
       logoAlt={workspaceName}
     >
       {/* Content */}
-      <Heading style={typography.h1}>Welcome to Quackback!</Heading>
-      <Text style={typography.text}>
-        Hi {name}, your workspace <strong>{workspaceName}</strong> is ready. Start collecting and
-        managing customer feedback today.
-      </Text>
+      <Heading style={typography.h1}>{emailText('welcome.heading')}</Heading>
+      <Text style={typography.text}>{emailText('welcome.body', { name, workspaceName })}</Text>
 
       {/* Features List - using Row/Column instead of spans for email compatibility */}
       <Section style={{ marginBottom: '24px' }}>
         {[
-          'Create feedback boards',
-          'Invite your team',
-          'Share your public roadmap',
-          'Connect GitHub, Slack & Discord',
+          emailText('welcome.feature.boards'),
+          emailText('welcome.feature.team'),
+          emailText('welcome.feature.roadmap'),
+          emailText('welcome.feature.integrations'),
         ].map((feature) => (
           <Row key={feature} style={{ marginBottom: '4px' }}>
             <Column style={{ width: '28px', verticalAlign: 'top' }}>
@@ -45,15 +43,15 @@ export function WelcomeEmail({ name, workspaceName, dashboardUrl, logoUrl }: Wel
       {/* CTA Button */}
       <Section style={{ textAlign: 'center', marginBottom: '32px' }}>
         <Button style={button.primary} href={dashboardUrl}>
-          Go to Dashboard
+          {emailText('welcome.cta')}
         </Button>
       </Section>
 
       {/* Footer */}
       <TransactionalFooter>
-        Happy collecting!
+        {emailText('welcome.signOff')}
         <br />
-        The Quackback Team
+        {emailText('welcome.signature')}
       </TransactionalFooter>
     </EmailLayout>
   )

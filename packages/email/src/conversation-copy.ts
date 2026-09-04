@@ -5,6 +5,8 @@
  * spelling of "Re: {subject}" and of the first-vs-follow-up team-alert intro.
  */
 
+import { emailText } from './messages'
+
 export type ConversationMailDirection = 'agent_reply' | 'visitor_message' | 'agent_started'
 
 /** Strip any leading `Re:` tokens (any case, repeated) and prefix a single `Re:`. */
@@ -34,7 +36,7 @@ export function teamAlertSubject(
   const topic =
     subject?.replace(/^\s*(re:\s*)+/i, '').trim() ||
     preview?.replace(/\s+/g, ' ').trim().slice(0, 80) ||
-    'New message'
+    emailText('conversation.teamAlert.subjectFallback')
   return `${visitorName}: ${topic}`
 }
 
@@ -66,32 +68,38 @@ export function conversationMessageCopy(opts: {
   const forwarded = conversationReplySubject(opts.conversationSubject)
 
   if (direction === 'visitor_message') {
-    const intro =
+    const intro = emailText(
       opts.isFirstMessage === true
-        ? `${senderName} started a conversation in ${workspaceName}.`
-        : `${senderName} sent a new message in ${workspaceName}.`
+        ? 'conversation.teamAlert.introFirst'
+        : 'conversation.teamAlert.introFollowUp',
+      { senderName, workspaceName }
+    )
     return {
       subject: teamAlertSubject(senderName, opts.conversationSubject, opts.preview),
-      heading: 'New message',
+      heading: emailText('conversation.teamAlert.heading'),
       intro,
-      ctaLabel: 'Open inbox',
-      reason: 'You received this email because you are a member of this workspace.',
+      ctaLabel: emailText('conversation.teamAlert.cta'),
+      reason: emailText('conversation.teamAlert.reason'),
       useHumanTemplate: false,
     }
   }
 
   const isReply = direction === 'agent_reply'
-  const generic = isReply ? `New reply from ${workspaceName}` : `New message from ${workspaceName}`
+  const generic = emailText(
+    isReply ? 'conversation.subject.newReply' : 'conversation.subject.newMessage',
+    { workspaceName }
+  )
   return {
     subject: forwarded ?? generic,
     heading: forwarded ?? generic,
-    intro: isReply
-      ? `${senderName} replied to your conversation with ${workspaceName}.`
-      : `${senderName} from ${workspaceName} sent you a message.`,
-    ctaLabel: 'View conversation',
+    intro: emailText(
+      isReply ? 'conversation.intro.agentReply' : 'conversation.intro.agentStarted',
+      { senderName, workspaceName }
+    ),
+    ctaLabel: emailText('conversation.cta.viewConversation'),
     reason: isReply
-      ? 'You received this email because you have an open conversation with this team.'
-      : `You received this email because ${workspaceName} sent you a message.`,
+      ? emailText('conversation.reason.openConversation')
+      : emailText('conversation.reason.workspaceSentMessage', { workspaceName }),
     useHumanTemplate,
   }
 }

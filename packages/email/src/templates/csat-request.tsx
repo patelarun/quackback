@@ -1,6 +1,7 @@
 import { Column, Heading, Link, Row, Section, Text } from '@react-email/components'
 import { EmailLayout, TransactionalFooter } from './email-layout'
 import { typography, colors } from './shared-styles'
+import { emailText } from '../messages'
 
 /**
  * The 5 CSAT rating faces, in order (worst to best) — mirrors CSAT_FACES
@@ -32,7 +33,7 @@ export function CsatRequestEmail({
   workspaceName,
   logoUrl,
 }: CsatRequestEmailProps) {
-  const heading = 'How did we do?'
+  const heading = emailText('csat.heading')
   return (
     <EmailLayout preview={heading} logoUrl={logoUrl} logoAlt={workspaceName}>
       <Heading style={typography.h1}>{heading}</Heading>
@@ -59,12 +60,10 @@ export function CsatRequestEmail({
       </Section>
 
       <Text style={{ ...typography.textSmall, color: colors.textMuted, textAlign: 'center' }}>
-        Click a face above to rate your experience.
+        {emailText('csat.instruction')}
       </Text>
 
-      <TransactionalFooter>
-        You received this email because you had a conversation with {workspaceName}.
-      </TransactionalFooter>
+      <TransactionalFooter>{emailText('csat.reason', { workspaceName })}</TransactionalFooter>
     </EmailLayout>
   )
 }

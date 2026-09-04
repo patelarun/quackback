@@ -1,6 +1,7 @@
 import { Button, Heading, Section, Text } from '@react-email/components'
 import { EmailLayout, NotificationFooter } from './email-layout'
 import { typography, button, colors } from './shared-styles'
+import { emailText } from '../messages'
 
 interface FeedbackLinkedEmailProps {
   recipientName?: string
@@ -23,22 +24,23 @@ export function FeedbackLinkedEmail({
   attributedByName,
   logoUrl,
 }: FeedbackLinkedEmailProps) {
-  const greeting = recipientName ? `Thanks ${recipientName}!` : 'Thanks!'
+  const greeting = recipientName
+    ? emailText('feedbackLinked.greetingNamed', { recipientName })
+    : emailText('feedbackLinked.greeting')
   const attribution = attributedByName
-    ? ` ${attributedByName} from the ${workspaceName} team has linked your feedback to a post.`
-    : ` Your feedback has been linked to a post on ${workspaceName}.`
+    ? emailText('feedbackLinked.attributedBy', { attributedByName, workspaceName })
+    : emailText('feedbackLinked.attributed', { workspaceName })
 
   return (
     <EmailLayout
-      preview={`Your feedback has been linked to "${postTitle}"`}
+      preview={emailText('feedbackLinked.preview', { postTitle })}
       logoUrl={logoUrl}
       logoAlt={workspaceName}
     >
       {/* Content */}
-      <Heading style={typography.h1}>Your feedback is being tracked!</Heading>
+      <Heading style={typography.h1}>{emailText('feedbackLinked.heading')}</Heading>
       <Text style={typography.text}>
-        {greeting}
-        {attribution} You'll receive updates when the status changes or new comments are posted.
+        {greeting} {attribution} {emailText('feedbackLinked.followUp')}
       </Text>
 
       {/* Post Title */}
@@ -58,13 +60,13 @@ export function FeedbackLinkedEmail({
       {/* CTA Button */}
       <Section style={{ textAlign: 'center', marginTop: '32px', marginBottom: '32px' }}>
         <Button style={button.primary} href={postUrl}>
-          View Feedback
+          {emailText('feedbackLinked.cta')}
         </Button>
       </Section>
 
       {/* Footer */}
       <NotificationFooter
-        reason="You received this email because your feedback was attributed to this post."
+        reason={emailText('feedbackLinked.reason')}
         unsubscribeUrl={unsubscribeUrl}
         preferencesUrl={preferencesUrl}
       />

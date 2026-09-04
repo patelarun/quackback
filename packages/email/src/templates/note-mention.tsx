@@ -1,6 +1,7 @@
 import { Button, Heading, Section, Text } from '@react-email/components'
 import { EmailLayout, NotificationFooter } from './email-layout'
 import { typography, button, colors } from './shared-styles'
+import { emailText } from '../messages'
 
 export interface NoteMentionEmailProps {
   /** Teammate who wrote the note. */
@@ -36,14 +37,12 @@ export function NoteMentionEmail({
 
   return (
     <EmailLayout
-      preview={`${displayName} mentioned you in an internal note`}
+      preview={emailText('noteMention.preview', { displayName })}
       logoUrl={logoUrl}
       logoAlt={workspaceName}
     >
-      <Heading style={typography.h1}>You were mentioned in a note</Heading>
-      <Text style={typography.text}>
-        {displayName} mentioned you in an internal note on a conversation.
-      </Text>
+      <Heading style={typography.h1}>{emailText('noteMention.heading')}</Heading>
+      <Text style={typography.text}>{emailText('noteMention.body', { displayName })}</Text>
 
       {paragraphs.length > 0 && (
         <Section
@@ -77,25 +76,23 @@ export function NoteMentionEmail({
       )}
 
       <Text style={{ ...typography.textSmall, color: colors.textMuted }}>
-        Internal notes are visible to your team only.
+        {emailText('noteMention.visibility')}
       </Text>
 
       <Section style={{ textAlign: 'center', marginTop: '32px', marginBottom: '32px' }}>
         <Button style={button.primary} href={conversationUrl}>
-          Open conversation
+          {emailText('noteMention.cta')}
         </Button>
       </Section>
 
       {preferencesUrl ? (
         <NotificationFooter
-          reason={`You received this email because you were mentioned in ${workspaceName}.`}
+          reason={emailText('mention.reason', { workspaceName })}
           unsubscribeUrl={preferencesUrl}
-          unsubscribeLabel="Manage notification preferences"
+          unsubscribeLabel={emailText('footer.managePreferences')}
         />
       ) : (
-        <Text style={typography.footer}>
-          You received this email because you were mentioned in {workspaceName}.
-        </Text>
+        <Text style={typography.footer}>{emailText('mention.reason', { workspaceName })}</Text>
       )}
     </EmailLayout>
   )

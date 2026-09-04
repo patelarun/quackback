@@ -1,6 +1,7 @@
 import { Heading, Text } from '@react-email/components'
 import { EmailLayout, TransactionalFooter } from './email-layout'
 import { typography } from './shared-styles'
+import { emailText } from '../messages'
 
 interface SignupNotAllowedEmailProps {
   workspaceName?: string
@@ -21,24 +22,24 @@ interface SignupNotAllowedEmailProps {
  * proven they own.
  */
 export function SignupNotAllowedEmail({ workspaceName, logoUrl }: SignupNotAllowedEmailProps) {
-  const where = workspaceName ? `${workspaceName}` : 'this workspace'
+  const where = workspaceName ?? emailText('signupNotAllowed.fallbackWorkspace')
   return (
-    <EmailLayout preview="About your sign-in request" logoUrl={logoUrl} showPoweredBy={false}>
+    <EmailLayout
+      preview={emailText('signupNotAllowed.preview')}
+      logoUrl={logoUrl}
+      showPoweredBy={false}
+    >
       <Heading style={{ ...typography.h1, textAlign: 'center' }}>
-        No account for this address
+        {emailText('signupNotAllowed.heading')}
       </Heading>
       <Text style={{ ...typography.text, textAlign: 'center' }}>
-        Someone asked for a sign-in link for this email address at {where}.
+        {emailText('signupNotAllowed.body', { where })}
       </Text>
       <Text style={{ ...typography.text, textAlign: 'center' }}>
-        There is no account here for this address, and {where} is not accepting new accounts. Ask an
-        admin to invite you, then sign in with the address they invite.
+        {emailText('signupNotAllowed.explanation', { where })}
       </Text>
 
-      <TransactionalFooter>
-        If you didn&apos;t request this, you can safely ignore this email. No account was created
-        and nothing was changed.
-      </TransactionalFooter>
+      <TransactionalFooter>{emailText('signupNotAllowed.footer')}</TransactionalFooter>
     </EmailLayout>
   )
 }

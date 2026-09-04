@@ -1,4 +1,5 @@
 import { Body, Head, Html, Preview, Text } from '@react-email/components'
+import { emailText } from '../messages'
 
 export interface ConversationClosedEmailProps {
   workspaceName: string
@@ -36,12 +37,12 @@ export function ConversationClosedEmail({
 }: ConversationClosedEmailProps) {
   const intro =
     variant === 'auto_closed'
-      ? "This conversation was closed because we haven't heard back from you."
-      : `${workspaceName} marked this conversation as resolved.`
+      ? emailText('conversationClosed.introAutoClosed')
+      : emailText('conversationClosed.introResolved', { workspaceName })
   const followUp =
     variant === 'auto_closed'
-      ? 'Need anything else? Just reply to this email and the conversation will reopen.'
-      : 'Not sorted? Just reply to this email and the conversation will reopen.'
+      ? emailText('conversationClosed.followUpAutoClosed')
+      : emailText('conversationClosed.followUpResolved')
 
   return (
     <Html>
@@ -56,7 +57,7 @@ export function ConversationClosedEmail({
         {ratingUrls ? (
           <>
             <Text style={{ margin: '20px 0 8px', color: '#1d2939', fontSize: '15px' }}>
-              {csatPrompt || 'How did we do?'}
+              {csatPrompt || emailText('csat.heading')}
             </Text>
             <Text style={{ margin: '0 0 16px', fontSize: '28px', letterSpacing: '8px' }}>
               {CSAT_FACES.map((face, i) => (
@@ -71,7 +72,7 @@ export function ConversationClosedEmail({
         {viewUrl ? (
           <Text style={muted}>
             <a href={viewUrl} style={{ color: '#667085' }}>
-              View it online
+              {emailText('common.viewOnline')}
             </a>
           </Text>
         ) : null}

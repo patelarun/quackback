@@ -1,6 +1,7 @@
 import { Heading, Section, Text } from '@react-email/components'
 import { EmailLayout, TransactionalFooter } from './email-layout'
 import { typography, utils } from './shared-styles'
+import { emailText } from '../messages'
 
 interface VerifyAddressEmailProps {
   code: string
@@ -21,23 +22,30 @@ interface VerifyAddressEmailProps {
  * gives a cross-device link no chance to be intercepted.
  */
 export function VerifyAddressEmail({ code, workspaceName, logoUrl }: VerifyAddressEmailProps) {
-  const where = workspaceName ? ` for ${workspaceName}` : ''
   return (
-    <EmailLayout preview={`Your verification code${where}`} logoUrl={logoUrl}>
-      <Heading style={{ ...typography.h1, textAlign: 'center' }}>Confirm your email</Heading>
+    <EmailLayout
+      preview={
+        workspaceName
+          ? emailText('verifyAddress.previewFor', { workspaceName })
+          : emailText('verifyAddress.preview')
+      }
+      logoUrl={logoUrl}
+    >
+      <Heading style={{ ...typography.h1, textAlign: 'center' }}>
+        {emailText('verifyAddress.heading')}
+      </Heading>
       <Text style={{ ...typography.text, textAlign: 'center' }}>
-        Enter this code{where} to confirm this address. It expires in 10 minutes.
+        {workspaceName
+          ? emailText('verifyAddress.bodyFor', { workspaceName })
+          : emailText('verifyAddress.body')}
       </Text>
       <Section style={utils.codeBox}>
         <Text style={utils.code}>{code}</Text>
       </Section>
       <Text style={{ ...typography.footer, textAlign: 'center' }}>
-        If you didn&apos;t ask for this, ignore it — nothing changes without the code.
+        {emailText('verifyAddress.ignore')}
       </Text>
-      <TransactionalFooter>
-        You&rsquo;re receiving this because someone entered this address on an account. It
-        won&rsquo;t be used for anything until it&rsquo;s confirmed.
-      </TransactionalFooter>
+      <TransactionalFooter>{emailText('verifyAddress.footer')}</TransactionalFooter>
     </EmailLayout>
   )
 }
