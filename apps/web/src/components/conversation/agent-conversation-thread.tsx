@@ -582,14 +582,25 @@ export function AgentConversationThread({
   // Create-ticket dialog defaults (unified inbox §M5): title from the subject
   // or first message (mirrors "Track as feedback"'s own default), requester
   // fixed to this conversation's visitor.
-  const createTicketDefaultRequester = conversation
-    ? {
-        principalId: conversation.visitor.principalId,
-        name: conversation.visitor.displayName,
-        email: visitorContactEmail,
-        image: conversation.visitor.avatarUrl,
-      }
-    : null
+  // Memoised on the fields themselves, not on `conversation`: an object literal
+  // here is a new identity on every render of a live thread, and the dialog
+  // takes it as a prefill default. See the transition guard in
+  // CreateTicketDialog for what that used to cost the agent mid-sentence.
+  const visitorPrincipalId = conversation?.visitor.principalId ?? null
+  const visitorDisplayName = conversation?.visitor.displayName ?? null
+  const visitorAvatarUrl = conversation?.visitor.avatarUrl ?? null
+  const createTicketDefaultRequester = useMemo(
+    () =>
+      visitorPrincipalId
+        ? {
+            principalId: visitorPrincipalId,
+            name: visitorDisplayName,
+            email: visitorContactEmail,
+            image: visitorAvatarUrl,
+          }
+        : null,
+    [visitorPrincipalId, visitorDisplayName, visitorAvatarUrl, visitorContactEmail]
+  )
 
   // The agent's latest message is "Seen" once the visitor read watermark
   // reaches it. Conversation-only (a ticket carries no visitor read watermark

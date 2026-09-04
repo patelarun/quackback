@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { XMarkIcon } from '@heroicons/react/24/solid'
@@ -188,8 +188,19 @@ export function CreateTicketDialog({
   // intentionally read at open time only — a mid-dialog registry refresh must
   // not yank the agent's selection (the follow-up effect below only applies
   // the preselection while nothing is selected).
+  //
+  // Gated on the closed→open TRANSITION rather than on `open` being true. The
+  // prefill props are read here, so while the dialog stayed open this re-ran
+  // on every parent render that rebuilt one of them — and `defaultRequester`
+  // is an object literal in AgentConversationThread, i.e. a new identity on
+  // every tick of a live conversation. Each re-run wiped the agent's
+  // half-typed title and description mid-sentence. Every value this reads is
+  // meant to be sampled once, at open, which is what the transition guard says.
+  const wasOpenRef = useRef(false)
   useEffect(() => {
-    if (open) {
+    const justOpened = open && !wasOpenRef.current
+    wasOpenRef.current = open
+    if (justOpened) {
       setType('customer')
       setSelectedTypeId(preselectedType(candidates)?.id ?? null)
       setTitle(fromConversation ? (defaultTitle ?? '') : '')

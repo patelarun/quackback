@@ -53,11 +53,39 @@ vi.mock('sonner', () => ({
 }))
 // Heavy/irrelevant children stubbed: the rich editor (tiptap), image upload,
 // and the requester picker (covered by its own surface).
-vi.mock('@/components/ui/rich-text-editor', () => ({ RichTextEditor: () => null }))
+// The rich editor (tiptap) is stubbed, but it still surfaces the `value` it is
+// handed and offers a seam to emit an onChange — that is what lets the
+// mid-edit regression test below watch the description survive a re-render.
+vi.mock('@/components/ui/rich-text-editor', () => ({
+  RichTextEditor: ({
+    value,
+    onChange,
+  }: {
+    value?: unknown
+    onChange?: (json: unknown, html: string, markdown: string) => void
+  }) => (
+    <>
+      <div data-testid="description-value" data-value={JSON.stringify(value ?? null)} />
+      <button
+        type="button"
+        data-testid="description-emit"
+        onClick={() =>
+          onChange?.(DESCRIPTION_DOC, '<p>Half-typed detail </p>', 'Half-typed detail')
+        }
+      />
+    </>
+  ),
+}))
 vi.mock('@/lib/client/hooks/use-image-upload', () => ({
   useImageUpload: () => ({ upload: vi.fn() }),
 }))
 vi.mock('@/components/shared/portal-user-picker', () => ({ PortalUserPicker: () => null }))
+
+/** What the stubbed editor emits when the test "types" a description. */
+const DESCRIPTION_DOC = {
+  type: 'doc',
+  content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Half-typed detail ' }] }],
+}
 
 import { CreateTicketDialog } from '../create-ticket-dialog'
 
@@ -407,5 +435,73 @@ describe('CreateTicketDialog — Phase 5 copilot auto-fill', () => {
     expect((screen.getByPlaceholderText('Summarize the request…') as HTMLInputElement).value).toBe(
       'Suggested'
     )
+  })
+})
+
+/**
+ * The dialog samples its prefill props once, when it opens.
+ *
+ * It used to re-run its reset on every change to `defaultTitle` /
+ * `defaultRequester`, and the from-a-conversation caller builds the requester
+ * as an object literal — a fresh identity on every render of a live thread.
+ * So an unrelated re-render (a new message, a presence tick, a poll landing)
+ * reset the whole form under the agent, and a description typed slowly enough
+ * to span one could not be finished at all.
+ */
+describe('CreateTicketDialog — a re-render while open must not reset the form', () => {
+  /** Mirrors AgentConversationThread: same data, brand-new object each render. */
+  const freshRequester = () => ({
+    principalId: 'principal_1',
+    name: 'Ada',
+    email: 'ada@example.com',
+    image: null,
+  })
+
+  const dialog = (open: boolean) => (
+    <CreateTicketDialog
+      open={open}
+      onOpenChange={vi.fn()}
+      onCreated={vi.fn()}
+      conversationId={'conversation_1' as never}
+      defaultTitle="Seeded from the conversation"
+      defaultRequester={freshRequester()}
+    />
+  )
+
+  const titleInput = () => screen.getByPlaceholderText('Summarize the request…') as HTMLInputElement
+  const descriptionValue = () => screen.getByTestId('description-value').getAttribute('data-value')
+
+  it('keeps a half-typed title and description across a parent re-render', async () => {
+    const { rerender } = render(dialog(true), { wrapper: wrapper() })
+
+    fireEvent.change(await screen.findByPlaceholderText('Summarize the request…'), {
+      target: { value: 'Card declined on renewal' },
+    })
+    // The editor's own onChange, the way typing reaches the dialog. The text
+    // ends in a space: mid-word pauses are exactly when a re-render lands.
+    fireEvent.click(screen.getByTestId('description-emit'))
+    await waitFor(() => expect(descriptionValue()).toContain('Half-typed detail'))
+
+    rerender(dialog(true))
+
+    await waitFor(() => expect(titleInput().value).toBe('Card declined on renewal'))
+    expect(descriptionValue()).toContain('Half-typed detail')
+  })
+
+  it('still starts clean on a genuine close-then-reopen', async () => {
+    const { rerender } = render(dialog(true), { wrapper: wrapper() })
+
+    fireEvent.change(await screen.findByPlaceholderText('Summarize the request…'), {
+      target: { value: 'Card declined on renewal' },
+    })
+    fireEvent.click(screen.getByTestId('description-emit'))
+    await waitFor(() => expect(descriptionValue()).toContain('Half-typed detail'))
+
+    rerender(dialog(false))
+    rerender(dialog(true))
+
+    // Back to the conversation's prefill, with the abandoned draft gone.
+    await waitFor(() => expect(titleInput().value).toBe('Seeded from the conversation'))
+    expect(descriptionValue()).not.toContain('Half-typed detail')
   })
 })
