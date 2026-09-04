@@ -26,12 +26,12 @@ export const sv: EmailCatalogue = {
     'Du får det här mejlet eftersom du är medlem i den här arbetsytan.',
   'conversation.subject.newReply': 'Nytt svar från {workspaceName}',
   'conversation.subject.newMessage': 'Nytt meddelande från {workspaceName}',
-  'conversation.intro.agentReply': '{senderName} svarade på din konversation med {workspaceName}.',
+  'conversation.intro.agentReply': '{senderName} har svarat på ditt ärende hos {workspaceName}.',
   'conversation.intro.agentStarted':
     '{senderName} från {workspaceName} har skickat ett meddelande till dig.',
   'conversation.cta.viewConversation': 'Visa konversationen',
   'conversation.reason.openConversation':
-    'Du får det här mejlet eftersom du har en pågående konversation med det här teamet.',
+    'Du får det här mejlet eftersom du har ett pågående ärende hos {workspaceName}.',
   'conversation.reason.workspaceSentMessage':
     'Du får det här mejlet eftersom {workspaceName} har skickat ett meddelande till dig.',
 

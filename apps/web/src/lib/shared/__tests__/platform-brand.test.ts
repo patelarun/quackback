@@ -36,7 +36,7 @@ describe('hasPlatformMark', () => {
   })
 
   it('is true once a name is set', () => {
-    expect(hasPlatformMark(brand({ name: 'Bokning och Schema' }))).toBe(true)
+    expect(hasPlatformMark(brand({ name: 'Acme' }))).toBe(true)
   })
 })
 
@@ -48,12 +48,10 @@ describe('webhookUserAgent', () => {
   })
 
   it('names the product, and links it when a URL is configured', () => {
-    expect(webhookUserAgent(brand({ name: 'Bokning och Schema' }))).toBe(
-      'Bokning och Schema Webhook/1.0'
+    expect(webhookUserAgent(brand({ name: 'Acme' }))).toBe('Acme Webhook/1.0')
+    expect(webhookUserAgent(brand({ name: 'Acme', url: 'https://acme.test' }))).toBe(
+      'Acme Webhook/1.0 (+https://acme.test)'
     )
-    expect(
-      webhookUserAgent(brand({ name: 'Bokning och Schema', url: 'https://app.bokningoschema.se' }))
-    ).toBe('Bokning och Schema Webhook/1.0 (+https://app.bokningoschema.se)')
   })
 
   it('carries no trace of the upstream vendor in any state', () => {

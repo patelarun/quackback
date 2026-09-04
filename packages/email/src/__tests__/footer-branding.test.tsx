@@ -15,8 +15,8 @@ import { SignupNotAllowedEmail } from '../templates/signup-not-allowed'
 
 const BRANDING_KEYS = ['EMAIL_FOOTER_BRANDING_TEXT', 'EMAIL_FOOTER_BRANDING_URL'] as const
 
-const LABEL = 'Bokning och Schema Support'
-const URL = 'https://app.bokningoschema.se'
+const LABEL = 'Acme Support'
+const URL = 'https://acme.test'
 
 function renderWelcome(): Promise<string> {
   return render(

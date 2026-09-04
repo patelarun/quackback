@@ -27,7 +27,7 @@ export const en = {
   'conversation.intro.agentStarted': '{senderName} from {workspaceName} sent you a message.',
   'conversation.cta.viewConversation': 'View conversation',
   'conversation.reason.openConversation':
-    'You received this email because you have an open conversation with this team.',
+    'You received this email because you have an open case with {workspaceName}.',
   'conversation.reason.workspaceSentMessage':
     'You received this email because {workspaceName} sent you a message.',
 

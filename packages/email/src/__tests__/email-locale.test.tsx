@@ -47,9 +47,9 @@ describe('locale selection', () => {
 
   it('substitutes parameters, and leaves an unsupplied one visible', () => {
     process.env.EMAIL_LOCALE = 'sv'
-    expect(
-      emailText('conversation.subject.newReply', { workspaceName: 'Bokning och Schema' })
-    ).toBe('Nytt svar från Bokning och Schema')
+    expect(emailText('conversation.subject.newReply', { workspaceName: 'Acme' })).toBe(
+      'Nytt svar från Acme'
+    )
     expect(emailText('conversation.subject.newReply')).toContain('{workspaceName}')
   })
 })
@@ -62,34 +62,46 @@ describe('Swedish reaches the rendered mail', () => {
   it('writes the conversation copy the senders build', () => {
     const copy = conversationMessageCopy({
       direction: 'agent_started',
-      senderName: 'Bird Vision AB',
-      workspaceName: 'Bokning och Schema',
+      senderName: 'Alice',
+      workspaceName: 'Acme',
     })
-    expect(copy.subject).toBe('Nytt meddelande från Bokning och Schema')
-    expect(copy.intro).toBe(
-      'Bird Vision AB från Bokning och Schema har skickat ett meddelande till dig.'
-    )
+    expect(copy.subject).toBe('Nytt meddelande från Acme')
+    expect(copy.intro).toBe('Alice från Acme har skickat ett meddelande till dig.')
     expect(copy.ctaLabel).toBe('Visa konversationen')
     expect(copy.reason).toBe(
-      'Du får det här mejlet eftersom Bokning och Schema har skickat ett meddelande till dig.'
+      'Du får det här mejlet eftersom Acme har skickat ett meddelande till dig.'
     )
+  })
+
+  it('writes the agent-reply copy, which names the workspace in both lines', () => {
+    const copy = conversationMessageCopy({
+      direction: 'agent_reply',
+      senderName: 'Arun Patel',
+      workspaceName: 'Acme',
+      conversationSubject: 'Issues in automate invoicing',
+    })
+    expect(copy.intro).toBe('Arun Patel har svarat på ditt ärende hos Acme.')
+    // The footer used to say "det här teamet" — a workspace the reader is
+    // already corresponding with is worth naming, so it takes the parameter.
+    expect(copy.reason).toBe('Du får det här mejlet eftersom du har ett pågående ärende hos Acme.')
+    expect(copy.reason).not.toContain('det här teamet')
   })
 
   it('writes the conversation template around that copy', async () => {
     const copy = conversationMessageCopy({
       direction: 'agent_started',
-      senderName: 'Bird Vision AB',
-      workspaceName: 'Bokning och Schema',
+      senderName: 'Alice',
+      workspaceName: 'Acme',
     })
     const html = await render(
       ConversationMessageEmail({
         heading: copy.heading,
         intro: copy.intro,
-        senderName: 'Bird Vision AB',
+        senderName: 'Alice',
         messagePreview: 'Hej!',
         ctaUrl: 'https://example.com/c/1',
         ctaLabel: copy.ctaLabel,
-        organizationName: 'Bokning och Schema',
+        organizationName: 'Acme',
         reason: copy.reason,
       })
     )
@@ -119,7 +131,7 @@ describe('Swedish reaches the rendered mail', () => {
     const html = await render(
       WelcomeEmail({
         name: 'Ada',
-        workspaceName: 'Bokning och Schema',
+        workspaceName: 'Acme',
         dashboardUrl: 'https://example.com/dashboard',
       })
     )

@@ -98,7 +98,7 @@ export function conversationMessageCopy(opts: {
     ),
     ctaLabel: emailText('conversation.cta.viewConversation'),
     reason: isReply
-      ? emailText('conversation.reason.openConversation')
+      ? emailText('conversation.reason.openConversation', { workspaceName })
       : emailText('conversation.reason.workspaceSentMessage', { workspaceName }),
     useHumanTemplate,
   }
