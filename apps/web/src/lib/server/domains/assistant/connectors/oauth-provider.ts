@@ -20,6 +20,8 @@ import { safePinnedFetch } from '@/lib/server/content/ssrf-guard'
 import { logger } from '@/lib/server/logger'
 import { ValidationError } from '@/lib/shared/errors'
 import { CONNECTOR_SECRETS_PURPOSE, getConnector, type ConnectorRow } from './connectors.service'
+import { platformDisplayName } from '@/lib/server/platform-brand'
+import { config } from '@/lib/server/config'
 
 const log = logger.child({ component: 'assistant-connectors-oauth' })
 const REFRESH_BUFFER_MS = 5 * 60 * 1000
@@ -92,7 +94,7 @@ export function createConnectorOAuthProvider(
     },
     get clientMetadata() {
       return {
-        client_name: 'Quackback',
+        client_name: platformDisplayName(config.baseUrl),
         redirect_uris: [callback],
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],

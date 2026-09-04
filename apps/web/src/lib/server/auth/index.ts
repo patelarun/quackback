@@ -15,6 +15,7 @@ import { tanstackStartCookies } from 'better-auth/tanstack-start'
 import { generateId, type PrincipalId, type UserId } from '@quackback/ids'
 import { API_KEY_SCOPES } from '@/lib/server/domains/api-keys/api-key-scopes'
 import { config } from '@/lib/server/config'
+import { platformTotpIssuer } from '@/lib/server/platform-brand'
 import { activeSecretKey } from '@/lib/server/secret-key'
 import { logger } from '@/lib/server/logger'
 import { getWorkspaceScope, runWithWorkspaceScope } from '@/lib/server/workspaces/workspace-context'
@@ -828,7 +829,11 @@ async function createAuth() {
       // No UI yet — surfaced in user profile + sign-in challenge in
       // subsequent tasks.
       twoFactor({
-        issuer: 'Quackback',
+        // Shown in the teammate's authenticator app, and baked in at enrolment
+        // — a later change does not reach anyone already set up. Its own
+        // setting because it must be distinguishable from any sibling app on
+        // the same brand, not merely correct about the brand.
+        issuer: platformTotpIssuer(baseURL),
         totpOptions: {
           period: 30,
           digits: 6,

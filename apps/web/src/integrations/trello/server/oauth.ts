@@ -4,6 +4,9 @@
  * Trello uses a simplified auth flow where users authorize via a URL and get a token.
  */
 
+import { platformDisplayName } from '@/lib/server/platform-brand'
+import { config } from '@/lib/server/config'
+
 const TRELLO_API = 'https://api.trello.com/1'
 
 /**
@@ -27,7 +30,8 @@ export function getTrelloOAuthUrl(
     callback_method: 'fragment',
     scope: 'read,write',
     expiration: 'never',
-    name: 'Quackback',
+    // Shown on Trello's authorization screen; name this install, not upstream.
+    name: platformDisplayName(config.baseUrl),
     response_type: 'token',
   })
 

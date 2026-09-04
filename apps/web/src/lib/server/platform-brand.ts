@@ -27,3 +27,38 @@ export function readPlatformBrandFromEnv(): PlatformBrand {
     description: read('PLATFORM_BRAND_DESCRIPTION'),
   }
 }
+
+/**
+ * A name for this install that is never empty and never the upstream vendor's.
+ *
+ * For the places where *something* has to be shown and a blank is not an
+ * option — an authenticator app's issuer, an OAuth consent screen's client
+ * name. Falls back to the install's own hostname, which is both meaningful to
+ * the reader and impossible to confuse with someone else's product.
+ */
+export function platformDisplayName(baseUrl: string): string {
+  const configured = readPlatformBrandFromEnv().name
+  if (configured) return configured
+  try {
+    return new URL(baseUrl).host
+  } catch {
+    return 'Support'
+  }
+}
+
+/**
+ * The issuer shown in a teammate's authenticator app.
+ *
+ * Its own variable rather than the platform brand, because it answers a
+ * different question. The brand names the product; this has to distinguish
+ * THIS app from every other entry in the same authenticator — including a
+ * sibling app on the same brand. An operator running both a main product and
+ * this support portal under one name would otherwise get two entries reading
+ * identically, with no way to tell which code belongs to which.
+ *
+ * Falls back to the platform display name, so an install that only has one app
+ * need not set it.
+ */
+export function platformTotpIssuer(baseUrl: string): string {
+  return process.env['PLATFORM_TOTP_ISSUER']?.trim() || platformDisplayName(baseUrl)
+}

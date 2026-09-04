@@ -311,7 +311,7 @@ export async function createIssueForTicket(
   const bodyMarkdown = [
     narrative,
     `---`,
-    `Created from Quackback ticket #${ticket.number}: ${getBaseUrl()}/admin/inbox?i=${ticketId}`,
+    `Created from support ticket #${ticket.number}: ${getBaseUrl()}/admin/inbox?i=${ticketId}`,
   ]
     .filter(Boolean)
     .join('\n\n')
