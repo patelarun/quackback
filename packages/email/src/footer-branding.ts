@@ -14,7 +14,7 @@
 
 /** Who is behind this email, and where that name links. */
 export interface EmailFooterBranding {
-  /** The visible label, e.g. "Bokning och Schema Support". */
+  /** The visible label, e.g. "Acme Support". */
   label: string
   /** Absolute URL the label links to. Absent renders the label as plain text. */
   url?: string
