@@ -150,7 +150,7 @@ describe('parseHcLocalePath', () => {
 })
 
 describe('resolveHcLandingLocale', () => {
-  const base = { enabledAdditionalLocales: ['de', 'fr'], defaultLocale: 'en' }
+  const base = { enabledAdditionalLocales: ['de', 'fr'], baseContentLocale: 'en' }
 
   it('never redirects when no additional locale is enabled', () => {
     expect(
@@ -158,7 +158,7 @@ describe('resolveHcLandingLocale', () => {
         cookieLocale: 'de',
         acceptLanguage: 'de',
         enabledAdditionalLocales: [],
-        defaultLocale: 'en',
+        baseContentLocale: 'en',
       })
     ).toBeNull()
   })
@@ -191,5 +191,69 @@ describe('resolveHcLandingLocale', () => {
     expect(
       resolveHcLandingLocale({ ...base, cookieLocale: null, acceptLanguage: 'en-US' })
     ).toBeNull()
+  })
+})
+
+describe('resolveHcLandingLocale — workspace default language', () => {
+  // A workspace can author in one language and serve another: base content
+  // stays English (synced from an English source of truth) while visitors are
+  // sent to the Swedish translations.
+  const svWorkspace = {
+    enabledAdditionalLocales: ['sv'],
+    baseContentLocale: 'en',
+    workspaceDefaultLocale: 'sv',
+  }
+
+  it('sends a first-time visitor to the workspace language, whatever the browser asks for', () => {
+    expect(
+      resolveHcLandingLocale({
+        ...svWorkspace,
+        cookieLocale: null,
+        acceptLanguage: 'en-US,en;q=0.9',
+      })
+    ).toBe('sv')
+  })
+
+  it('keeps an explicit help-center choice, including a choice of the base language', () => {
+    expect(
+      resolveHcLandingLocale({ ...svWorkspace, cookieLocale: 'en', acceptLanguage: null })
+    ).toBeNull()
+    expect(
+      resolveHcLandingLocale({ ...svWorkspace, cookieLocale: 'sv', acceptLanguage: null })
+    ).toBe('sv')
+  })
+
+  it('honors the portal-wide switcher cookie as an explicit choice', () => {
+    expect(
+      resolveHcLandingLocale({
+        ...svWorkspace,
+        cookieLocale: null,
+        visitorLocale: 'en',
+        acceptLanguage: 'sv-SE',
+      })
+    ).toBeNull()
+  })
+
+  it('stays on the base homepage when the workspace language has no translations enabled', () => {
+    expect(
+      resolveHcLandingLocale({
+        enabledAdditionalLocales: ['de'],
+        baseContentLocale: 'en',
+        workspaceDefaultLocale: 'sv',
+        cookieLocale: null,
+        acceptLanguage: 'en-US',
+      })
+    ).toBeNull()
+  })
+
+  it('falls back to browser detection when no workspace default is set', () => {
+    expect(
+      resolveHcLandingLocale({
+        enabledAdditionalLocales: ['sv'],
+        baseContentLocale: 'en',
+        cookieLocale: null,
+        acceptLanguage: 'sv-SE,sv;q=0.9',
+      })
+    ).toBe('sv')
   })
 })

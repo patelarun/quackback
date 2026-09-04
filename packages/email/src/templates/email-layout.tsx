@@ -11,6 +11,7 @@ import {
 } from '@react-email/components'
 import { layout, branding, typography, utils, colors, DEFAULT_LOGO_URL } from './shared-styles'
 import { useEmailShowPoweredBy } from '../powered-by'
+import { readEmailFooterBranding } from '../footer-branding'
 
 interface EmailLayoutProps {
   preview: string
@@ -19,7 +20,7 @@ interface EmailLayoutProps {
   children: React.ReactNode
   footer?: React.ReactNode
   /**
-   * Override the process-wide Powered-by flag. Capability-free templates
+   * Override the process-wide footer-branding flag. Capability-free templates
    * (no link, no code, no token) pass false so the footer cannot add an anchor.
    */
   showPoweredBy?: boolean
@@ -64,17 +65,34 @@ export function EmailLayout({
 
             {/* Footer */}
             {footer}
-            {showPoweredBy ? (
-              <Text style={typography.footer}>
-                <Link href="https://quackback.io" style={{ ...utils.link, fontSize: '13px' }}>
-                  Powered by Quackback
-                </Link>
-              </Text>
-            ) : null}
+            {showPoweredBy ? <FooterBrandingLine /> : null}
           </Container>
         </Section>
       </Body>
     </Html>
+  )
+}
+
+/**
+ * The install's own branding line, or nothing when no label is configured.
+ *
+ * Rendered only where the caller already allows a footer, so a capability-free
+ * template still cannot grow an anchor it was written not to have.
+ */
+function FooterBrandingLine() {
+  // Not `branding`: that name is already the shared-styles logo block above.
+  const footerBranding = readEmailFooterBranding()
+  if (!footerBranding) return null
+  return (
+    <Text style={typography.footer}>
+      {footerBranding.url ? (
+        <Link href={footerBranding.url} style={{ ...utils.link, fontSize: '13px' }}>
+          {footerBranding.label}
+        </Link>
+      ) : (
+        footerBranding.label
+      )}
+    </Text>
   )
 }
 

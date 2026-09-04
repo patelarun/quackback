@@ -177,7 +177,6 @@
   "portal.feedback.filter.clearAll": "Rensa alla",
   "portal.feedback.sidebar.boards": "Tavlor",
   "portal.feedback.sidebar.viewAllPosts": "Visa alla inlägg",
-  "portal.feedback.sidebar.poweredBy": "Drivs av {brand}",
   "portal.feedback.similarPosts.heading": "Liknande idéer",
   "portal.postDetail.comments": "{count, plural, one {# kommentar} other {# kommentarer}}",
   "portal.postDetail.metadata.eta": "Beräknad tid",

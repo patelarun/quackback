@@ -26,10 +26,13 @@
  * content and are reported as untranslated: they will still be served on the
  * unprefixed URLs, now labelled as the new base locale. Review them.
  *
- * Embeddings are NOT regenerated here — they still describe the old base
- * language, so semantic search stays stale until they are rebuilt. The script
- * clears `embedding_updated_at` on every swapped article so the existing
- * backfill picks them up.
+ * Embeddings are NOT regenerated here — the stored vector describes the OLD
+ * base language and is wrong the moment the content is swapped. Every swapped
+ * article therefore has its `embedding` cleared (along with the model and
+ * timestamp), which both stops semantic search returning old-language matches
+ * and is exactly what `backfill-ai.ts --embeddings` selects on
+ * (`embedding IS NULL`). Until that backfill runs, those articles are findable
+ * by keyword search only.
  *
  * Usage:
  *   bun scripts/switch-help-center-base-locale.ts --to=sv --dry-run
@@ -216,8 +219,12 @@ async function run() {
           content: translation.content,
           contentJson: translation.contentJson,
           locale: targetLocale!,
-          // The embedding still describes the old language — clear its
-          // timestamp so the embedding backfill treats it as stale.
+          // The embedding describes the old language's text, so it is wrong
+          // now. Clearing it (not just its timestamp) is what makes
+          // `backfill-ai.ts --embeddings` pick the article up: that query
+          // selects on `embedding IS NULL`.
+          embedding: null,
+          embeddingModel: null,
           embeddingUpdatedAt: null,
           updatedAt: new Date(),
         })
@@ -354,7 +361,9 @@ async function run() {
   console.log(
     `  1. Add a redirect for /hc/${targetLocale}/* → /hc/* (--print-redirects lists them)`
   )
-  console.log('  2. Rebuild article embeddings so semantic search matches the new base language')
+  console.log(
+    `  2. Rebuild article embeddings: bun /app/backfill-ai.mjs --embeddings (${swappable.length} cleared)`
+  )
   console.log('  3. Review the untranslated articles listed above')
 }
 

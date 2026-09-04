@@ -12,6 +12,7 @@ import {
   listPopularPublicArticlesFn,
 } from '@/lib/server/functions/help-center'
 import { resolveHcLandingLocale } from '@/lib/shared/help-center-url'
+import { readVisitorLocaleCookie } from '@/lib/shared/i18n'
 import { HC_LOCALE_COOKIE } from '@/components/help-center/help-center-locale-switcher'
 import { portalHeadMessage } from '@/lib/shared/portal-head-message'
 import type { HelpCenterConfig } from '@/lib/shared/types/settings'
@@ -51,7 +52,10 @@ const landingRequestContext = createIsomorphicFn()
   })
 
 /** Only meaningful during SSR (browser-detect needs the real request headers/cookies). */
-function landingLocaleRedirectTarget(helpCenterConfig?: HelpCenterConfig): string | null {
+function landingLocaleRedirectTarget(
+  helpCenterConfig?: HelpCenterConfig,
+  workspaceDefaultLocale?: string | null
+): string | null {
   const additional = helpCenterConfig?.locales?.additional ?? []
   if (additional.length === 0) return null
   const req = landingRequestContext()
@@ -59,9 +63,16 @@ function landingLocaleRedirectTarget(helpCenterConfig?: HelpCenterConfig): strin
   const cookieMatch = new RegExp(`${HC_LOCALE_COOKIE}=([^;]+)`).exec(req.cookieHeader)
   return resolveHcLandingLocale({
     cookieLocale: cookieMatch?.[1] ?? null,
+    // The portal-wide switcher's choice counts as an explicit pick here too,
+    // so someone who set the whole site to English isn't bounced into the
+    // Swedish subtree by the workspace default.
+    visitorLocale: readVisitorLocaleCookie(req.cookieHeader),
+    workspaceDefaultLocale,
     acceptLanguage: req.acceptLanguage,
     enabledAdditionalLocales: additional,
-    defaultLocale: helpCenterConfig?.locales?.default ?? 'en',
+    // The language articles are AUTHORED in -- unchanged by which language
+    // the workspace serves.
+    baseContentLocale: helpCenterConfig?.locales?.default ?? 'en',
   })
 }
 
@@ -69,7 +80,10 @@ export const Route = createFileRoute('/_portal/hc/')({
   beforeLoad: async ({ context }) => {
     const { settings } = context
     const helpCenterConfig = settings?.helpCenterConfig as HelpCenterConfig | undefined
-    const target = landingLocaleRedirectTarget(helpCenterConfig)
+    const target = landingLocaleRedirectTarget(
+      helpCenterConfig,
+      settings?.portalConfig?.defaultLocale ?? null
+    )
     if (target) throw redirect({ to: `/hc/${target}` as '/', replace: true })
   },
   loader: async ({ context }) => {

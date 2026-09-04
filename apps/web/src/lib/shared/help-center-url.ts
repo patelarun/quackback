@@ -81,30 +81,53 @@ export function parseHcLocalePath(
 }
 
 /**
- * Browser-detect + manual-override resolution for the bare `/hc` entry
- * point (domains/languages §2). A manual choice (the `hc_locale` cookie,
- * set by the switcher) always wins over Accept-Language, including an
- * explicit choice to stay on the default locale. First-time visitors with
- * no cookie fall back to Accept-Language detection. Returns null when the
- * visitor should stay on the default-locale homepage.
+ * Which locale the bare `/hc` entry point should send a visitor to
+ * (domains/languages §2). Returns null when they should stay on the
+ * unprefixed, base-content homepage.
+ *
+ * The two locales in play here are deliberately different things, and a
+ * workspace can serve one language while authoring in another:
+ *
+ * - `baseContentLocale` is the language ARTICLES ARE WRITTEN IN. It owns the
+ *   unprefixed `/hc/...` URLs. For a help center synced from an English
+ *   source of truth, this stays `en` no matter what visitors are shown.
+ * - `workspaceDefaultLocale` is the language VISITORS ARE SERVED. When it is
+ *   an enabled additional locale, a first-time visitor is sent to its
+ *   translated subtree rather than to the base-language homepage.
+ *
+ * Precedence: an explicit choice first (the `hc_locale` cookie from the
+ * help-center switcher, then the site-wide `qb_locale` from the portal
+ * language menu -- either may deliberately choose the base language and stay),
+ * then the workspace default, then Accept-Language.
  */
 export function resolveHcLandingLocale(params: {
   cookieLocale: string | null
+  visitorLocale?: string | null
+  workspaceDefaultLocale?: string | null
   acceptLanguage: string | null
   enabledAdditionalLocales: string[]
-  defaultLocale: string
+  baseContentLocale: string
 }): string | null {
-  const { cookieLocale, acceptLanguage, enabledAdditionalLocales, defaultLocale } = params
+  const {
+    cookieLocale,
+    visitorLocale,
+    workspaceDefaultLocale,
+    acceptLanguage,
+    enabledAdditionalLocales,
+    baseContentLocale,
+  } = params
   if (enabledAdditionalLocales.length === 0) return null
 
-  if (cookieLocale) {
-    if (cookieLocale === defaultLocale) return null
-    return enabledAdditionalLocales.includes(cookieLocale) ? cookieLocale : null
-  }
+  /** A locale is only worth redirecting to when it has translations to show. */
+  const redirectTargetFor = (locale: string): string | null =>
+    locale === baseContentLocale || !enabledAdditionalLocales.includes(locale) ? null : locale
 
-  const detected = resolveLocale(acceptLanguage)
-  if (detected !== defaultLocale && enabledAdditionalLocales.includes(detected)) {
-    return detected
-  }
-  return null
+  // An explicit pick is final in both directions -- including a pick of the
+  // base language, which must not be overridden by the workspace default.
+  const explicitChoice = cookieLocale ?? visitorLocale
+  if (explicitChoice) return redirectTargetFor(explicitChoice)
+
+  if (workspaceDefaultLocale) return redirectTargetFor(workspaceDefaultLocale)
+
+  return redirectTargetFor(resolveLocale(acceptLanguage))
 }

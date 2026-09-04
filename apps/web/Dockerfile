@@ -75,7 +75,11 @@ RUN bun build packages/db/src/migrate.ts \
     bun build apps/web/scripts/switch-help-center-base-locale.ts \
     --target=bun \
     --bundle \
-    --outfile=/tmp/switch-help-center-base-locale.mjs
+    --outfile=/tmp/switch-help-center-base-locale.mjs && \
+    bun build apps/web/scripts/backfill-ai.ts \
+    --target=bun \
+    --bundle \
+    --outfile=/tmp/backfill-ai.mjs
 
 # The fleet migrator, bundled the same way and for a stronger reason: under
 # pooled tenancy it is a role of this image, not a developer script. It reads
@@ -119,6 +123,9 @@ COPY --from=builder --chown=quackback:nodejs /tmp/seed.mjs ./seed.mjs
 # language the help center is authored in, so an operator invokes it by hand
 # (`docker compose exec app bun /app/switch-help-center-base-locale.mjs`).
 COPY --from=builder --chown=quackback:nodejs /tmp/switch-help-center-base-locale.mjs ./switch-help-center-base-locale.mjs
+# Post-op backfill for the same reason: swapping the base locale clears every
+# article embedding (they described the old language), and this rebuilds them.
+COPY --from=builder --chown=quackback:nodejs /tmp/backfill-ai.mjs ./backfill-ai.mjs
 COPY --from=builder --chown=quackback:nodejs /tmp/fleet-migrator.mjs ./fleet-migrator.mjs
 COPY --from=builder --chown=quackback:nodejs /app/packages/db/drizzle ./drizzle
 

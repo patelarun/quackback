@@ -177,7 +177,6 @@
   "portal.feedback.filter.clearAll": "Clear all",
   "portal.feedback.sidebar.boards": "Boards",
   "portal.feedback.sidebar.viewAllPosts": "View all posts",
-  "portal.feedback.sidebar.poweredBy": "Powered by {brand}",
   "portal.feedback.similarPosts.heading": "Similar ideas",
   "portal.postDetail.comments": "{count, plural, one {# Comment} other {# Comments}}",
   "portal.postDetail.metadata.eta": "ETA",

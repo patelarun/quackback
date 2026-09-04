@@ -177,7 +177,6 @@
   "portal.feedback.filter.clearAll": "Tout effacer",
   "portal.feedback.sidebar.boards": "Catégories",
   "portal.feedback.sidebar.viewAllPosts": "Voir toutes les publications",
-  "portal.feedback.sidebar.poweredBy": "Propulsé par {brand}",
   "portal.feedback.similarPosts.heading": "Idées similaires",
   "portal.postDetail.comments": "{count, plural, one {# commentaire} other {# commentaires}}",
   "portal.postDetail.metadata.eta": "ETA",
