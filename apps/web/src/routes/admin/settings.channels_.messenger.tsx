@@ -45,8 +45,13 @@ export function MessengerChannelPage() {
   const [isPending, startTransition] = useTransition()
   const [savingField, setSavingField] = useState<string | null>(null)
   const [widgetMessenger, setWidgetMessenger] = useState(config.tabs?.messenger ?? true)
+  // `=== true`, not `?? true`. The portal gate (isPortalChatStartEnabled) is
+  // deliberately fail-closed on an absent `support` section, so defaulting the
+  // switch to on showed every untouched workspace a Portal-chats toggle that
+  // was already "enabled" while the portal rendered no Messages tab — and
+  // flipping it did nothing, because the stored value never changed.
   const [portalSupportEnabled, setPortalSupportEnabled] = useState(
-    portalConfigQuery.data?.support?.enabled ?? true
+    portalConfigQuery.data?.support?.enabled === true
   )
   const [preventRepliesWhenClosed, setPreventRepliesWhenClosed] = useState(
     messengerConfig?.preventRepliesWhenClosed ?? false

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { PERMISSIONS } from '@/lib/shared/permissions'
 import { assertRoutePermission } from '@/lib/shared/route-permission'
-import { createFileRoute, useBlocker, useRouter } from '@tanstack/react-router'
+import { createFileRoute, Link, useBlocker, useRouter } from '@tanstack/react-router'
 import { useSuspenseQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { settingsQueries } from '@/lib/client/queries/settings'
@@ -479,6 +479,21 @@ function PortalPage() {
             <p className="mt-3 text-xs text-muted-foreground">
               Renamed tabs show your text in every language; untouched labels stay translated.
             </p>
+            {/* A gated row renders inert with no clue why. Support is the one
+                whose switch lives on another page, so name that page here. */}
+            {gatedTypes.has('support') && (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Messages is inactive. Turn on{' '}
+                <Link
+                  to="/admin/settings/channels/messenger"
+                  className="underline underline-offset-2 hover:text-foreground"
+                >
+                  Portal chats
+                </Link>{' '}
+                under Channels &rarr; Messenger to let signed-in customers see their conversations
+                here.
+              </p>
+            )}
           </SettingsCard>
 
           <SettingsCard
