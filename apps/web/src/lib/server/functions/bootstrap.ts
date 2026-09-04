@@ -16,11 +16,16 @@ import { resolveCloudConfig } from '@/lib/server/domains/settings/cloud/cloud.se
 import { logger } from '@/lib/server/logger'
 import { runWithoutLogContext } from '@/lib/server/log-context'
 import { shouldRunWorkers } from '@/lib/server/process-role'
+import type { PlatformBrand } from '@/lib/shared/platform-brand'
+import { readPlatformBrandFromEnv } from '@/lib/server/platform-brand'
 
 const log = logger.child({ component: 'bootstrap' })
 
 export interface BootstrapData {
   baseUrl: string
+  /** The product's own name and mark, from the environment. Blank name = this
+   *  install shows no platform branding; see lib/shared/platform-brand.ts. */
+  platformBrand: PlatformBrand
   session: Session | null
   settings: WorkspaceSettings | null
   userRole: Role | null
@@ -274,6 +279,7 @@ const getBootstrapDataInternal = createServerOnlyFn(async (): Promise<BootstrapD
 
   return {
     baseUrl,
+    platformBrand: readPlatformBrandFromEnv(),
     session,
     settings,
     userRole,

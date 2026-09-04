@@ -21,10 +21,7 @@ export function FriendlyShell({ children, fullPage = true }: FriendlyShellProps)
         fullPage ? 'min-h-screen' : 'min-h-[400px]'
       )}
     >
-      <div className="w-full max-w-md text-center">
-        <img src="/logo.png" alt="Quackback" className="mx-auto mb-6 h-16 w-16" />
-        {children}
-      </div>
+      <div className="w-full max-w-md text-center">{children}</div>
     </div>
   )
 }

@@ -22,13 +22,16 @@ import {
 import { db, webhooks, eq } from '@/lib/server/db'
 import { decryptWebhookSecret } from '@/lib/server/domains/webhooks/encryption'
 import { logger } from '@/lib/server/logger'
+import { webhookUserAgent } from '@/lib/shared/platform-brand'
+import { readPlatformBrandFromEnv } from '@/lib/server/platform-brand'
 
 export type { WebhookTarget, WebhookConfig }
 
 const log = logger.child({ component: 'webhook' })
 
 const TIMEOUT_MS = 5_000 // 5s timeout for single attempt
-const USER_AGENT = 'Quackback-Webhook/1.0 (+https://quackback.io)'
+/** Identifies the sender to the receiving endpoint; named from the environment. */
+const userAgent = () => webhookUserAgent(readPlatformBrandFromEnv())
 
 export const webhookHook: HookHandler = {
   async run(
@@ -97,7 +100,7 @@ export const webhookHook: HookHandler = {
 
     const headers = {
       'Content-Type': 'application/json',
-      'User-Agent': USER_AGENT,
+      'User-Agent': userAgent(),
       'X-Quackback-Signature': `sha256=${signature}`,
       'X-Quackback-Timestamp': String(timestamp),
       'X-Quackback-Event': event.type,

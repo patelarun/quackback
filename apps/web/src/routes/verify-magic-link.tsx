@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useRouteContext } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
 import {
   ChatBubbleLeftRightIcon,
@@ -10,6 +10,7 @@ import { ArrowPathIcon } from '@heroicons/react/24/solid'
 import { Button } from '@/components/ui/button'
 import { getInviteBrandingFn } from '@/lib/server/functions/invitations'
 import { parseInvitationId } from '@/lib/shared/parse-invitation-id'
+import { PlatformMark } from '@/components/shared/platform-mark'
 
 interface InviteBranding {
   workspaceName: string
@@ -88,13 +89,20 @@ function InvitationVerifyPage({
   errorCallbackURL: string | undefined
   invitationId: string
 }) {
+  const { platformBrand } = useRouteContext({ from: '__root__' })
   const [branding, setBranding] = useState<InviteBranding | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
     getInviteBrandingFn({ data: invitationId })
       .then(setBranding)
-      .catch(() => setBranding({ workspaceName: 'Quackback', logoUrl: null, inviterName: null }))
+      .catch(() =>
+        setBranding({
+          workspaceName: platformBrand?.name ?? '',
+          logoUrl: null,
+          inviterName: null,
+        })
+      )
   }, [invitationId])
 
   function handleAccept() {
@@ -268,10 +276,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
         }}
       />
       <div className="relative w-full max-w-md py-12">
-        <div className="mb-8 flex items-center justify-center gap-2">
-          <img src="/logo.png" alt="" className="h-6 w-6 rounded" />
-          <span className="text-sm font-medium text-muted-foreground">Quackback</span>
-        </div>
+        <PlatformMark />
         {children}
       </div>
     </div>

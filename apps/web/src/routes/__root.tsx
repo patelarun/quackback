@@ -32,6 +32,7 @@ import { normalizeLocale, FALLBACK_UI_LOCALE, type SupportedLocale } from '@/lib
 export interface RouterContext {
   queryClient: QueryClient
   baseUrl?: string
+  platformBrand?: BootstrapData['platformBrand']
   session?: BootstrapData['session']
   settings?: WorkspaceSettings | null
   userRole?: Role | null
@@ -67,6 +68,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   beforeLoad: async ({ location }) => {
     const {
       baseUrl,
+      platformBrand,
       session,
       settings,
       userRole,
@@ -124,6 +126,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 
     return {
       baseUrl,
+      platformBrand,
       session,
       settings: redactedSettings,
       userRole,
@@ -151,13 +154,15 @@ export const Route = createRootRouteWithContext<RouterContext>()({
         name: 'viewport',
         content: 'width=device-width, initial-scale=1, viewport-fit=cover',
       },
-      {
-        title: match.context.settings?.name || 'Quackback',
-      },
-      {
-        name: 'description',
-        content: 'Open-source customer feedback platform',
-      },
+      // The workspace names itself first; the platform name is only the
+      // fallback, and an install that configured none emits no title override
+      // rather than the vendor's.
+      ...(match.context.settings?.name || match.context.platformBrand?.name
+        ? [{ title: match.context.settings?.name || match.context.platformBrand?.name }]
+        : []),
+      ...(match.context.platformBrand?.description
+        ? [{ name: 'description', content: match.context.platformBrand.description }]
+        : []),
       {
         property: 'og:type',
         content: 'website',
@@ -221,7 +226,6 @@ function MinimalDocument({ children }: Readonly<{ children: ReactNode }>) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Quackback</title>
         <HeadContent />
       </head>
       <body className="min-h-screen bg-background font-sans antialiased">{children}</body>

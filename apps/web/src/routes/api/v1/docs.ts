@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { config } from '@/lib/server/config'
+import { readPlatformBrandFromEnv } from '@/lib/server/platform-brand'
 
 export const Route = createFileRoute('/api/v1/docs')({
   server: {
@@ -12,14 +13,20 @@ export const Route = createFileRoute('/api/v1/docs')({
        */
       GET: async () => {
         const baseUrl = config.baseUrl
+        // This page is public (no auth gate), so it is a de-branding surface as
+        // much as the portal is. Blank platform name = an unbranded reference.
+        const brand = readPlatformBrandFromEnv()
+        const productName = brand.name
+        const titleSuffix = productName ? ` | ${productName}` : ''
+        const productPossessive = productName ? `the ${productName} API` : 'the API'
 
         const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Quackback API Documentation - Build powerful integrations" />
-  <title>API Reference | Quackback</title>
+  <meta name="description" content="API documentation - build powerful integrations" />
+  <title>API Reference${titleSuffix}</title>
   <link rel="icon" href="/favicon.ico" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1236,9 +1243,8 @@ export const Route = createFileRoute('/api/v1/docs')({
   <header class="header">
     <div class="header-inner">
       <a href="/" class="logo">
-        <img src="/logo.png" alt="Quackback" />
-        <span>Quackback</span>
-        <span class="logo-sep">/</span>
+        ${brand.logoUrl ? `<img src="${brand.logoUrl}" alt="" />` : ''}
+        ${productName ? `<span>${productName}</span><span class="logo-sep">/</span>` : ''}
         <span class="logo-context">API</span>
       </a>
       <div class="header-actions">
@@ -1256,7 +1262,7 @@ export const Route = createFileRoute('/api/v1/docs')({
         REST API v1
       </div>
       <h1>API Reference</h1>
-      <p>Build integrations and automate workflows with the Quackback API</p>
+      <p>Build integrations and automate workflows with ${productPossessive}</p>
       <div class="hero-meta">
         <div class="hero-meta-item">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>

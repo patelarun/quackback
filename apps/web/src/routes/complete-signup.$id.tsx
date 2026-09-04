@@ -1,4 +1,4 @@
-import { createFileRoute, isRedirect } from '@tanstack/react-router'
+import { createFileRoute, isRedirect, useRouteContext } from '@tanstack/react-router'
 import { useState } from 'react'
 import { ArrowPathIcon } from '@heroicons/react/24/solid'
 import {
@@ -16,6 +16,7 @@ import {
   getInviteBrandingFn,
   setPasswordFn,
 } from '@/lib/server/functions/invitations'
+import { PlatformMark } from '@/components/shared/platform-mark'
 
 const ERROR_MESSAGES: Record<string, string> = {
   INVALID_TOKEN:
@@ -42,8 +43,10 @@ export interface InviteBranding {
   inviterName: string | null
 }
 
+/** Used when the invite's branding cannot be fetched. Nameless on purpose: the
+ *  platform name is substituted at render, and an unbranded install shows none. */
 const DEFAULT_BRANDING: InviteBranding = {
-  workspaceName: 'Quackback',
+  workspaceName: '',
   logoUrl: null,
   inviterName: null,
 }
@@ -135,10 +138,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
         }}
       />
       <div className="relative w-full max-w-md py-12">
-        <div className="mb-8 flex items-center justify-center gap-2">
-          <img src="/logo.png" alt="" className="h-6 w-6 rounded" />
-          <span className="text-sm font-medium text-muted-foreground">Quackback</span>
-        </div>
+        <PlatformMark />
         {children}
       </div>
     </div>
@@ -146,6 +146,12 @@ function PageShell({ children }: { children: React.ReactNode }) {
 }
 
 function WorkspaceIdentity({ branding }: { branding: InviteBranding }) {
+  const { platformBrand } = useRouteContext({ from: '__root__' })
+  // The invite's own workspace names itself; the platform name only stands in
+  // when that fetch failed, and an unbranded install renders no identity block.
+  const name = branding.workspaceName || platformBrand?.name || ''
+  if (!name) return null
+  branding = { ...branding, workspaceName: name }
   return (
     <div className="flex items-center justify-center gap-2.5">
       {branding.logoUrl ? (

@@ -6,6 +6,13 @@
  */
 import { TierLimitError } from '@/lib/server/errors/tier-limit-error'
 import { logger } from '@/lib/server/logger'
+import { readPlatformBrandFromEnv } from '@/lib/server/platform-brand'
+
+/** Realm echoed in the 401 challenge; named from the environment. */
+function apiRealm(): string {
+  const name = readPlatformBrandFromEnv().name
+  return name ? `${name} API` : 'API'
+}
 
 const log = logger.child({ component: 'api' })
 
@@ -117,7 +124,10 @@ export function badRequestResponse(message: string, details?: Record<string, unk
 export function unauthorizedResponse(message = 'Authentication required'): Response {
   return jsonResponse(
     { error: { code: 'UNAUTHORIZED', message } },
-    { status: 401, headers: { 'WWW-Authenticate': 'Bearer realm="Quackback API"' } }
+    {
+      status: 401,
+      headers: { 'WWW-Authenticate': `Bearer realm="${apiRealm()}"` },
+    }
   )
 }
 

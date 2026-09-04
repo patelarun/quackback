@@ -8,6 +8,7 @@
 import 'zod-openapi' // TypeScript type augmentation for .meta()
 import { createDocument, type ZodOpenApiPathsObject } from 'zod-openapi'
 import { z } from 'zod'
+import { readPlatformBrandFromEnv } from '@/lib/server/platform-brand'
 
 // Re-export z for use in schema files
 export { z }
@@ -77,13 +78,18 @@ export const ErrorResponseSchema = z.object({
  * Generate the complete OpenAPI specification
  */
 export function generateOpenAPISpec(): ReturnType<typeof createDocument> {
+  // Served at the public /api/v1/openapi.json, so the vendor name here reaches
+  // anyone who fetches the spec. Named from the environment instead.
+  const brand = readPlatformBrandFromEnv()
+  const productName = brand.name
+  const apiTitle = productName ? `${productName} API` : 'API'
   return createDocument({
     openapi: '3.1.0',
     info: {
-      title: 'Quackback API',
+      title: apiTitle,
       version: '1.0.0',
       description: `
-Quackback Public REST API for managing feedback, posts, boards, and more.
+Public REST API for managing feedback, posts, boards, and more.
 
 ## Authentication
 
@@ -93,7 +99,7 @@ All API endpoints require authentication using an API key. Include your API key 
 Authorization: Bearer qb_your_api_key_here
 \`\`\`
 
-API keys can be created in the Quackback admin dashboard under Settings > API Keys.
+API keys can be created in the admin dashboard under Settings > API Keys.
 
 ## Rate Limiting
 
@@ -111,10 +117,14 @@ List endpoints support cursor-based pagination:
 All resource IDs use TypeID format: \`{type}_{base32_uuid}\`
 Example: \`post_01h455vb4pex5vsknk084sn02q\`
 `.trim(),
-      contact: {
-        name: 'Quackback Support',
-        url: 'https://github.com/quackback/quackback',
-      },
+      ...(productName || brand.url
+        ? {
+            contact: {
+              name: productName ? `${productName} Support` : 'Support',
+              ...(brand.url ? { url: brand.url } : {}),
+            },
+          }
+        : {}),
       license: {
         name: 'AGPL-3.0',
         url: 'https://www.gnu.org/licenses/agpl-3.0.html',

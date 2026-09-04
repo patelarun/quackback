@@ -10,6 +10,7 @@ import { FormattedMessage, useIntl } from 'react-intl'
 import { ALL_ONBOARDING_STEPS } from './-onboarding-steps'
 import { mayForwardCompletedSetup } from './-onboarding-step'
 import { SignOutButton } from './-sign-out-button'
+import { PlatformMark } from '@/components/shared/platform-mark'
 
 /**
  * Shared layout for all onboarding steps.
@@ -49,10 +50,7 @@ function OnboardingHeader() {
   return (
     <div className="flex flex-col items-center">
       {/* Logo */}
-      <div className="flex items-center justify-center gap-2 mb-8">
-        <img src="/logo.png" alt="Quackback" width={32} height={32} />
-        <span className="text-xl font-bold">Quackback</span>
-      </div>
+      <PlatformMark size="lg" className="flex items-center justify-center gap-2 mb-8" />
 
       {/* Stepper */}
       {showSteps && (

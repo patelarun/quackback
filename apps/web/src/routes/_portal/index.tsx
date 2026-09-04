@@ -154,7 +154,7 @@ function PublicPortalPage() {
  */
 function PortalFeed() {
   const intl = useIntl()
-  const { session, settings } = useRouteContext({ from: '__root__' })
+  const { session, settings, platformBrand } = useRouteContext({ from: '__root__' })
   const search = Route.useSearch()
 
   const currentBoard = search.board
@@ -169,7 +169,7 @@ function PortalFeed() {
   // useVotedPosts({ initialVotedIds }) below (its query uses that as
   // initialData), so vote highlights are present in the server-rendered HTML
   // without a separate loader-side setQueryData.
-  const workspaceName = settings?.name ?? 'Quackback'
+  const workspaceName = settings?.name ?? platformBrand?.name ?? ''
 
   // Empty state if no boards exist (derived from the query, not the loader).
   if (portalData.boards.length === 0) {
