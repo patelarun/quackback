@@ -15,6 +15,7 @@ import { buildShortcutStoryBody } from '@/integrations/shortcut/server/message'
 import { buildAsanaTaskBody } from '@/integrations/asana/server/message'
 import { buildAzureDevOpsWorkItemBody } from '@/integrations/azure-devops/server/message'
 import { buildZapierPayload } from '@/integrations/zapier/server/message'
+import { FEEDBACK_BACKLINK_LABEL } from '@/lib/server/integrations/message-utils'
 
 // ---------------------------------------------------------------------------
 // Shared test event factory
@@ -76,7 +77,7 @@ describe.each([
     const result = build(makeEvent()) as Record<string, string>
     expect(result[bodyKey]).toContain('Jane Doe')
     expect(result[bodyKey]).toContain('features')
-    expect(result[bodyKey]).toContain('View in Quackback')
+    expect(result[bodyKey]).toContain(FEEDBACK_BACKLINK_LABEL)
   })
 
   it('falls back to email when authorName is missing', () => {
@@ -155,7 +156,7 @@ describe('Jira message builder', () => {
     const joined = texts.join(' ')
     expect(joined).toContain('Jane Doe')
     expect(joined).toContain('features')
-    expect(texts).toContain('View in Quackback')
+    expect(texts).toContain(FEEDBACK_BACKLINK_LABEL)
   })
 
   it('returns fallback ADF for non post.created events', () => {

@@ -4,7 +4,11 @@
 
 import type { EventData } from '@/lib/server/events/types'
 import { stripHtml, truncate } from '@/lib/server/events/hook-utils'
-import { buildPostUrl, getAuthorName } from '@/lib/server/integrations/message-utils'
+import {
+  buildPostUrl,
+  getAuthorName,
+  FEEDBACK_BACKLINK_LABEL,
+} from '@/lib/server/integrations/message-utils'
 
 /**
  * Build card name and description for a Trello card.
@@ -31,7 +35,7 @@ export function buildTrelloCard(
     content,
     '',
     '---',
-    `[View in Quackback](${postUrl})`,
+    `[${FEEDBACK_BACKLINK_LABEL}](${postUrl})`,
   ].join('\n')
 
   return { name: post.title, desc }

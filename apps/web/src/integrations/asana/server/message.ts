@@ -7,7 +7,12 @@
 
 import type { EventData } from '@/lib/server/events/types'
 import { stripHtml, truncate } from '@/lib/server/events/hook-utils'
-import { buildPostUrl, escapeHtml, getAuthorName } from '@/lib/server/integrations/message-utils'
+import {
+  buildPostUrl,
+  escapeHtml,
+  getAuthorName,
+  FEEDBACK_BACKLINK_LABEL,
+} from '@/lib/server/integrations/message-utils'
 
 /**
  * Build an Asana task name and HTML notes body from a post.created event.
@@ -31,7 +36,7 @@ export function buildAsanaTaskBody(
     '<hr/>',
     `<p><strong>Submitted by:</strong> ${escapeHtml(author)}</p>`,
     `<p><strong>Board:</strong> ${escapeHtml(post.boardSlug)}</p>`,
-    `<p><a href="${postUrl}">View in Quackback</a></p>`,
+    `<p><a href="${postUrl}">${FEEDBACK_BACKLINK_LABEL}</a></p>`,
     '</body>',
   ].join('\n')
 

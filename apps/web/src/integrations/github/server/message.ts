@@ -4,7 +4,11 @@
 
 import type { EventData } from '@/lib/server/events/types'
 import { stripHtml, truncate } from '@/lib/server/events/hook-utils'
-import { buildPostUrl, getAuthorName } from '@/lib/server/integrations/message-utils'
+import {
+  buildPostUrl,
+  getAuthorName,
+  FEEDBACK_BACKLINK_LABEL,
+} from '@/lib/server/integrations/message-utils'
 
 /**
  * Build a GitHub issue title and body from a post.created event.
@@ -30,7 +34,7 @@ export function buildGitHubIssueBody(
     `**Submitted by:** ${author}`,
     `**Board:** ${post.boardSlug}`,
     '',
-    `[View in Quackback](${postUrl})`,
+    `[${FEEDBACK_BACKLINK_LABEL}](${postUrl})`,
   ].join('\n')
 
   return { title: post.title, body }

@@ -4,7 +4,11 @@
 
 import type { EventData } from '@/lib/server/events/types'
 import { stripHtml, truncate } from '@/lib/server/events/hook-utils'
-import { getAuthorName, buildPostUrl } from '@/lib/server/integrations/message-utils'
+import {
+  getAuthorName,
+  buildPostUrl,
+  FEEDBACK_BACKLINK_LABEL,
+} from '@/lib/server/integrations/message-utils'
 
 /**
  * Build a Shortcut story title and description from a post.created event.
@@ -29,7 +33,7 @@ export function buildShortcutStoryBody(
     '---',
     `**Submitted by:** ${author}`,
     `**Board:** ${post.boardSlug}`,
-    `[View in Quackback](${postUrl})`,
+    `[${FEEDBACK_BACKLINK_LABEL}](${postUrl})`,
   ].join('\n')
 
   const title = truncate(post.title, 512)

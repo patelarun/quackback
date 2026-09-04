@@ -5,7 +5,11 @@
 
 import type { EventData } from '@/lib/server/events/types'
 import { stripHtml, truncate } from '@/lib/server/events/hook-utils'
-import { buildPostUrl, getAuthorName } from '@/lib/server/integrations/message-utils'
+import {
+  buildPostUrl,
+  getAuthorName,
+  FEEDBACK_BACKLINK_LABEL,
+} from '@/lib/server/integrations/message-utils'
 
 /**
  * ADF node types used for Jira issue descriptions.
@@ -76,7 +80,7 @@ export function buildJiraIssueBody(
         content: [
           {
             type: 'text',
-            text: 'View in Quackback',
+            text: FEEDBACK_BACKLINK_LABEL,
             marks: [{ type: 'link', attrs: { href: postUrl } }],
           },
         ],

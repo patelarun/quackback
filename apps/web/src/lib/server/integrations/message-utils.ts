@@ -15,6 +15,22 @@ export function getAuthorName(post: {
 /**
  * Build the Quackback post URL.
  */
+/**
+ * Label on the back-link every tracker integration appends to the item it
+ * creates.
+ *
+ * Names the destination rather than the product. It used to read "View in
+ * Quackback", which on a fork names the wrong vendor — but the fix is not to
+ * substitute this install's name either: the reader is a teammate looking at a
+ * Jira or GitHub issue inside their own company's tracker, and being told the
+ * link goes to the company they already work for disambiguates nothing. What
+ * they want to know is that it reaches the feedback this item came from.
+ *
+ * Always "feedback": these builders only ever run on `post.created`, so the
+ * destination is a feedback post, never a ticket.
+ */
+export const FEEDBACK_BACKLINK_LABEL = 'View original feedback'
+
 export function buildPostUrl(rootUrl: string, boardSlug: string, postId: string): string {
   return `${rootUrl}/b/${boardSlug}/posts/${postId}`
 }
