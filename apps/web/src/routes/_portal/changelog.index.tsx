@@ -12,7 +12,7 @@ export const Route = createFileRoute('/_portal/changelog/')({
     if (!isProductEnabled(context.settings?.featureFlags, 'changelog')) throw notFound()
     if (typeof window === 'undefined') await setPublicDocumentCacheHeaders()
     return {
-      workspaceName: context.settings?.name ?? 'Quackback',
+      workspaceName: context.settings?.name ?? context.platformBrand?.name ?? '',
       baseUrl: context.baseUrl ?? '',
     }
   },

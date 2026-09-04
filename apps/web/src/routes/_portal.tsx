@@ -269,7 +269,7 @@ export const Route = createFileRoute('/_portal')({
       gate: null,
     }
   },
-  head: ({ loaderData }) => {
+  head: ({ loaderData, match }) => {
     // Access gate: a valid 200 sign-in page, but keep it out of search indexes.
     if (loaderData?.gate) {
       return {
@@ -285,8 +285,12 @@ export const Route = createFileRoute('/_portal')({
     const faviconUrl =
       loaderData?.faviconData?.url || loaderData?.brandingData?.logoUrl || '/logo.png'
 
-    const workspaceName = loaderData?.workspaceName ?? 'Quackback'
-    const description = `Share feedback, vote on feature requests, and track the ${workspaceName} roadmap.`
+    // Falls back to the configured platform name, never a vendor's. With
+    // neither, the description drops the possessive rather than naming nobody.
+    const workspaceName = loaderData?.workspaceName ?? match.context.platformBrand?.name ?? ''
+    const description = workspaceName
+      ? `Share feedback, vote on feature requests, and track the ${workspaceName} roadmap.`
+      : 'Share feedback, vote on feature requests, and track the roadmap.'
     // Social share image: workspace logo, then the bundled default.
     const ogImageUrl = resolvePortalOgImageUrl(loaderData?.brandingData, loaderData?.baseUrl)
 

@@ -9,9 +9,24 @@ export const Route = createFileRoute('/api/v1/docs')({
        * GET /api/v1/docs
        * Serves Swagger UI for interactive API documentation.
        *
-       * This endpoint is public and does not require authentication.
+       * Teammate-only, for the reason given on the spec endpoint it renders.
+       * Gating also stops anonymous visitors from being made to fetch the
+       * Swagger bundle and webfonts from third-party CDNs on this domain.
        */
       GET: async () => {
+        // Gated on api_key.manage, not merely "signed in": a portal user is a
+        // principal too (role 'user'), so a bare requireAuth would still hand
+        // the endpoint map to every customer with an account. The permission
+        // that can mint a key is exactly the audience that can act on the
+        // reference.
+        const { requireAuth } = await import('@/lib/server/functions/auth-helpers')
+        const { PERMISSIONS } = await import('@/lib/shared/permissions')
+        try {
+          await requireAuth({ permission: PERMISSIONS.API_KEY_MANAGE })
+        } catch {
+          return Response.json({ error: 'Access denied' }, { status: 403 })
+        }
+
         const baseUrl = config.baseUrl
         // This page is public (no auth gate), so it is a de-branding surface as
         // much as the portal is. Blank platform name = an unbranded reference.
@@ -1316,8 +1331,10 @@ export const Route = createFileRoute('/api/v1/docs')({
         return new Response(html, {
           headers: {
             'Content-Type': 'text/html; charset=utf-8',
-            'Cache-Control': 'public, max-age=3600',
-            Vary: 'Host',
+            // Authenticated now: a shared cache holding this would serve the
+            // gated page to the next anonymous requester.
+            'Cache-Control': 'private, no-store',
+            Vary: 'Host, Cookie',
           },
         })
       },
