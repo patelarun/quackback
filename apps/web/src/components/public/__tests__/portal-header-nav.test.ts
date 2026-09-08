@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  isNavTypeHiddenByConfig,
   resolvePortalNavItems,
   seedNavEditorItems,
   type PortalNavGates,
@@ -220,5 +221,40 @@ describe('seedNavEditorItems', () => {
     const seeded = seedNavEditorItems(nav)
     seeded[0].enabled = false
     expect(nav.items?.[0].enabled).toBeUndefined()
+  })
+})
+
+/**
+ * The Messages tab went missing on a workspace whose gates were all on
+ * (`supportInbox`, `supportTickets`, and `portalConfig.support.enabled` all
+ * true) because nav config carried `{ type: 'support', enabled: false }`.
+ * Nothing in the admin said so, and the enablement switch for that tab lives
+ * on a different page, so it read as that switch being broken.
+ */
+describe('isNavTypeHiddenByConfig', () => {
+  it('reports a built-in the config explicitly hides', () => {
+    const nav: PortalNavConfig = { items: [{ id: 'support', type: 'support', enabled: false }] }
+    expect(isNavTypeHiddenByConfig(nav, 'support')).toBe(true)
+  })
+
+  it('does not report one left at its default visibility', () => {
+    const nav: PortalNavConfig = { items: [{ id: 'support', type: 'support' }] }
+    expect(isNavTypeHiddenByConfig(nav, 'support')).toBe(false)
+  })
+
+  it('does not report one the config never mentions', () => {
+    const nav: PortalNavConfig = { items: [{ id: 'status', type: 'status', enabled: false }] }
+    expect(isNavTypeHiddenByConfig(nav, 'support')).toBe(false)
+  })
+
+  it('treats absent config as hiding nothing', () => {
+    expect(isNavTypeHiddenByConfig(null, 'support')).toBe(false)
+    expect(isNavTypeHiddenByConfig(undefined, 'support')).toBe(false)
+  })
+
+  it('never reports feedback, whose stored enabled:false resolvePortalNavItems ignores', () => {
+    const nav: PortalNavConfig = { items: [{ id: 'feedback', type: 'feedback', enabled: false }] }
+    expect(isNavTypeHiddenByConfig(nav, 'feedback')).toBe(false)
+    expect(paths(resolvePortalNavItems(gates(), nav))).toContain('/')
   })
 })

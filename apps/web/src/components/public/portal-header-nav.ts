@@ -162,3 +162,23 @@ export function seedNavEditorItems(nav?: PortalNavConfig | null): PortalNavItemC
 export function builtInNavDefinition(type: PortalBuiltInNavType): BuiltInNavDefinition {
   return BUILT_IN_NAV_ITEMS[type]
 }
+
+/**
+ * Whether saved nav config explicitly hides a built-in tab.
+ *
+ * A tab's product gate can be fully on and the tab still absent from the
+ * portal header, because the per-item visibility switch in
+ * Portal → Navigation wins. `support` is the case that strands admins: its
+ * enablement switch ("Portal chats") lives on Channels → Messenger, so a
+ * stored `enabled: false` here reads as that switch not working.
+ *
+ * Mirrors {@link resolvePortalNavItems}: feedback ignores a stored
+ * `enabled: false`, so it is never reported as hidden.
+ */
+export function isNavTypeHiddenByConfig(
+  nav: PortalNavConfig | null | undefined,
+  type: PortalBuiltInNavType
+): boolean {
+  if (type === 'feedback') return false
+  return Boolean(nav?.items?.some((item) => item.type === type && item.enabled === false))
+}

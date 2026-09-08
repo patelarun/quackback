@@ -13,6 +13,9 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 const portalSupport: { value: { enabled?: boolean } | undefined } = { value: { enabled: true } }
+const portalNav: {
+  value: { items?: Array<{ id: string; type: string; enabled?: boolean }> } | undefined
+} = { value: undefined }
 
 vi.mock('@tanstack/react-query', () => ({
   useSuspenseQuery: (opts: { queryKey: string[] }) => {
@@ -30,7 +33,7 @@ vi.mock('@tanstack/react-query', () => ({
         },
       }
     }
-    return { data: { support: portalSupport.value } }
+    return { data: { support: portalSupport.value, nav: portalNav.value } }
   },
 }))
 
@@ -51,6 +54,7 @@ const { MessengerChannelPage } = await import('../settings.channels_.messenger')
 describe('Messenger Surfaces', () => {
   beforeEach(() => {
     portalSupport.value = { enabled: true }
+    portalNav.value = undefined
   })
 
   it('owns Widget and Portal chats switches', () => {
@@ -105,5 +109,43 @@ describe('Portal chats reflects the portal, not an optimistic default', () => {
     portalSupport.value = { enabled: true }
     render(<MessengerChannelPage />)
     expect(portalSwitch()).toHaveAttribute('aria-checked', 'true')
+  })
+})
+
+/**
+ * Portal chats on + the nav item hidden renders no Messages tab, with this
+ * page's switch reading on — the state a live workspace ended up in, where the
+ * only visible control said the feature was enabled.
+ */
+describe('Portal chats warns when the portal nav hides the Messages tab', () => {
+  const warning = () => screen.queryByText(/Messages tab is hidden in the portal nav/i)
+
+  beforeEach(() => {
+    portalSupport.value = { enabled: true }
+    portalNav.value = undefined
+  })
+
+  it('warns when nav config explicitly hides the tab', () => {
+    portalNav.value = { items: [{ id: 'support', type: 'support', enabled: false }] }
+    render(<MessengerChannelPage />)
+    expect(warning()).toBeInTheDocument()
+  })
+
+  it('stays quiet when the nav item is visible', () => {
+    portalNav.value = { items: [{ id: 'support', type: 'support' }] }
+    render(<MessengerChannelPage />)
+    expect(warning()).not.toBeInTheDocument()
+  })
+
+  it('stays quiet with no nav config at all', () => {
+    render(<MessengerChannelPage />)
+    expect(warning()).not.toBeInTheDocument()
+  })
+
+  it('stays quiet when Portal chats is off — the switch is not claiming otherwise', () => {
+    portalSupport.value = { enabled: false }
+    portalNav.value = { items: [{ id: 'support', type: 'support', enabled: false }] }
+    render(<MessengerChannelPage />)
+    expect(warning()).not.toBeInTheDocument()
   })
 })

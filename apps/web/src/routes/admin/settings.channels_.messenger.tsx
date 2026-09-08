@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/shared/utils'
 import { SUPPORTED_LOCALES } from '@/lib/shared/i18n'
 import { WIDGET_LOCALE_LABELS, type WidgetTranslations } from '@/lib/shared/widget/translations'
+import { isNavTypeHiddenByConfig } from '@/components/public/portal-header-nav'
 
 export const Route = createFileRoute('/admin/settings/channels_/messenger')({
   beforeLoad: ({ context }) => {
@@ -53,6 +54,11 @@ export function MessengerChannelPage() {
   const [portalSupportEnabled, setPortalSupportEnabled] = useState(
     portalConfigQuery.data?.support?.enabled === true
   )
+  // Portal chats being on is not enough: the portal header also honors the
+  // per-item visibility switch in Portal -> Navigation, and a stored
+  // `enabled: false` there hides the Messages tab with this switch reading on
+  // — which is indistinguishable from this switch being broken.
+  const messagesTabHiddenInNav = isNavTypeHiddenByConfig(portalConfigQuery.data?.nav, 'support')
   const [preventRepliesWhenClosed, setPreventRepliesWhenClosed] = useState(
     messengerConfig?.preventRepliesWhenClosed ?? false
   )
@@ -142,6 +148,19 @@ export function MessengerChannelPage() {
             aria-label="Portal chats"
           />
         </div>
+        {portalSupportEnabled && messagesTabHiddenInNav && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Portal chats are on, but the Messages tab is hidden in the portal nav, so signed-in
+            customers have no way to reach their conversations from the portal header. Show it under{' '}
+            <Link
+              to="/admin/settings/portal"
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              Portal &rarr; Navigation
+            </Link>
+            .
+          </p>
+        )}
       </SettingsCard>
 
       <SettingsCard title="Messaging" description="Greeting and team name shown to visitors.">
