@@ -29,7 +29,6 @@ import type { KbArticleId, KbCategoryId } from '@quackback/ids'
 import { ANONYMOUS_ACTOR, type Actor } from '@/lib/server/policy/types'
 import { NotFoundError } from '@/lib/shared/errors'
 import { getHelpCenterConfig } from '@/lib/server/domains/settings/settings.service'
-import { DEFAULT_LOCALE } from '@/lib/shared/i18n'
 import {
   listPublicCategories,
   getPublicCategoryBySlug,
@@ -61,6 +60,15 @@ import type {
  * translation tables. Configured per workspace, so it is read here rather than
  * taken from a constant -- a workspace that authors in Swedish has no English
  * base rows to fall back to.
+ *
+ * Every locale comparison in this module must go through here. The four
+ * by-id/by-urlId readers below once compared against the `DEFAULT_LOCALE`
+ * constant instead, which silently assumed English was the authored language:
+ * on a Swedish-authored help center that made `/hc/sv/articles/{id}` demand an
+ * `sv` translation that cannot exist -- 404 on every article and collection in
+ * the site's own language -- while `/hc/en/...` served the Swedish base rows
+ * under an English URL. The by-slug readers were already correct, so the two
+ * halves of the same page disagreed.
  */
 async function getBaseContentLocale(): Promise<string> {
   const config = await getHelpCenterConfig()
@@ -124,7 +132,7 @@ export async function getPublicCategoryByUrlIdForLocale(
   viewer: Actor = ANONYMOUS_ACTOR
 ): ReturnType<typeof getPublicCategoryByUrlId> {
   const category = await getPublicCategoryByUrlId(urlId, viewer)
-  if (locale === DEFAULT_LOCALE) return category
+  if (locale === (await getBaseContentLocale())) return category
   const translation = await getCategoryTranslation(category.id as KbCategoryId, locale)
   if (!translation || !translation.name.trim()) {
     throw new NotFoundError(
@@ -141,7 +149,7 @@ export async function getPublicCategoryByIdForLocale(
   viewer: Actor = ANONYMOUS_ACTOR
 ): ReturnType<typeof getPublicCategoryById> {
   const category = await getPublicCategoryById(id, viewer)
-  if (locale === DEFAULT_LOCALE) return category
+  if (locale === (await getBaseContentLocale())) return category
   const translation = await getCategoryTranslation(category.id as KbCategoryId, locale)
   if (!translation || !translation.name.trim()) {
     throw new NotFoundError('CATEGORY_NOT_FOUND', `No "${locale}" translation for category "${id}"`)
@@ -245,7 +253,7 @@ export async function getPublicArticleByUrlIdForLocale(
   viewer: Actor = ANONYMOUS_ACTOR
 ): Promise<HelpCenterArticleWithCategory> {
   const article = await getPublicArticleByUrlId(urlId, viewer)
-  if (locale === DEFAULT_LOCALE) return article
+  if (locale === (await getBaseContentLocale())) return article
   const translation = await getPublishedArticleTranslation(article.id as KbArticleId, locale)
   if (!translation) {
     throw new NotFoundError(
@@ -268,7 +276,7 @@ export async function getPublicArticleByIdForLocale(
   viewer: Actor = ANONYMOUS_ACTOR
 ): Promise<HelpCenterArticleWithCategory> {
   const article = await getPublicArticleById(id, viewer)
-  if (locale === DEFAULT_LOCALE) return article
+  if (locale === (await getBaseContentLocale())) return article
   const translation = await getPublishedArticleTranslation(article.id as KbArticleId, locale)
   if (!translation) {
     throw new NotFoundError(

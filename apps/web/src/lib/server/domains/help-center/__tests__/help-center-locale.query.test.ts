@@ -5,6 +5,10 @@ const mockListPublicCategories = vi.fn()
 const mockGetPublicCategoryBySlug = vi.fn()
 const mockListPublicArticlesForCategory = vi.fn()
 const mockGetPublicArticleBySlug = vi.fn()
+const mockGetPublicCategoryByUrlId = vi.fn()
+const mockGetPublicCategoryById = vi.fn()
+const mockGetPublicArticleByUrlId = vi.fn()
+const mockGetPublicArticleById = vi.fn()
 const mockGetPublishedArticleTranslation = vi.fn()
 const mockGetCategoryTranslation = vi.fn()
 const mockCategoryTranslationFindMany = vi.fn()
@@ -21,6 +25,8 @@ vi.mock('@/lib/server/domains/settings/settings.service', () => ({
 vi.mock('../help-center.category.service', () => ({
   listPublicCategories: (...args: unknown[]) => mockListPublicCategories(...args),
   getPublicCategoryBySlug: (...args: unknown[]) => mockGetPublicCategoryBySlug(...args),
+  getPublicCategoryByUrlId: (...args: unknown[]) => mockGetPublicCategoryByUrlId(...args),
+  getPublicCategoryById: (...args: unknown[]) => mockGetPublicCategoryById(...args),
 }))
 
 vi.mock('../help-center.article.query', () => ({
@@ -29,6 +35,8 @@ vi.mock('../help-center.article.query', () => ({
 
 vi.mock('../help-center.article.service', () => ({
   getPublicArticleBySlug: (...args: unknown[]) => mockGetPublicArticleBySlug(...args),
+  getPublicArticleByUrlId: (...args: unknown[]) => mockGetPublicArticleByUrlId(...args),
+  getPublicArticleById: (...args: unknown[]) => mockGetPublicArticleById(...args),
 }))
 
 vi.mock('../help-center-translations.service', () => ({
@@ -72,6 +80,10 @@ const {
   getPublicCategoryBySlugForLocale,
   listPublicArticlesForCategoryLocale,
   getPublicArticleBySlugForLocale,
+  getPublicCategoryByUrlIdForLocale,
+  getPublicCategoryByIdForLocale,
+  getPublicArticleByUrlIdForLocale,
+  getPublicArticleByIdForLocale,
 } = await import('../help-center-locale.query')
 
 beforeEach(() => {
@@ -85,6 +97,10 @@ beforeEach(() => {
   mockGetPublicCategoryBySlug.mockReset()
   mockListPublicArticlesForCategory.mockReset()
   mockGetPublicArticleBySlug.mockReset()
+  mockGetPublicCategoryByUrlId.mockReset()
+  mockGetPublicCategoryById.mockReset()
+  mockGetPublicArticleByUrlId.mockReset()
+  mockGetPublicArticleById.mockReset()
   mockGetPublishedArticleTranslation.mockReset()
   mockGetCategoryTranslation.mockReset()
   mockCategoryTranslationFindMany.mockReset()
@@ -229,5 +245,78 @@ describe('getPublicArticleBySlugForLocale', () => {
     expect(result.title).toBe('Rechnungen')
     expect(result.content).toBe('de content')
     expect(result.contentJson).toEqual({ type: 'doc', content: [] })
+  })
+})
+
+/**
+ * The by-id and by-urlId readers serve every public article and collection URL
+ * (`/hc/{locale}/articles/{urlId}-{slug}`), and they used to compare against the
+ * `DEFAULT_LOCALE` constant rather than the workspace's configured base locale.
+ * On a Swedish-authored help center that inverted the whole site: its own
+ * language 404'd and the English URL served untranslated Swedish.
+ */
+describe('base locale is the configured one, not the English constant', () => {
+  const swedishAuthored = { locales: { default: 'sv', additional: ['en'], chrome: {} } }
+
+  beforeEach(() => {
+    mockGetHelpCenterConfig.mockResolvedValue(swedishAuthored)
+  })
+
+  it('serves the base row for an article in the authored locale', async () => {
+    const article = { id: 'kb_article_1' as KbArticleId, title: 'Användare' }
+    mockGetPublicArticleByUrlId.mockResolvedValue(article)
+
+    expect(await getPublicArticleByUrlIdForLocale(26, 'sv')).toBe(article)
+    expect(mockGetPublishedArticleTranslation).not.toHaveBeenCalled()
+  })
+
+  it('still requires a translation for an article in a non-authored locale', async () => {
+    mockGetPublicArticleByUrlId.mockResolvedValue({
+      id: 'kb_article_1' as KbArticleId,
+      title: 'Användare',
+    })
+    mockGetPublishedArticleTranslation.mockResolvedValue(null)
+
+    await expect(getPublicArticleByUrlIdForLocale(26, 'en')).rejects.toThrow()
+  })
+
+  it('applies the translation for an article in a non-authored locale', async () => {
+    mockGetPublicArticleById.mockResolvedValue({
+      id: 'kb_article_1' as KbArticleId,
+      title: 'Användare',
+      description: 'Hantera användare.',
+      content: 'sv body',
+      contentJson: null,
+    })
+    mockGetPublishedArticleTranslation.mockResolvedValue({
+      title: 'Users',
+      description: 'Manage users.',
+      content: 'en body',
+      contentJson: null,
+    })
+
+    const result = await getPublicArticleByIdForLocale('kb_article_1' as KbArticleId, 'en')
+    expect(result.title).toBe('Users')
+    expect(result.content).toBe('en body')
+  })
+
+  it('serves the base row for a collection in the authored locale', async () => {
+    const category = { id: 'kb_category_1' as KbCategoryId, name: 'Personer' }
+    mockGetPublicCategoryByUrlId.mockResolvedValue(category)
+
+    expect(await getPublicCategoryByUrlIdForLocale(1, 'sv')).toBe(category)
+    expect(mockGetCategoryTranslation).not.toHaveBeenCalled()
+  })
+
+  it('still requires a translation for a collection in a non-authored locale', async () => {
+    mockGetPublicCategoryById.mockResolvedValue({
+      id: 'kb_category_1' as KbCategoryId,
+      name: 'Personer',
+    })
+    mockGetCategoryTranslation.mockResolvedValue(null)
+
+    await expect(
+      getPublicCategoryByIdForLocale('kb_category_1' as KbCategoryId, 'en')
+    ).rejects.toThrow()
   })
 })

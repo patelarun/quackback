@@ -35,10 +35,8 @@ import {
   handleDomainError,
 } from '@/lib/server/domains/api/responses'
 import { parseTypeId } from '@/lib/server/domains/api/validation'
-import {
-  getHelpCenterConfig,
-  isFeatureEnabled,
-} from '@/lib/server/domains/settings/settings.service'
+import { isFeatureEnabled } from '@/lib/server/domains/settings/settings.service'
+import { resolveWritableHelpCenterLocale } from '@/lib/server/domains/api/help-center-locale'
 import { getArticleById } from '@/lib/server/domains/help-center/help-center.service'
 import {
   getArticleTranslation,
@@ -47,7 +45,6 @@ import {
   deleteArticleTranslation,
 } from '@/lib/server/domains/help-center/help-center-translations.service'
 import type { HelpCenterArticleTranslation } from '@/lib/server/domains/help-center/help-center.types'
-import { ValidationError } from '@/lib/shared/errors'
 import type { KbArticleId } from '@quackback/ids'
 
 const upsertTranslationBody = z.object({
@@ -74,47 +71,6 @@ function formatTranslation(translation: HelpCenterArticleTranslation) {
   }
 }
 
-/**
- * Resolve a locale path parameter to the locale the help center actually
- * serves, or explain why it serves none.
- *
- * Both rejections exist because the write would otherwise succeed and do
- * nothing visible. A row written for the base locale is never read -- the
- * public page takes that language from `kb_articles` itself -- and a row
- * written for a locale that is not enabled has no `/hc/{locale}` URL to appear
- * under. The stored spelling comes from the configuration rather than the
- * request so that `SV` cannot create a row `sv` readers never find.
- */
-async function resolveWritableLocale(requestedLocale: string): Promise<string> {
-  const { locales } = await getHelpCenterConfig()
-  const normalizedLocale = requestedLocale.trim().toLowerCase()
-
-  if (normalizedLocale === locales.default.toLowerCase()) {
-    throw new ValidationError(
-      'VALIDATION_ERROR',
-      `"${requestedLocale}" is the help center's base content locale. ` +
-        'Edit the article itself rather than a translation of it.'
-    )
-  }
-
-  const enabledLocale = locales.additional.find(
-    (locale) => locale.toLowerCase() === normalizedLocale
-  )
-
-  if (!enabledLocale) {
-    throw new ValidationError(
-      'VALIDATION_ERROR',
-      locales.additional.length > 0
-        ? `"${requestedLocale}" is not an enabled help center locale. ` +
-            `Enabled: ${locales.additional.join(', ')}.`
-        : `"${requestedLocale}" is not an enabled help center locale. ` +
-            'No additional locales are enabled.'
-    )
-  }
-
-  return enabledLocale
-}
-
 export const Route = createFileRoute(
   '/api/v1/help-center/articles/$articleId/translations/$locale'
 )({
@@ -127,7 +83,7 @@ export const Route = createFileRoute(
           await withApiKeyAuth(request, { permission: PERMISSIONS.HELP_CENTER_MANAGE })
 
           const articleId = parseTypeId<KbArticleId>(params.articleId, 'kb_article', 'article ID')
-          const locale = await resolveWritableLocale(params.locale)
+          const locale = await resolveWritableHelpCenterLocale(params.locale)
 
           const translation = await getArticleTranslation(articleId, locale)
           if (!translation) return notFoundResponse('Help center article translation')
@@ -152,7 +108,7 @@ export const Route = createFileRoute(
           await withApiKeyAuth(request, { permission: PERMISSIONS.HELP_CENTER_MANAGE })
 
           const articleId = parseTypeId<KbArticleId>(params.articleId, 'kb_article', 'article ID')
-          const locale = await resolveWritableLocale(params.locale)
+          const locale = await resolveWritableHelpCenterLocale(params.locale)
 
           const body = await request.json()
           const parsed = upsertTranslationBody.safeParse(body)
@@ -207,7 +163,7 @@ export const Route = createFileRoute(
           await withApiKeyAuth(request, { permission: PERMISSIONS.HELP_CENTER_MANAGE })
 
           const articleId = parseTypeId<KbArticleId>(params.articleId, 'kb_article', 'article ID')
-          const locale = await resolveWritableLocale(params.locale)
+          const locale = await resolveWritableHelpCenterLocale(params.locale)
 
           await deleteArticleTranslation(articleId, locale)
           return noContentResponse()
