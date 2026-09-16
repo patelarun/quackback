@@ -78,10 +78,10 @@ const IDLE_STATE: AskAiState = {
   related: [],
 }
 
-/** Public help-center article path. */
-function articleHref(source: AskAiSourceMeta): string {
+/** Public help-center article path, in the locale the reader is already in. */
+function articleHref(source: AskAiSourceMeta, locale?: string): string {
   return hcArticlePath({
-    locale: DEFAULT_LOCALE,
+    locale: locale ?? DEFAULT_LOCALE,
     urlId: source.urlId,
     slug: source.slug,
   })
@@ -89,12 +89,12 @@ function articleHref(source: AskAiSourceMeta): string {
 
 /** Present cited sources as the shared assistant citation shape so the answer
  *  renders with the same inline citation dots the messenger uses. */
-function toCitations(sources: AskAiSourceMeta[]): ConversationMessageCitation[] {
+function toCitations(sources: AskAiSourceMeta[], locale?: string): ConversationMessageCitation[] {
   return sources.map((s) => ({
     type: 'article',
     id: s.articleId,
     title: s.title,
-    url: articleHref(s),
+    url: articleHref(s, locale),
   }))
 }
 
@@ -486,6 +486,8 @@ interface AskAiAnswerPanelProps {
   state: AskAiState
   onDismiss: () => void
   onSourceClick: (source: AskAiSourceMeta) => void
+  /** Content locale the citation links point into; omitted = the default locale. */
+  locale?: string
 }
 
 /**
@@ -493,7 +495,12 @@ interface AskAiAnswerPanelProps {
  * question header with spinner while streaming, dismiss control, the streamed
  * answer with the shared assistant citation dots, and the source/related list.
  */
-export function AskAiAnswerPanel({ state, onDismiss, onSourceClick }: AskAiAnswerPanelProps) {
+export function AskAiAnswerPanel({
+  state,
+  onDismiss,
+  onSourceClick,
+  locale,
+}: AskAiAnswerPanelProps) {
   const intl = useIntl()
   if (state.status === 'idle') return null
   const busy = state.status === 'loading' || state.status === 'streaming'
@@ -536,7 +543,7 @@ export function AskAiAnswerPanel({ state, onDismiss, onSourceClick }: AskAiAnswe
       {(state.status === 'streaming' || state.status === 'done') && (
         <AssistantAnswer
           text={state.answer}
-          citations={toCitations(state.citedSources)}
+          citations={toCitations(state.citedSources, locale)}
           caret={state.status === 'streaming'}
           onCitationOpen={openCitation}
         />

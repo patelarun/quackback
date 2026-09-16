@@ -12,7 +12,7 @@ import {
   listPopularPublicArticlesFn,
 } from '@/lib/server/functions/help-center'
 import { resolveHcLandingLocale } from '@/lib/shared/help-center-url'
-import { readVisitorLocaleCookie } from '@/lib/shared/i18n'
+import { DEFAULT_LOCALE, readVisitorLocaleCookie } from '@/lib/shared/i18n'
 import { HC_LOCALE_COOKIE } from '@/components/help-center/help-center-locale-switcher'
 import { portalHeadMessage } from '@/lib/shared/portal-head-message'
 import type { HelpCenterConfig } from '@/lib/shared/types/settings'
@@ -138,6 +138,12 @@ function HelpCenterLandingPage() {
   const { settings } = Route.useRouteContext()
   const askAiEnabled = !!settings?.featureFlags?.helpCenter
 
+  // Every link off this page carries a locale, and the unprefixed homepage is the BASE content
+  // locale -- not the app's English fallback. Leaving it to the components' `DEFAULT_LOCALE`
+  // default sent a Swedish-authored help center's own homepage to `/hc/en/...`, so a reader who
+  // never touched the language switcher was in English one click after landing.
+  const baseContentLocale = helpCenterConfig?.locales?.default ?? DEFAULT_LOCALE
+
   const title = helpCenterConfig?.homepageTitle || intl.formatMessage(DEFAULT_TITLE_MESSAGE)
   const description =
     helpCenterConfig?.homepageDescription || intl.formatMessage(DEFAULT_DESCRIPTION_MESSAGE)
@@ -146,7 +152,7 @@ function HelpCenterLandingPage() {
   return (
     <>
       <HelpCenterHero variant="home" title={title} description={description}>
-        <HelpCenterHeroSearch askAiEnabled={askAiEnabled} />
+        <HelpCenterHeroSearch askAiEnabled={askAiEnabled} locale={baseContentLocale} />
       </HelpCenterHero>
 
       <section
@@ -168,10 +174,10 @@ function HelpCenterLandingPage() {
             </span>
           )}
         </div>
-        <HelpCenterCategoryGrid categories={categories} />
+        <HelpCenterCategoryGrid categories={categories} locale={baseContentLocale} />
       </section>
 
-      <HelpCenterPopularArticles articles={popularArticles} />
+      <HelpCenterPopularArticles articles={popularArticles} locale={baseContentLocale} />
     </>
   )
 }

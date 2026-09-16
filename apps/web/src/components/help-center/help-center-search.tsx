@@ -208,6 +208,7 @@ export function HelpCenterHeroSearch({
             state={askAiState}
             onDismiss={dismissAnswer}
             onSourceClick={handleSourceClick}
+            locale={locale}
           />
         </div>
       )}

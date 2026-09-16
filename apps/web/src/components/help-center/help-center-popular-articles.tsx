@@ -15,9 +15,11 @@ export interface PopularArticle {
 
 interface HelpCenterPopularArticlesProps {
   articles: PopularArticle[]
+  /** Content locale these links point into; omitted = the app's default locale. */
+  locale?: string
 }
 
-export function HelpCenterPopularArticles({ articles }: HelpCenterPopularArticlesProps) {
+export function HelpCenterPopularArticles({ articles, locale }: HelpCenterPopularArticlesProps) {
   if (articles.length === 0) return null
 
   return (
@@ -31,7 +33,7 @@ export function HelpCenterPopularArticles({ articles }: HelpCenterPopularArticle
             key={article.id}
             to={
               hcArticlePath({
-                locale: DEFAULT_LOCALE,
+                locale: locale ?? DEFAULT_LOCALE,
                 urlId: article.urlId,
                 slug: article.slug,
               }) as '/hc'
