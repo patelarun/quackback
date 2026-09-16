@@ -2,7 +2,7 @@
  * Server-side Markdown <-> TipTap JSON conversion
  *
  * Uses @tiptap/markdown's MarkdownManager with server-safe extensions
- * (no browser-only deps like ResizableImage, YouTube, Placeholder, BubbleMenu).
+ * (no browser-only deps like ResizableImage, Placeholder, BubbleMenu).
  *
  * Following Linear's pattern: markdown in via API, ProseMirror JSON stored internally.
  */
@@ -12,6 +12,7 @@ import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Underline from '@tiptap/extension-underline'
 import Image from '@tiptap/extension-image'
+import Youtube from '@tiptap/extension-youtube'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import { Table } from '@tiptap/extension-table'
@@ -28,9 +29,17 @@ import { parseEmbedUrl } from '@/lib/shared/embeds/parse-embed-url'
  * Server-safe extensions for markdown conversion.
  *
  * Excludes browser-only extensions: ResizableImage (uses DOM resize handles),
- * Youtube (lossy in markdown - becomes a link), Placeholder, BubbleMenu,
- * CodeBlockLowlight (lowlight needs no special markdown handling; StarterKit's
- * codeBlock handles ``` fences).
+ * Placeholder, BubbleMenu, CodeBlockLowlight (lowlight needs no special markdown
+ * handling; StarterKit's codeBlock handles ``` fences).
+ *
+ * Youtube IS included, despite being an editor-first node, because it is the only
+ * way a markdown author can produce a video. It contributes the block directive
+ * `:::youtube {src="..." width="640" height="360"} :::`, which round-trips: parsed
+ * into a `youtube` node that `generateContentHTML` renders as a youtube-nocookie
+ * iframe, and serialized back to the same directive. Without it that directive
+ * reaches a reader as its own literal text, which is how the help-centre docs
+ * pipeline (bos-v3 `product-docs/*.md`) needs it to behave. The extension itself
+ * touches no DOM at parse or serialize time, so it is safe on the server.
  */
 const SERVER_EXTENSIONS = [
   StarterKit.configure({
@@ -39,6 +48,7 @@ const SERVER_EXTENSIONS = [
   Link.configure({ openOnClick: false }),
   Underline,
   Image,
+  Youtube,
   TaskList,
   TaskItem.configure({ nested: true }),
   Table.configure({ resizable: false }),
@@ -101,11 +111,12 @@ const IMAGE_NODE_TYPES = new Set(['image', 'resizableImage'])
 
 /**
  * Node types this module can faithfully turn into markdown: the server
- * manager's own nodes (see SERVER_EXTENSIONS) plus the two we normalize below
- * (`resizableImage` -> `image`, `mention` -> text). Anything else — `youtube`,
- * `quackbackEmbed`, `emoji`, future custom nodes — would be silently dropped by
- * the narrower server manager, so a document containing one keeps its stored
- * markdown (which the client serialized with full coverage) instead.
+ * manager's own nodes (see SERVER_EXTENSIONS, `youtube` among them) plus the
+ * ones we normalize below (`resizableImage` -> `image`, `mention` -> text,
+ * `quackbackEmbed` and `emoji` -> placeholders). A future custom node absent
+ * from this set would be silently dropped by the narrower server manager, so a
+ * document containing one keeps its stored markdown (which the client
+ * serialized with full coverage) instead.
  */
 const RESERIALIZABLE_NODE_TYPES = new Set([
   'doc',
@@ -147,8 +158,8 @@ const RESERIALIZABLE_NODE_TYPES = new Set([
  *
  * Re-serialization runs through the narrower server manager, so we only do it
  * when every node is representable (see {@link RESERIALIZABLE_NODE_TYPES}); a
- * document mixing an image with, say, a YouTube embed keeps its stored markdown
- * rather than dropping the embed. Also falls back when `contentJson` is absent
+ * document mixing an image with an unrepresentable custom node keeps its stored
+ * markdown rather than dropping that node. Also falls back when `contentJson` is absent
  * (legacy rows / list queries that omit it) or can't be serialized — a read
  * path must never fail over content shape.
  */
@@ -211,6 +222,12 @@ function isReserializable(node: JSONContent): boolean {
  * `resizableImage` -> `image` (shares src/alt but has no markdown spec) and
  * `mention` -> the `@label` text the directive would otherwise hide. Only
  * called once {@link isReserializable} has cleared the tree.
+ *
+ * `youtube` is deliberately absent: the manager serializes it natively to its
+ * `:::youtube` directive, so rewriting it to a link here would demote every
+ * video to a plain URL in the stored `content` column -- and the help-centre
+ * auto-translator reads that column, so the translated article would lose the
+ * player while the source article kept it.
  */
 function normalizeForMarkdown(node: JSONContent): JSONContent {
   if (node.type === 'mention') {
@@ -223,15 +240,6 @@ function normalizeForMarkdown(node: JSONContent): JSONContent {
     const name = String(attrs.name ?? '')
     const emoji = String(attrs.emoji ?? lookupEmoji(name)?.emoji ?? (name ? `:${name}:` : ''))
     return { type: 'text', text: emoji }
-  }
-  if (node.type === 'youtube') {
-    const src = String(node.attrs?.src ?? '')
-    return {
-      type: 'paragraph',
-      content: src
-        ? [{ type: 'text', text: src, marks: [{ type: 'link', attrs: { href: src } }] }]
-        : [{ type: 'text', text: '[YouTube embed]' }],
-    }
   }
   if (node.type === 'quackbackEmbed') {
     const kind = String(node.attrs?.kind ?? 'content')

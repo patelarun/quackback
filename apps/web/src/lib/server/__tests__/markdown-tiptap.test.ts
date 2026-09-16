@@ -123,6 +123,31 @@ describe('markdownToTiptapJson', () => {
     const lists = result.content!.filter((n) => n.type === 'bulletList')
     expect(lists.length).toBeGreaterThanOrEqual(2)
   })
+
+  // The `:::youtube` directive is the only way a markdown author can produce a
+  // video, and the bos-v3 product-docs sync depends on it: it posts plain
+  // markdown to the articles API, which has no contentJson field to smuggle a
+  // node through. Without the Youtube extension in SERVER_EXTENSIONS the
+  // directive reaches readers as its own literal text.
+  test('parses a :::youtube directive into a youtube node', () => {
+    const markdown =
+      '## Overview\n\nWatch the walkthrough.\n\n' +
+      ':::youtube {src="https://www.youtube.com/watch?v=dQw4w9WgXcQ" width="640" height="360"} :::\n'
+
+    const result = markdownToTiptapJson(markdown)
+    const video = result.content!.find((node) => node.type === 'youtube')
+    expect(video).toBeDefined()
+    expect(video!.attrs!.src).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
+    // Prose either side of the directive is unaffected.
+    expect(result.content!.some((node) => node.type === 'heading')).toBe(true)
+    expect(result.content!.some((node) => node.type === 'paragraph')).toBe(true)
+  })
+
+  test('a bare YouTube URL stays a link, not an embed', () => {
+    const result = markdownToTiptapJson('https://www.youtube.com/watch?v=dQw4w9WgXcQ\n')
+    expect(result.content!.some((node) => node.type === 'youtube')).toBe(false)
+    expect(JSON.stringify(result)).toContain('"type":"link"')
+  })
 })
 
 describe('tiptapJsonToMarkdown', () => {
@@ -331,6 +356,30 @@ describe('contentJsonToMarkdown', () => {
     // `content` is present but not an array must not throw a read into a 500.
     const malformed = doc as unknown as Parameters<typeof contentJsonToMarkdown>[0]
     expect(contentJsonToMarkdown(malformed, 'safe fallback')).toBe('safe fallback')
+  })
+})
+
+describe('youtube directive round trip', () => {
+  test('projectContentJsonToMarkdown keeps the directive instead of demoting it to a link', () => {
+    const doc = {
+      type: 'doc' as const,
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'Watch the walkthrough.' }] },
+        {
+          type: 'youtube',
+          attrs: { src: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', width: 640, height: 360 },
+        },
+      ],
+    }
+
+    const markdown = projectContentJsonToMarkdown(doc, 'stale stored markdown')
+    expect(markdown).toContain(':::youtube')
+    expect(markdown).toContain('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
+
+    // And it parses back to the same node, so a resync is a no-op rather than a
+    // slow drift from embed to link.
+    const reparsed = markdownToTiptapJson(markdown)
+    expect(reparsed.content!.some((node) => node.type === 'youtube')).toBe(true)
   })
 })
 
