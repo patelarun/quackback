@@ -12,11 +12,15 @@ import { SettingsCard } from '@/components/admin/settings/settings-card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { PlusIcon, TrashIcon } from '@heroicons/react/24/solid'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DomainsLanguagesTab } from '@/components/admin/settings/help-center/domains-languages-tab'
 import { settingsQueries } from '@/lib/client/queries/settings'
-import { useUpdateHelpCenterConfig } from '@/lib/client/mutations/settings'
+import {
+  useUpdateHelpCenterConfig,
+  useUpdateHelpCenterAccess,
+} from '@/lib/client/mutations/settings'
 import { useDebouncedSave } from '@/lib/client/hooks/use-debounced-save'
 import {
   isProductEnabled,
@@ -168,6 +172,8 @@ function HelpCenterSettingsPage() {
         </TabsList>
 
         <TabsContent value="general" className="space-y-6">
+          <AccessCard visibility={config.access?.visibility ?? 'public'} />
+
           <SettingsCard title="Homepage" description="Customize the help center landing page">
             <div className="space-y-4">
               <div className="space-y-1.5">
@@ -260,5 +266,56 @@ function HelpCenterSettingsPage() {
         </TabsContent>
       </Tabs>
     </div>
+  )
+}
+
+// ============================================================================
+// Access
+// ============================================================================
+
+/**
+ * The help-center login gate. Off (the default) is the historical behaviour:
+ * /hc is readable by anyone, crawlers included. On restricts every
+ * help-center read to signed-in customers — the Help tab stays in the portal
+ * nav, but the page renders a login card instead of articles.
+ *
+ * Distinct from Security > Portal visibility, which walls off the whole
+ * portal. This toggle only narrows the help center, so a workspace can keep
+ * its feedback board open while its documentation is customers-only.
+ */
+function AccessCard({ visibility }: { visibility: 'public' | 'authenticated' }) {
+  const updateAccess = useUpdateHelpCenterAccess()
+  const [loginRequired, setLoginRequired] = useState(visibility === 'authenticated')
+
+  function handleLoginRequiredChange(next: boolean) {
+    setLoginRequired(next)
+    updateAccess.mutate({ visibility: next ? 'authenticated' : 'public' })
+  }
+
+  return (
+    <SettingsCard title="Access" description="Control who can read your help center">
+      <div className="flex items-center justify-between rounded-lg border border-border/50 p-4">
+        <div>
+          <Label htmlFor="hc-login-required" className="text-sm font-medium cursor-pointer">
+            Require sign-in to read the help center
+          </Label>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            On, visitors still see the Help tab but must log in or sign up to open it. Articles are
+            also removed from the sitemap, disallowed in robots.txt, and withheld from every public
+            help center API.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <InlineSpinner visible={updateAccess.isPending} />
+          <Switch
+            id="hc-login-required"
+            checked={loginRequired}
+            onCheckedChange={handleLoginRequiredChange}
+            disabled={updateAccess.isPending}
+            aria-label="Require sign-in to read the help center"
+          />
+        </div>
+      </div>
+    </SettingsCard>
   )
 }

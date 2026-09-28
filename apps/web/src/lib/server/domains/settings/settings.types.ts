@@ -924,6 +924,31 @@ export const DEFAULT_HELP_CENTER_AUTO_TRANSLATE_CONFIG: HelpCenterAutoTranslateC
   protectedTerms: [],
 }
 
+/**
+ * Who may read the help center (`/hc`) and every public help-center API.
+ *
+ * `public` — anyone, including signed-out visitors and search-engine
+ * crawlers. This is the historical behaviour and stays the default.
+ *
+ * `authenticated` — a signed-in, non-anonymous principal is required.
+ * Signed-out visitors keep seeing the Help tab in the portal nav, but the
+ * page itself renders an in-place login gate instead of any article
+ * content, every public help-center read returns nothing, and `/hc` is
+ * dropped from the sitemap and disallowed in robots.txt.
+ *
+ * Independent of the portal's own `visibility` — a workspace can keep its
+ * feedback board public while its documentation is customers-only. A
+ * private PORTAL still implies a private help center, because the
+ * help-center resolver defers to the portal decision first.
+ */
+export interface HelpCenterAccessConfig {
+  visibility: 'public' | 'authenticated'
+}
+
+export const DEFAULT_HELP_CENTER_ACCESS_CONFIG: HelpCenterAccessConfig = {
+  visibility: 'public',
+}
+
 /** An admin-configured link rendered in the portal header on help center pages. */
 export interface HelpCenterHeaderLink {
   label: string
@@ -943,6 +968,8 @@ export interface HelpCenterConfig {
   homepageDescription: string
   /** Custom links shown beside the built-in nav on help center pages only. */
   headerLinks: HelpCenterHeaderLink[]
+  /** Whether reading the help center requires being signed in. */
+  access: HelpCenterAccessConfig
   domain: HelpCenterDomainConfig
   locales: HelpCenterLocalesConfig
   autoTranslate: HelpCenterAutoTranslateConfig
@@ -954,6 +981,7 @@ export const DEFAULT_HELP_CENTER_CONFIG: HelpCenterConfig = {
   homepageTitle: 'How can we help?',
   homepageDescription: 'Search our knowledge base or browse by category',
   headerLinks: [],
+  access: DEFAULT_HELP_CENTER_ACCESS_CONFIG,
   domain: DEFAULT_HELP_CENTER_DOMAIN_CONFIG,
   locales: DEFAULT_HELP_CENTER_LOCALES_CONFIG,
   autoTranslate: DEFAULT_HELP_CENTER_AUTO_TRANSLATE_CONFIG,

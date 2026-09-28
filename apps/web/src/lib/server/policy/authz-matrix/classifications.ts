@@ -344,6 +344,9 @@ export const BARE_GATE_CLASSIFICATIONS: Record<string, Classification> = {
   'routes/api/v1/help-center/articles/index.ts::GET': PUBLIC_DATA('public help article list'),
   'routes/api/v1/help-center/categories/$categoryId.ts::GET': PUBLIC_DATA('public help category'),
   'routes/api/v1/help-center/categories/index.ts::GET': PUBLIC_DATA('public help category list'),
+  // Anonymous-viewer retrieval of published, public sections; the handler also requires the
+  // key's read:article scope.
+  'routes/api/v1/help-center/retrieve.ts::POST': PUBLIC_DATA('public help sections (read:article)'),
   'routes/api/v1/roadmaps/$roadmapId.columns.ts::GET': PUBLIC_DATA('public roadmap columns'),
   'routes/api/v1/roadmaps/$roadmapId.posts.ts::GET': PUBLIC_DATA('public roadmap posts'),
   'routes/api/v1/roadmaps/$roadmapId.ts::GET': PUBLIC_DATA('public roadmap'),

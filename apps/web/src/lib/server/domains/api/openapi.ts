@@ -154,6 +154,7 @@ Example: \`post_01h455vb4pex5vsknk084sn02q\`
         name: 'Status',
         description: 'Manage the status page: components, incidents, and maintenance',
       },
+      { name: 'Help Center', description: 'Retrieve help-center content' },
     ],
     paths: registeredPaths,
     components: {

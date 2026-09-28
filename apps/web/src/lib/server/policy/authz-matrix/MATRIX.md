@@ -100,7 +100,7 @@ Profiles: **Owner** = admin class + an admin-owned full API key (scoped keys hol
 
 ## 2. Surfaces and their enforced authorization
 
-### Server functions (`requireAuth`) — 672 surfaces
+### Server functions (`requireAuth`) — 673 surfaces
 
 | Surface | Enforces |
 | --- | --- |
@@ -412,6 +412,7 @@ Profiles: **Owner** = admin class + an admin-owned full API key (scoped keys hol
 | `lib/server/functions/feature-flags.ts`::updateFeatureFlagsFn | settings.manage |
 | `lib/server/functions/feedback.ts`::acceptSuggestionFn | suggestion.manage |
 | `lib/server/functions/feedback.ts`::dismissSuggestionFn | suggestion.manage |
+| `lib/server/functions/help-center-access.ts`::updateHelpCenterAccessFn | help_center.manage |
 | `lib/server/functions/help-center-domain.ts`::updateHelpCenterDomainFn | help_center.manage |
 | `lib/server/functions/help-center-domain.ts`::verifyHelpCenterDomainFn | help_center.manage |
 | `lib/server/functions/help-center-domain.ts`::getHelpCenterDomainStatusFn | help_center.manage |
@@ -777,7 +778,7 @@ Profiles: **Owner** = admin class + an admin-owned full API key (scoped keys hol
 | `lib/server/functions/workflows.ts`::runWorkflowManuallyFn | conversation.reply |
 | `lib/server/functions/workspace-wipe.ts`::wipeCloudWorkspaceFn | END_USER (any authenticated) |
 
-### Public REST API (`withApiKeyAuth`) — 136 surfaces
+### Public REST API (`withApiKeyAuth`) — 137 surfaces
 
 | Surface | Enforces |
 | --- | --- |
@@ -838,6 +839,7 @@ Profiles: **Owner** = admin class + an admin-owned full API key (scoped keys hol
 | `routes/api/v1/help-center/categories/$categoryId.ts`::DELETE | help_center.manage |
 | `routes/api/v1/help-center/categories/index.ts`::GET | PUBLIC (any valid key) |
 | `routes/api/v1/help-center/categories/index.ts`::POST | help_center.manage |
+| `routes/api/v1/help-center/retrieve.ts`::POST | PUBLIC (any valid key) |
 | `routes/api/v1/moderation/comments.$commentId.approve.ts`::POST | post.approve |
 | `routes/api/v1/moderation/comments.$commentId.reject.ts`::POST | post.approve |
 | `routes/api/v1/moderation/pending.ts`::GET | post.approve |
@@ -993,7 +995,7 @@ Key scopes are enforced: an API key holds exactly its stored scopes (owner permi
 
 ## 4. Entry points without a requireAuth/key gate
 
-188 of 982 entry points hold no `requireAuth` / `withApiKeyAuth` / `requireTeamAuth` gate.
+189 of 985 entry points hold no `requireAuth` / `withApiKeyAuth` / `requireTeamAuth` gate.
 Each is expected to be intentionally public, a pre-auth flow, a signature-verified webhook, or a handler that delegates auth (e.g. the MCP route).
 **Adding a row here is an access-control change** — confirm the new entry point is meant to be reachable without a gate.
 
@@ -1021,6 +1023,7 @@ Each is expected to be intentionally public, a pre-auth flow, a signature-verifi
 | `lib/server/functions/entitlement-status.ts`::hasEntitlementFn | server-fn |
 | `lib/server/functions/entitlement-status.ts`::hasTierFeatureFn | server-fn |
 | `lib/server/functions/entitlement-status.ts`::listEntitlementsFn | server-fn |
+| `lib/server/functions/help-center-access.ts`::evaluateMyHelpCenterAccessFn | server-fn |
 | `lib/server/functions/help-center-redirect-rules.ts`::resolveHelpCenterRedirectFn | server-fn |
 | `lib/server/functions/help-center.ts`::getPublicArticleBySlugFn | server-fn |
 | `lib/server/functions/help-center.ts`::getPublicArticlePageFn | server-fn |

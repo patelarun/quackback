@@ -12,9 +12,13 @@ export const Route = createFileRoute('/robots.txt')({
 
         const helpCenterConfig = await getHelpCenterConfig()
         const helpCenterEnabled = await isFeatureEnabled('helpCenter')
+        // Login gate: a crawler is always signed out, so a gated help center
+        // is as uncrawlable as one with indexing turned off — same treatment.
+        const helpCenterLoginRequired = helpCenterConfig.access?.visibility === 'authenticated'
         // Indexing toggle (domains/languages §1): off means neither crawlable
         // nor advertised via a sitemap link.
-        const helpCenterIndexable = helpCenterEnabled && helpCenterConfig.seo?.indexable !== false
+        const helpCenterIndexable =
+          helpCenterEnabled && !helpCenterLoginRequired && helpCenterConfig.seo?.indexable !== false
 
         const lines = [
           'User-agent: *',

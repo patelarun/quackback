@@ -61,6 +61,8 @@ vi.mock('@/lib/server/db', () => ({
   lte: vi.fn((...args: unknown[]) => ({ op: 'lte', args })),
   regconfigForLocale: (locale: string) =>
     ({ de: 'german', fr: 'french', 'zh-cn': 'simple' })[locale] ?? 'english',
+  // articleTsQuery builds its per-row regconfig CASE from this map.
+  LOCALE_TO_REGCONFIG: { en: 'english', sv: 'swedish' },
   sql: Object.assign(
     vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
       const stub = { strings, values, as: () => stub }

@@ -183,6 +183,15 @@ export const updateHelpCenterConfigSchema = z.object({
   headerLinks: z.array(helpCenterHeaderLinkSchema).max(3).optional(),
 })
 
+/**
+ * Login gate for the help center. `authenticated` requires a signed-in,
+ * non-anonymous principal to read any help-center content; `public` is the
+ * historical open behaviour.
+ */
+export const updateHelpCenterAccessSchema = z.object({
+  visibility: z.enum(['public', 'authenticated']),
+})
+
 export const updateHelpCenterSeoSchema = z.object({
   metaDescription: z.string().max(500).optional(),
   structuredDataEnabled: z.boolean().optional(),

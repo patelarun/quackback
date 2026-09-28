@@ -336,6 +336,9 @@ export type KbArticleTranslationId = TypeId<'kb_article_translation'>
 /** Category translation ID - e.g., kb_category_translation_01h455vb4pex5vsknk084sn02q */
 export type KbCategoryTranslationId = TypeId<'kb_category_translation'>
 
+/** Article section chunk ID - e.g., kb_chunk_01h455vb4pex5vsknk084sn02q */
+export type KbArticleChunkId = TypeId<'kb_chunk'>
+
 // ============================================
 // Auth Entity IDs (Better-auth)
 // ============================================
@@ -537,6 +540,7 @@ export interface EntityIdMap {
   hc_redirect_rule: HcRedirectRuleId
   kb_article_translation: KbArticleTranslationId
   kb_category_translation: KbCategoryTranslationId
+  kb_article_chunk: KbArticleChunkId
 }
 
 /**

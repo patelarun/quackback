@@ -78,6 +78,12 @@ function landingLocaleRedirectTarget(
 
 export const Route = createFileRoute('/_portal/hc/')({
   beforeLoad: async ({ context }) => {
+    // Gated: /hc is where the parent layout collapses every /hc/* path to,
+    // and it is where the login card renders. Bouncing on to /hc/{locale}
+    // from here would be sent straight back by the parent — an endless
+    // round trip — and the locale of articles nobody can read is moot.
+    if (!context.helpCenterAccess.granted) return
+
     const { settings } = context
     const helpCenterConfig = settings?.helpCenterConfig as HelpCenterConfig | undefined
     const target = landingLocaleRedirectTarget(
@@ -89,9 +95,14 @@ export const Route = createFileRoute('/_portal/hc/')({
   loader: async ({ context }) => {
     const { settings } = context
     const helpCenterConfig = settings?.helpCenterConfig as HelpCenterConfig | undefined
+
+    // Gated: the layout renders the login card in place of this page, so the
+    // landing data is never shown. Both fns would return an empty list to a
+    // gated caller anyway — skipping them only saves the round trip.
+    const helpCenterReadable = context.helpCenterAccess.granted
     const [categories, popularArticles] = await Promise.all([
-      listPublicCategoriesFn({ data: {} }),
-      listPopularPublicArticlesFn({ data: { limit: 6 } }),
+      helpCenterReadable ? listPublicCategoriesFn({ data: {} }) : [],
+      helpCenterReadable ? listPopularPublicArticlesFn({ data: { limit: 6 } }) : [],
     ])
 
     return {

@@ -23,6 +23,8 @@ import type {
   UpdateArticleInput,
 } from './help-center.types'
 import { generateArticleEmbedding } from './help-center-embedding.service'
+import { queueReindexArticleLocale } from './help-center-chunk-index.service'
+import { getHelpCenterConfig } from '@/lib/server/domains/settings/settings.service'
 import { helpCenterVisibilityConditions } from './help-center-search.service'
 import { resolveUserAvatarUrl } from '@/lib/server/domains/principals/principal-display'
 import { logger } from '@/lib/server/logger'
@@ -233,6 +235,11 @@ export async function createArticle(
       position: input.position ?? null,
       description: input.description?.trim() || null,
       segmentIds: input.segmentIds ?? [],
+      // Stamp the language the article is authored in. The column's 'en' default
+      // exists for pre-0273 rows; left to it, every article created on a help
+      // center authored in another language is stemmed -- and chunk-indexed --
+      // as English.
+      locale: (await getHelpCenterConfig()).locales.default,
     })
     .returning()
 
@@ -242,6 +249,7 @@ export async function createArticle(
   generateArticleEmbedding(article.id, title, content, resolved.category?.name).catch((err) =>
     log.error({ article_id: article.id, err }, 'article embedding generation failed')
   )
+  queueReindexArticleLocale(article.id, article.locale)
 
   return resolved
 }
@@ -314,6 +322,7 @@ export async function updateArticle(
     generateArticleEmbedding(id, resolved.title, resolved.content, resolved.category?.name).catch(
       (err) => log.error({ article_id: id, err }, 'article embedding generation failed')
     )
+    queueReindexArticleLocale(id, updated.locale)
   }
 
   return resolved

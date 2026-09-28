@@ -160,6 +160,7 @@ export type {
   HcRedirectRuleId,
   KbArticleTranslationId,
   KbCategoryTranslationId,
+  KbArticleChunkId,
   // Auth entities
   WorkspaceId,
   UserId,

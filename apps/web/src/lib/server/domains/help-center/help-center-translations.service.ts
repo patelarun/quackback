@@ -13,6 +13,10 @@ import {
 } from '@/lib/server/db'
 import { markdownToTiptapJson } from '@/lib/server/markdown-tiptap'
 import type { KbArticleId, KbCategoryId } from '@quackback/ids'
+import {
+  queueReindexArticleLocale,
+  deleteArticleLocaleChunks,
+} from './help-center-chunk-index.service'
 import { NotFoundError } from '@/lib/shared/errors'
 import type {
   HelpCenterArticleTranslation,
@@ -96,6 +100,10 @@ export async function upsertArticleTranslation(
       },
     })
     .returning()
+  // Every writer of a translation comes through here -- REST, admin UI and the
+  // auto-translator -- so this is the one place the section index can follow
+  // them. Status changes need no reindex: retrieval reads status at query time.
+  queueReindexArticleLocale(input.articleId, input.locale)
   return row
 }
 
@@ -135,6 +143,7 @@ export async function deleteArticleTranslation(
         eq(helpCenterArticleTranslations.locale, locale)
       )
     )
+  await deleteArticleLocaleChunks(articleId, locale)
 }
 
 /** One entry per enabled additional locale, for the admin editor's status pills. */

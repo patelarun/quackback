@@ -7,12 +7,14 @@ export const Route = createFileRoute('/hc/sitemap.xml')({
       GET: async ({ request }) => {
         const [
           { isFeatureEnabled, getHelpCenterConfig },
+          { resolveHelpCenterAccessForRequest },
           { listPublicCategories, listPublicArticles },
           { listPublicCategoriesForLocale, listPublicArticlesForCategoryLocale },
           { buildHelpCenterSitemapUrls, buildHelpCenterSitemapUrlsMultiLocale },
           { renderSitemap },
         ] = await Promise.all([
           import('@/lib/server/domains/settings/settings.service'),
+          import('@/lib/server/functions/help-center-access'),
           import('@/lib/server/domains/help-center/help-center.service'),
           import('@/lib/server/domains/help-center/help-center-locale.query'),
           import('@/lib/shared/help-center-sitemap'),
@@ -20,6 +22,14 @@ export const Route = createFileRoute('/hc/sitemap.xml')({
         ])
 
         if (!(await isFeatureEnabled('helpCenter'))) {
+          return new Response('Not Found', { status: 404 })
+        }
+
+        // Login gate: a crawler is, by definition, signed out, so a gated
+        // help center must not advertise a single article URL. Checked before
+        // the indexing toggle because it is the stricter of the two.
+        const access = await resolveHelpCenterAccessForRequest()
+        if (!access.granted) {
           return new Response('Not Found', { status: 404 })
         }
 

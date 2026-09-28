@@ -60,6 +60,13 @@ function createUpdateChain() {
   return chain
 }
 
+const mockQueueReindexArticleLocale = vi.fn()
+const mockDeleteArticleLocaleChunks = vi.fn()
+vi.mock('../help-center-chunk-index.service', () => ({
+  queueReindexArticleLocale: (...args: unknown[]) => mockQueueReindexArticleLocale(...args),
+  deleteArticleLocaleChunks: (...args: unknown[]) => mockDeleteArticleLocaleChunks(...args),
+}))
+
 vi.mock('@/lib/server/db', () => ({
   db: {
     query: {
@@ -140,6 +147,8 @@ describe('article translations', () => {
     expect(insertValuesCalls[0][0]).toMatchObject({ locale: 'de', title: 'Titel' })
     expect(onConflictCalls).toHaveLength(1)
     expect(result.title).toBe('Titel')
+    // Every translation writer passes through here, so this is where the section index follows.
+    expect(mockQueueReindexArticleLocale).toHaveBeenCalledWith('kb_article_1', 'de')
   })
 
   it('derives contentJson from the markdown when the caller omits it', async () => {
@@ -200,6 +209,7 @@ describe('article translations', () => {
   it('deletes a translation', async () => {
     await deleteArticleTranslation('kb_article_1' as KbArticleId, 'de')
     // no throw is sufficient; the mocked db.delete().where() always resolves
+    expect(mockDeleteArticleLocaleChunks).toHaveBeenCalledWith('kb_article_1', 'de')
   })
 
   it('computes untranslated/draft/published status per enabled locale', async () => {

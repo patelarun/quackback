@@ -82,6 +82,7 @@ export type AuditEventType =
   | 'moderation.default.changed'
   | 'portal.visibility.changed'
   | 'portal.allowed_domains.changed'
+  | 'help_center.visibility.changed'
   | 'post.moderation.approved'
   | 'post.moderation.rejected'
   | 'post.moderation.held'

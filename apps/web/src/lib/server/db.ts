@@ -409,6 +409,7 @@ export {
   helpCenterRedirectRules,
   helpCenterArticleTranslations,
   helpCenterArticleTranslationsRelations,
+  helpCenterArticleChunks,
   helpCenterCategoryTranslations,
   helpCenterCategoryTranslationsRelations,
   helpCenterSearchQueries,

@@ -56,6 +56,7 @@ export const ID_PREFIXES = {
   hc_redirect_rule: 'hc_redirect_rule',
   kb_article_translation: 'kb_article_translation',
   kb_category_translation: 'kb_category_translation',
+  kb_article_chunk: 'kb_chunk',
 
   // Companies (B2B customer accounts)
   company: 'company',

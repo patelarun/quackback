@@ -12,6 +12,7 @@ import {
   hasAuthCredentials,
   policyActorFromAuth,
 } from './auth-helpers'
+import { assertHelpCenterReadable, helpCenterIsReadableForRequest } from './help-center-access'
 import { PERMISSIONS } from '@/lib/shared/permissions'
 import {
   listCategories,
@@ -66,6 +67,18 @@ import { logger } from '@/lib/server/logger'
 import { formatHcIdSlug, parseHcIdSlug } from '@/lib/shared/help-center-url'
 
 const log = logger.child({ component: 'help-center' })
+
+/**
+ * The outer login gate every public read below opens with — see
+ * `help-center-access.ts`. Two shapes, matching the rest of the portal:
+ * list reads degrade to an empty result so a gated help center reads as
+ * "no articles" wherever one is embedded, and single-entity reads throw
+ * `NotFoundError` so a gated help center never confirms which slugs exist.
+ *
+ * This is the layer that actually protects the content. The `/hc` route
+ * gate only stops the PAGE from rendering; without these checks the same
+ * articles stay one direct server-fn call away.
+ */
 
 /**
  * Resolve the public help-center viewer for the category segment gate.
@@ -129,6 +142,7 @@ export const listCategoriesFn = createServerFn({ method: 'GET' })
 export const listPublicCategoriesFn = createServerFn({ method: 'GET' })
   .validator(z.object({ locale: z.string().optional() }))
   .handler(async ({ data }) => {
+    if (!(await helpCenterIsReadableForRequest())) return []
     const { listPublicCategoriesForLocale } =
       await import('@/lib/server/domains/help-center/help-center-locale.query')
     const { getHelpCenterConfig } = await import('@/lib/server/domains/settings/settings.service')
@@ -151,6 +165,7 @@ export const getCategoryFn = createServerFn({ method: 'GET' })
 export const getPublicCategoryBySlugFn = createServerFn({ method: 'GET' })
   .validator(getCategoryBySlugSchema)
   .handler(async ({ data }) => {
+    await assertHelpCenterReadable()
     // Use the locale-aware public lookup so categories an admin marked
     // private, or that have no translation in the requested locale, aren't
     // reachable by direct-slug lookup. The route serves unauthenticated
@@ -246,6 +261,8 @@ export const restoreArticleFn = createServerFn({ method: 'POST' })
 export const listPublicArticlesFn = createServerFn({ method: 'GET' })
   .validator(listPublicArticlesSchema)
   .handler(async ({ data }) => {
+    if (!(await helpCenterIsReadableForRequest()))
+      return { items: [], nextCursor: null, hasMore: false }
     const result = await listPublicArticles(data, await publicViewer())
     return {
       ...result,
@@ -256,6 +273,7 @@ export const listPublicArticlesFn = createServerFn({ method: 'GET' })
 export const listPublicArticlesForCategoryFn = createServerFn({ method: 'GET' })
   .validator(z.object({ categoryId: z.string(), locale: z.string().optional() }))
   .handler(async ({ data }) => {
+    if (!(await helpCenterIsReadableForRequest())) return []
     const { listPublicArticlesForCategoryLocale } =
       await import('@/lib/server/domains/help-center/help-center-locale.query')
     const { getHelpCenterConfig } = await import('@/lib/server/domains/settings/settings.service')
@@ -283,6 +301,7 @@ export const listPublicArticlesForCategoryFn = createServerFn({ method: 'GET' })
 export const getPublicCategoryPageFn = createServerFn({ method: 'GET' })
   .validator(getCategoryBySlugSchema)
   .handler(async ({ data }) => {
+    await assertHelpCenterReadable()
     const {
       getPublicCategoryBySlugForLocale,
       listPublicCategoriesForLocale,
@@ -334,6 +353,7 @@ const publicIdSlugSchema = z.object({
 export const getPublicArticlePageFn = createServerFn({ method: 'GET' })
   .validator(publicIdSlugSchema)
   .handler(async ({ data }) => {
+    await assertHelpCenterReadable()
     const parsed = parseHcIdSlug(data.idSlug)
     if (!parsed) {
       const { NotFoundError } = await import('@/lib/shared/errors')
@@ -385,6 +405,7 @@ export const getPublicArticlePageFn = createServerFn({ method: 'GET' })
 export const getPublicCollectionPageFn = createServerFn({ method: 'GET' })
   .validator(publicIdSlugSchema)
   .handler(async ({ data }) => {
+    await assertHelpCenterReadable()
     const parsed = parseHcIdSlug(data.idSlug)
     if (!parsed) {
       const { NotFoundError } = await import('@/lib/shared/errors')
@@ -429,12 +450,14 @@ export const getPublicCollectionPageFn = createServerFn({ method: 'GET' })
 export const listPublicCategoryEditorsFn = createServerFn({ method: 'GET' })
   .validator(z.object({}))
   .handler(async () => {
+    if (!(await helpCenterIsReadableForRequest())) return []
     return listPublicCategoryEditors()
   })
 
 export const listPopularPublicArticlesFn = createServerFn({ method: 'GET' })
   .validator(z.object({ limit: z.number().int().min(1).max(20).optional() }))
   .handler(async ({ data }) => {
+    if (!(await helpCenterIsReadableForRequest())) return []
     return listPopularPublicArticles(data.limit ?? 6, await publicViewer())
   })
 
@@ -449,6 +472,7 @@ export const getArticleFn = createServerFn({ method: 'GET' })
 export const getPublicArticleBySlugFn = createServerFn({ method: 'GET' })
   .validator(getArticleBySlugSchema)
   .handler(async ({ data }) => {
+    await assertHelpCenterReadable()
     const { getPublicArticleBySlugForLocale } =
       await import('@/lib/server/domains/help-center/help-center-locale.query')
     const { getHelpCenterConfig } = await import('@/lib/server/domains/settings/settings.service')
@@ -470,6 +494,7 @@ export const getRelatedPublicArticlesFn = createServerFn({ method: 'GET' })
     })
   )
   .handler(async ({ data }) => {
+    if (!(await helpCenterIsReadableForRequest())) return []
     const { getRelatedArticles, RELATED_ARTICLES_LIMIT } =
       await import('@/lib/server/domains/help-center/help-center-related.service')
     return getRelatedArticles(
@@ -532,6 +557,7 @@ export const deleteArticleFn = createServerFn({ method: 'POST' })
 export const recordArticleFeedbackFn = createServerFn({ method: 'POST' })
   .validator(articleFeedbackSchema)
   .handler(async ({ data }) => {
+    await assertHelpCenterReadable()
     const auth = await getOptionalAuth()
     const feedbackId = await recordArticleFeedback(
       data.articleId as KbArticleId,
@@ -546,6 +572,7 @@ export const recordArticleFeedbackFn = createServerFn({ method: 'POST' })
 export const submitArticleFeedbackReasonFn = createServerFn({ method: 'POST' })
   .validator(articleFeedbackReasonSchema)
   .handler(async ({ data }) => {
+    await assertHelpCenterReadable()
     await attachArticleFeedbackReason(data.feedbackId as KbArticleFeedbackId, data.reason)
     return { success: true }
   })
@@ -575,6 +602,7 @@ export const searchPublicArticlesFn = createServerFn({ method: 'GET' })
     })
   )
   .handler(async ({ data }) => {
+    if (!(await helpCenterIsReadableForRequest())) return []
     const [{ hybridSearchForLocale, resolveSearchLocale }, { getHelpCenterConfig }] =
       await Promise.all([
         import('@/lib/server/domains/help-center/help-center-search.service'),

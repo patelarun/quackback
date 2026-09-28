@@ -296,6 +296,60 @@ export const helpCenterArticleTranslations = pgTable(
 )
 
 /**
+ * Section-level retrieval index over help-center content, one row per `##`
+ * section per locale -- the base article's own locale and every translation
+ * alike. Whole-article vectors (kb_articles.embedding) are too coarse to answer
+ * a question from the one section that holds it, and exist for the base locale
+ * only; this table covers both at section grain.
+ *
+ * Derived data, rebuilt by help-center-chunk-index.service from the article or
+ * translation it points at: never edit a row by hand. Visibility is NOT stored
+ * here -- every reader joins back to kb_articles/kb_categories (and, for a
+ * translation locale, kb_article_translations.status) so a chunk can never be
+ * more visible than the content it came from.
+ */
+export const helpCenterArticleChunks = pgTable(
+  'kb_article_chunks',
+  {
+    id: typeIdWithDefault('kb_chunk')('id').primaryKey(),
+    articleId: typeIdColumn('kb_article')('article_id')
+      .notNull()
+      .references(() => helpCenterArticles.id, { onDelete: 'cascade' }),
+    locale: text('locale').notNull(),
+    /** 0-based order of the chunk within its article + locale. */
+    position: integer('position').notNull(),
+    /** The section's own `##` heading; null for text before the first heading. */
+    heading: text('heading'),
+    /** `"Article title › Section"`: prefixed to the embedding input, weighted A in search. */
+    headingPath: text('heading_path').notNull(),
+    /** The section's Markdown, `###` subsections included. */
+    content: text('content').notNull(),
+    /** sha256 of the embedding input: a chunk whose hash is unchanged is never re-embedded. */
+    contentHash: text('content_hash').notNull(),
+    tokenCount: integer('token_count').notNull(),
+    embedding: vector('embedding'),
+    embeddingModel: text('embedding_model'),
+    searchVector: tsvector('search_vector').generatedAlwaysAs(
+      sql`setweight(to_tsvector(${sql.raw(localeRegconfigCaseSql('locale'))}, coalesce(heading_path, '')), 'A') || setweight(to_tsvector(${sql.raw(localeRegconfigCaseSql('locale'))}, coalesce(content, '')), 'B')`
+    ),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('kb_article_chunks_article_locale_position_idx').on(
+      table.articleId,
+      table.locale,
+      table.position
+    ),
+    index('kb_article_chunks_locale_idx').on(table.locale),
+    index('kb_article_chunks_search_vector_idx').using('gin', table.searchVector),
+    index('kb_article_chunks_embedding_hnsw_idx')
+      .using('hnsw', sql`${table.embedding} vector_cosine_ops`)
+      .where(sql`${table.embedding} IS NOT NULL`),
+  ]
+)
+
+/**
  * Per-category translation variants. No `status` column -- a category's
  * presence in a locale is purely "does a translation row with a non-empty
  * name exist", per the homepage visibility gate (domains/languages §1).

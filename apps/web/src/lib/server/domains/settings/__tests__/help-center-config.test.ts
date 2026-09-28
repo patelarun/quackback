@@ -62,6 +62,10 @@ describe('HelpCenterConfig', () => {
     it('should have default SEO config embedded', () => {
       expect(DEFAULT_HELP_CENTER_CONFIG.seo).toEqual(DEFAULT_HELP_CENTER_SEO_CONFIG)
     })
+
+    it('should leave the help center public by default', () => {
+      expect(DEFAULT_HELP_CENTER_CONFIG.access.visibility).toBe('public')
+    })
   })
 
   describe('type constraints', () => {
@@ -71,6 +75,7 @@ describe('HelpCenterConfig', () => {
         homepageTitle: 'Get Help',
         homepageDescription: 'Browse our docs',
         headerLinks: [{ label: 'Community', url: 'https://community.example.com' }],
+        access: { visibility: 'authenticated' },
         domain: { domain: null, verifiedAt: null },
         locales: { default: 'en', additional: [], chrome: {} },
         autoTranslate: { enabled: false, protectedTerms: [] },

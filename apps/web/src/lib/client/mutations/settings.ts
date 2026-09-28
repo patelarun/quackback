@@ -35,6 +35,7 @@ import {
   updateHelpCenterLocaleChromeFn,
   updateHelpCenterAutoTranslateFn,
 } from '@/lib/server/functions/help-center-settings'
+import { updateHelpCenterAccessFn } from '@/lib/server/functions/help-center-access'
 import {
   updateHelpCenterDomainFn,
   verifyHelpCenterDomainFn,
@@ -335,6 +336,18 @@ export function useUpdateHelpCenterSeo() {
   return useMutation({
     mutationFn: (data: Parameters<typeof updateHelpCenterSeoFn>[0]['data']) =>
       updateHelpCenterSeoFn({ data }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: settingsQueries.helpCenterConfig().queryKey }),
+  })
+}
+
+/** Flips the help center between public and signed-in-customers-only. */
+export function useUpdateHelpCenterAccess() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (data: Parameters<typeof updateHelpCenterAccessFn>[0]['data']) =>
+      updateHelpCenterAccessFn({ data }),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: settingsQueries.helpCenterConfig().queryKey }),
   })

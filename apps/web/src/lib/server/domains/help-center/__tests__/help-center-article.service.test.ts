@@ -98,6 +98,16 @@ vi.mock('@/lib/server/markdown-tiptap', () => ({
   projectContentJsonToMarkdown: (_json: unknown, fallback: string) => fallback,
 }))
 
+const mockQueueReindexArticleLocale = vi.fn()
+vi.mock('../help-center-chunk-index.service', () => ({
+  queueReindexArticleLocale: (...args: unknown[]) => mockQueueReindexArticleLocale(...args),
+}))
+vi.mock('@/lib/server/domains/settings/settings.service', () => ({
+  getHelpCenterConfig: vi
+    .fn()
+    .mockResolvedValue({ locales: { default: 'sv', additional: ['en'] } }),
+}))
+
 let getArticleById: typeof import('../help-center.article.service').getArticleById
 let createArticle: typeof import('../help-center.article.service').createArticle
 let updateArticle: typeof import('../help-center.article.service').updateArticle
@@ -179,6 +189,7 @@ describe('createArticle', () => {
       {
         id: 'kb_article_new1' as KbArticleId,
         slug: 'how-to-start',
+        locale: 'sv',
         title: 'How to Start',
         content: 'Some content',
         contentJson: { type: 'doc', content: [] },
@@ -213,6 +224,40 @@ describe('createArticle', () => {
 
     expect(result.title).toBe('How to Start')
     expect(result.category.name).toBe('Getting Started')
+  })
+
+  it('stamps the help center base locale and queues the section reindex', async () => {
+    const { db } = await import('@/lib/server/db')
+    const chain: Record<string, unknown> = {}
+    chain.values = vi.fn((...args: unknown[]) => {
+      insertValuesCalls.push(args)
+      return chain
+    })
+    chain.returning = vi.fn().mockResolvedValue([
+      {
+        id: 'kb_article_sv1' as KbArticleId,
+        slug: 'anvandare',
+        locale: 'sv',
+        title: 'Användare',
+        content: 'Innehåll',
+        categoryId: 'kb_category_1',
+        principalId: 'principal_1',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ])
+    vi.mocked(db.insert).mockReturnValueOnce(chain as never)
+    mockCategoryFindFirst.mockResolvedValue({ id: 'kb_category_1', slug: 'c', name: 'C' })
+    mockPrincipalFindFirst.mockResolvedValue({ id: 'principal_1', type: 'user' })
+
+    await createArticle(
+      { categoryId: 'kb_category_1', title: 'Användare', content: 'Innehåll' },
+      'principal_1' as PrincipalId
+    )
+
+    // Not the column's 'en' default: the language the help center is authored in.
+    expect(insertValuesCalls[0][0]).toMatchObject({ locale: 'sv' })
+    expect(mockQueueReindexArticleLocale).toHaveBeenCalledWith('kb_article_sv1', 'sv')
   })
 
   it('throws ValidationError when the calling principal is a service principal and no authorId is given', async () => {

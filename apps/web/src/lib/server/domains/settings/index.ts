@@ -35,6 +35,7 @@ export type {
   HelpCenterConfig,
   HelpCenterHeaderLink,
   HelpCenterSeoConfig,
+  HelpCenterAccessConfig,
   HelpCenterDomainConfig,
   HelpCenterLocalesConfig,
   HelpCenterLocaleChromeStrings,

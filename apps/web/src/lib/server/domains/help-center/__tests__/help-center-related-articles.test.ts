@@ -62,6 +62,8 @@ vi.mock('@/lib/server/db', () => ({
   isNotNull: vi.fn((...args: unknown[]) => ({ op: 'isNotNull', args })),
   lte: vi.fn((...args: unknown[]) => ({ op: 'lte', args })),
   notInArray: vi.fn((...args: unknown[]) => ({ op: 'notInArray', args })),
+  // articleTsQuery builds its per-row regconfig CASE from this map.
+  LOCALE_TO_REGCONFIG: { en: 'english', sv: 'swedish' },
   sql: Object.assign(
     vi.fn(() => {
       const stub: { as: (alias: string) => typeof stub } = { as: () => stub }

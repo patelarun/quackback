@@ -19,6 +19,7 @@ import {
   lte,
   sql,
   regconfigForLocale,
+  LOCALE_TO_REGCONFIG,
 } from '@/lib/server/db'
 import { getHelpCenterConfig } from '@/lib/server/domains/settings/settings.service'
 import { ANONYMOUS_ACTOR, type Actor } from '@/lib/server/policy/types'
@@ -87,6 +88,37 @@ export function orTermsTsQueryForLocale(query: string, locale: string) {
     .join(' or ')
   const regconfig = regconfigForLocale(locale)
   return sql`websearch_to_tsquery(${regconfig}::regconfig, ${orQuery})`
+}
+
+/**
+ * The OR-of-terms tsquery for searching BASE articles (kb_articles), stemmed
+ * with each row's OWN text-search config. kb_articles.search_vector is generated
+ * from the row's `locale` column (migration 0273), so the query is built from the
+ * same column with the same CASE: an 'english' tsquery against a Swedish-stemmed
+ * vector matches almost nothing ("hur lägger jag till en användare" found no
+ * article at all on 2026-09-25). Per-row, rather than read from the help-center
+ * config, so it stays right for any row whose locale differs from the base, and
+ * so no search path needs a settings read.
+ *
+ * The cost is that a row-dependent tsquery cannot use the GIN index, which is
+ * immaterial at help-center sizes (tens to low thousands of rows).
+ *
+ * {@link orTermsTsQuery} stays English for the corpora that are not help-center
+ * articles (feedback posts).
+ */
+export function articleTsQuery(query: string) {
+  const orQuery = query
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w && !CORPUS_STOPWORDS.has(w.toLowerCase().replace(/[^a-z0-9]/g, '')))
+    .join(' or ')
+  // Same CASE as localeRegconfigCaseSql (the generated column), keyed on the row's
+  // column. Inlined, not parameterized: every value comes from the static map.
+  const whens = Object.entries(LOCALE_TO_REGCONFIG)
+    .filter(([, cfg]) => cfg !== 'english')
+    .map(([locale, cfg]) => `WHEN '${locale}' THEN '${cfg}'::regconfig`)
+    .join(' ')
+  return sql`websearch_to_tsquery(CASE ${helpCenterArticles.locale} ${sql.raw(whens)} ELSE 'english'::regconfig END, ${orQuery})`
 }
 
 /** Which slice of the knowledge base a caller may see. */
@@ -216,7 +248,7 @@ async function hybridQuery(
   viewer: Actor
 ): Promise<HybridSearchResult[]> {
   const vectorStr = `[${embedding.join(',')}]`
-  const tsQuery = orTermsTsQuery(query)
+  const tsQuery = articleTsQuery(query)
 
   const results = await db
     .select({
@@ -328,7 +360,7 @@ export async function searchArticleIdsRanked(
     }
   }
 
-  const tsQuery = orTermsTsQuery(query)
+  const tsQuery = articleTsQuery(query)
   const queryEmbedding = await generateKbQueryEmbedding(query, {
     pipelineStep: 'kb_search_query_embedding',
   })
@@ -382,7 +414,7 @@ async function keywordOnlyQuery(
   limit: number,
   viewer: Actor
 ): Promise<HybridSearchResult[]> {
-  const tsQuery = orTermsTsQuery(query)
+  const tsQuery = articleTsQuery(query)
 
   const results = await db
     .select({
