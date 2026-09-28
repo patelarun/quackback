@@ -1,3 +1,4 @@
+
 # Inställningar
 
 ## Vad är det?
@@ -108,7 +109,6 @@ Gå till **Inställningar → Behörigheter / Allmänt** för att nå inställni
 #### Organisationsinställning
 
 Två oberoende reglage:
-
 - **Uppdatera automatiskt bokningens fakturatid när medarbetare uppdaterar tid** — håller en bokningens fakturatid synkroniserad automatiskt när en medarbetare ändrar sin arbetade tid.
 - **Tillåt uppdatering av kund i bokningar** — gör att kunden på en befintlig bokning kan ändras.
 
@@ -144,14 +144,12 @@ Du kan ha flera regler aktiva samtidigt, en för varje antal arbetade timmar.
 #### Bokningsuppdatering (Meddelandemallar)
 
 Två fasta meddelandemallar som visas för kunder, vars text du kan redigera — du kan inte lägga till fler än dessa två:
-
 - **Avbokningsmeddelande** — visas när en bokning avbokas.
 - **Datumändringsmeddelande** — visas när en bokning byter datum.
 
 #### Röda dagar / Helgdagar
 
 Välj hur röda dagar (helgdagar) hanteras:
-
 - **Standard** — BOS inbyggda helgdagskalender, som kan bläddras år för år.
 - **Anpassad** — lägg till egna helgdagar med ett namn (upp till 50 tecken) och ett datum, och ta bort de du har lagt till.
 

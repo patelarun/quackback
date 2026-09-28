@@ -41,7 +41,7 @@ const RetrieveRequestSchema = z
         description:
           'How the keyword and semantic rankings are combined: reciprocal rank fusion, or the ' +
           "article search's 0.4 keyword / 0.6 semantic blend",
-        default: 'rrf',
+        default: 'weighted',
       }),
   })
   .meta({ description: 'Retrieve request body' })

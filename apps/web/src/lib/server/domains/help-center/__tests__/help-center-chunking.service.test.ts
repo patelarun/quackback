@@ -88,10 +88,13 @@ describe('chunkArticle — en/calendar/calendar.md', () => {
   const chunks = chunkArticle('Calendar', markdown)
 
   it('never splits a table across chunks', () => {
-    const withTable = chunks.filter((c) => c.content.includes('| Entry type |'))
+    // Matched on cell text, not exact bytes, so column padding does not matter.
+    const withTable = chunks.filter((c) => /^\|\s*Entry type\s*\|/m.test(c.content))
     expect(withTable).toHaveLength(1)
-    expect(withTable[0].content).toContain('| --- | --- |')
-    expect(withTable[0].content).toContain('| Absence | View, **Approve**, **Delete** |')
+    expect(withTable[0].content).toMatch(/^\|\s*-{3,}\s*\|\s*-{3,}\s*\|/m)
+    expect(withTable[0].content).toMatch(
+      /^\|\s*Absence\s*\|\s*View, \*\*Approve\*\*, \*\*Delete\*\*\s*\|/m
+    )
   })
 
   it('loses no text', () => {

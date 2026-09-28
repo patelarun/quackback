@@ -87,12 +87,12 @@ Every entry has a **✎ Edit** button and a **⋮ More** button in its details:
 - **✎ Edit** opens the full edit form for that entry.
 - **⋮ More** opens a menu with more actions, which differ by type:
 
-| Entry type                                                       | Actions in the **⋮ More** menu                                                 |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Order / Project                                                  | View order, Email confirmation, SMS confirmation, Copy order, **Delete order** |
-| Shift                                                            | Update, Copy, **Delete**                                                       |
-| Absence                                                          | View, **Approve**, **Delete**                                                  |
-| Other time (overtime, travel time, other time, mileage, expense) | View, **Approve**, **Delete**                                                  |
+| Entry type | Actions in the **⋮ More** menu |
+| --- | --- |
+| Order / Project | View order, Email confirmation, SMS confirmation, Copy order, **Delete order** |
+| Shift | Update, Copy, **Delete** |
+| Absence | View, **Approve**, **Delete** |
+| Other time (overtime, travel time, other time, mileage, expense) | View, **Approve**, **Delete** |
 
 Orders and shifts also have status buttons at the bottom of their details:
 

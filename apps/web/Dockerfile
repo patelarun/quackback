@@ -79,7 +79,11 @@ RUN bun build packages/db/src/migrate.ts \
     bun build apps/web/scripts/backfill-ai.ts \
     --target=bun \
     --bundle \
-    --outfile=/tmp/backfill-ai.mjs
+    --outfile=/tmp/backfill-ai.mjs && \
+    bun build apps/web/scripts/backfill-kb-chunks.ts \
+    --target=bun \
+    --bundle \
+    --outfile=/tmp/backfill-kb-chunks.mjs
 
 # The fleet migrator, bundled the same way and for a stronger reason: under
 # pooled tenancy it is a role of this image, not a developer script. It reads
@@ -126,6 +130,10 @@ COPY --from=builder --chown=quackback:nodejs /tmp/switch-help-center-base-locale
 # Post-op backfill for the same reason: swapping the base locale clears every
 # article embedding (they described the old language), and this rebuilds them.
 COPY --from=builder --chown=quackback:nodejs /tmp/backfill-ai.mjs ./backfill-ai.mjs
+# Builds the help-center section index (kb_article_chunks) after migration 0275,
+# a base-locale switch or an embedding-model change. Safe to re-run: unchanged
+# sections keep their vectors.
+COPY --from=builder --chown=quackback:nodejs /tmp/backfill-kb-chunks.mjs ./backfill-kb-chunks.mjs
 COPY --from=builder --chown=quackback:nodejs /tmp/fleet-migrator.mjs ./fleet-migrator.mjs
 COPY --from=builder --chown=quackback:nodejs /app/packages/db/drizzle ./drizzle
 

@@ -19,3 +19,7 @@ apps/web/src/lib/server/policy/migration-contract/CONTRACT.md
 # more forgiving version, and the forgiving one serves the wrong tenant.
 # Changes belong in the control plane, then get re-vendored.
 apps/web/src/lib/server/workspaces/vendor/
+
+# Verbatim copies of bos-v3/product-docs, the chunker's test input. Reformatting
+# them (lint-staged pads Markdown tables) makes them stop being the real docs.
+apps/web/src/lib/server/domains/help-center/__tests__/fixtures/

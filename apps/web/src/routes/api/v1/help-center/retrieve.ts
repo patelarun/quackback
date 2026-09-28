@@ -39,7 +39,7 @@ const retrieveBody = z.object({
   /** Omitted → the help center's base locale. */
   locale: z.string().trim().toLowerCase().optional(),
   limit: z.number().int().min(1).max(RETRIEVE_MAX_LIMIT).optional(),
-  /** Ranking method; `weighted` is the article search's 0.4/0.6 blend, kept for comparison. */
+  /** Ranking method: `weighted` (default, the 0.4/0.6 blend) or `rrf`, kept for comparison. */
   fusion: z.enum(['rrf', 'weighted']).optional(),
 })
 

@@ -3,8 +3,9 @@
  *
  * Hybrid search over kb_article_chunks for ONE locale: a keyword arm on the
  * chunk's locale-stemmed search_vector and a semantic arm on its embedding,
- * fused into one ranking. Serves POST /api/v1/help-center/retrieve, whose
- * caller (the BOS assistant) writes its own answer from the sections returned.
+ * fused into one ranking (the 0.4/0.6 weighted blend by default, RRF on
+ * request). Serves POST /api/v1/help-center/retrieve, whose caller (the BOS
+ * assistant) writes its own answer from the sections returned.
  *
  * Two rules keep a chunk from ever being more visible than its source:
  *   - the article and its category must pass helpCenterVisibilityConditions,
@@ -66,7 +67,7 @@ export interface SearchChunksOptions {
   locale: string
   limit: number
   viewer?: Actor
-  /** How to combine the two arms. RRF by default; `weighted` is the 0.4/0.6 article blend. */
+  /** How to combine the two arms: the 0.4/0.6 weighted blend by default, or RRF. */
   fusion?: ChunkFusion
 }
 
@@ -229,7 +230,11 @@ export function sectionUrl(opts: {
 export async function searchChunks(options: SearchChunksOptions): Promise<SearchChunksResult> {
   const { query, locale, limit } = options
   const viewer = options.viewer ?? ANONYMOUS_ACTOR
-  const fusion = options.fusion ?? 'rrf'
+  // Weighted, not RRF: measured on production 2026-09-28 (help_center_eval.rb in
+  // bos-backend-v2), section recall@3 0.933 against RRF's 0.733. RRF gives the
+  // noisy OR-of-terms keyword ranks an equal vote; the blend lets a strong cosine
+  // match win.
+  const fusion = options.fusion ?? 'weighted'
 
   const [keywordRows, embedding] = await Promise.all([
     keywordCandidates(query, locale, viewer),
