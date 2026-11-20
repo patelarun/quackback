@@ -32,10 +32,12 @@ export const en = {
     'You received this email because {workspaceName} sent you a message.',
 
   // --- Account and sign-in ------------------------------------------------
-  'invitation.subject': "You've been invited to join {workspaceName} on Quackback",
+  'invitation.subject': '{invitedByName} invited you to {workspaceName}',
   'portalInvite.subject': "You've been invited to {workspaceName}",
   'welcome.subject': 'Welcome to {workspaceName} on Quackback!',
   'magicLink.subject': 'Your Quackback sign-in link',
+  'magicLink.subjectCode': '{code} is your sign-in code',
+  'magicLink.subjectCodeFor': '{code} is your code for {workspaceName}',
   'signupNotAllowed.subject': 'About your Quackback sign-in request',
   'passwordReset.subject': 'Reset your Quackback password',
   'recoveryCodeUsed.subject': 'A recovery code on your account was just used',
@@ -71,8 +73,7 @@ export const en = {
   'ticket.closed.subject': 'Your ticket {ticketLabel} was closed',
   'ticket.closed.heading': 'Your ticket was closed',
   'ticket.closed.intro': '{ticketLabel} "{title}" has been closed by the {workspaceName} team.',
-  'ticket.closed.note':
-    'If you have a follow-up, reply on the ticket thread — replying reopens it.',
+  'ticket.closed.note': 'If you have a follow-up, reply on the ticket thread. Replying reopens it.',
   'ticket.resolved.subject': 'Your ticket {ticketLabel} was resolved',
   'ticket.resolved.heading': 'Your ticket was resolved',
   'ticket.resolved.intro':
@@ -106,7 +107,8 @@ export const en = {
 
   // --- Sign-in mail -------------------------------------------------------
   'magicLink.preview': 'Your sign-in link',
-  'magicLink.heading': 'Sign in to Quackback',
+  'magicLink.heading': 'Sign in',
+  'magicLink.headingFor': 'Sign in to {workspaceName}',
   'magicLink.body': 'Click the button below to finish signing in.',
   'magicLink.cta': 'Sign in',
   'magicLink.codeIntro': 'Or enter this code on the sign-in screen:',
@@ -130,7 +132,7 @@ export const en = {
   'verifyAddress.bodyFor':
     'Enter this code for {workspaceName} to confirm this address. It expires in 10 minutes.',
   'verifyAddress.ignore':
-    "If you didn't ask for this, ignore it — nothing changes without the code.",
+    "If you didn't ask for this, ignore it. Nothing changes without the code.",
   'verifyAddress.footer':
     "You're receiving this because someone entered this address on an account. It won't be used for anything until it's confirmed.",
 
@@ -149,11 +151,12 @@ export const en = {
 
   // --- Teammate invitation ------------------------------------------------
   'invitation.preview': 'Join {organizationName} on Quackback',
-  'invitation.heading': "You're invited!",
-  'invitation.headingNamed': "Hi {inviteeName}, you're invited!",
-  'invitation.body': '{invitedByName} has invited you to join {organizationName} on Quackback.',
-  'invitation.cta': 'Accept Invitation',
-  'invitation.ignore': "If you weren't expecting this invitation, you can ignore this email.",
+  'invitation.heading': 'Join {organizationName}',
+  'invitation.headingNamed': 'Hi {inviteeName}, join {organizationName}',
+  'invitation.body': '{invitedByName} invited you to the {organizationName} team.',
+  'invitation.cta': 'Accept invitation',
+  'invitation.fallback': 'Or paste this link into your browser:',
+  'invitation.ignore': 'Not expecting this? You can ignore this email.',
 
   // --- Portal invitation --------------------------------------------------
   'portalInvite.preview': "You've been invited to access the {workspaceName} portal",
@@ -172,8 +175,14 @@ export const en = {
   'newSignIn.bodyFor':
     "Someone just signed in to your {workspaceName} account on a device we haven't seen before.",
   'newSignIn.label.ip': 'IP:',
+  'newSignIn.label.location': 'Location:',
   'newSignIn.advice':
-    'If that was you, no action needed. If it wasn’t, change your password and revoke any other active sessions.',
+    'If that was you, no action needed. If it wasn’t, set or change your password from your profile settings. This signs out other sessions.',
+  'newSignIn.adviceSso':
+    'If that was you, no action needed. If it wasn’t, change your password at your identity provider and ask a workspace admin to sign out other sessions.',
+  'newSignIn.adviceLinkLead': 'If that was you, no action needed. If it wasn’t,',
+  'newSignIn.adviceLinkText': 'set or change your password',
+  'newSignIn.adviceLinkTail': 'from your profile settings. This signs out other sessions.',
   'newSignIn.footer':
     "You're receiving this because a new sign-in was detected on your account. These alerts are required and can't be disabled.",
   'recoveryCodeUsed.preview': 'A recovery code was used to sign in',
@@ -187,7 +196,7 @@ export const en = {
   'recoveryCodeUsed.adviceYou':
     "If this was you, no action is needed. The code is now spent and can't be reused.",
   'recoveryCodeUsed.adviceNotYou':
-    "If this wasn't you, sign in and rotate your recovery codes immediately. The person who used the code now has an active session — revoke it from your security settings.",
+    "If this wasn't you, sign in and rotate your recovery codes immediately. The person who used the code now has an active session. Revoke it from your security settings.",
   'recoveryCodeUsed.footer':
     "You're receiving this because a recovery code on your account was just used. These alerts are required and can't be disabled.",
   'signupNotAllowed.preview': 'About your sign-in request',
@@ -262,7 +271,7 @@ export const en = {
   'statusIncident.heading': 'New incident reported',
   'statusIncident.body': '{workspaceName} just posted an update to its status page.',
   'statusIncident.cta': 'View live status',
-  'status.affectedComponents': 'Affected components',
+  'status.affectedComponents': 'Affected services',
   'status.reason': "You received this email because you're subscribed to status updates.",
   'statusMaintenance.preview': 'Scheduled maintenance: {maintenanceTitle} ({startLabel})',
   'statusMaintenance.eyebrow': 'Scheduled maintenance',

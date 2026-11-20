@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
-import { DomainsLanguagesTab } from '../domains-languages-tab'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { DomainsLanguagesTab, helpCenterCnameRecord } from '../domains-languages-tab'
 import { DEFAULT_HELP_CENTER_CONFIG } from '@/lib/server/domains/settings/settings.types'
 
 const { mockBillingEnabled } = vi.hoisted(() => ({
@@ -9,7 +9,10 @@ const { mockBillingEnabled } = vi.hoisted(() => ({
 }))
 
 vi.mock('@tanstack/react-router', () => ({
-  useRouteContext: () => ({ billingEnabled: mockBillingEnabled.current }),
+  useRouteContext: (opts?: { select?: (context: never) => unknown }) => {
+    const context = { billingEnabled: mockBillingEnabled.current }
+    return opts?.select ? opts.select(context as never) : context
+  },
 }))
 
 vi.mock('@tanstack/react-query', () => ({
@@ -59,6 +62,8 @@ describe('DomainsLanguagesTab', () => {
     mockBillingEnabled.current = false
     render(<DomainsLanguagesTab config={config} />)
     expect(screen.getByText('Custom domain')).toBeTruthy()
+    expect(screen.queryByText(/TLS terminates at your own reverse proxy/i)).toBeNull()
+    fireEvent.click(screen.getByText('DNS setup'))
     expect(screen.getByText(/TLS terminates at your own reverse proxy/i)).toBeTruthy()
   })
 
@@ -67,5 +72,26 @@ describe('DomainsLanguagesTab', () => {
     render(<DomainsLanguagesTab config={config} />)
     expect(screen.queryByText('Custom domain')).toBeNull()
     expect(screen.queryByText(/TLS terminates at your own reverse proxy/i)).toBeNull()
+  })
+})
+
+describe('helpCenterCnameRecord', () => {
+  const at = (status: { dnsResolved: boolean; verified: boolean }) =>
+    helpCenterCnameRecord('help.acme.com', 'app.example.com', status)
+
+  it('is one CNAME from the domain to this instance', () => {
+    expect(at({ dnsResolved: false, verified: false })).toMatchObject({
+      type: 'CNAME',
+      name: 'help.acme.com',
+      value: 'app.example.com',
+    })
+  })
+
+  it('waits until the name resolves, is found once verified, and is a problem in between', () => {
+    expect(at({ dnsResolved: false, verified: false }).state).toBe('waiting')
+    expect(at({ dnsResolved: true, verified: true }).state).toBe('found')
+    const broken = at({ dnsResolved: true, verified: false })
+    expect(broken.state).toBe('problem')
+    expect(broken.problem).toMatch(/does not reach this instance/)
   })
 })

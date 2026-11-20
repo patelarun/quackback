@@ -29,7 +29,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { Route } from '@/routes/admin/status'
 import { useCreateStatusIncident } from '@/lib/client/mutations/status'
 import {
   AffectedComponentsField,
@@ -40,13 +39,22 @@ import {
 import { deriveImpact } from '@/lib/shared/status-calc'
 import { IMPACT_LABELS, type StatusIncidentImpact } from './status-admin-colors'
 
-export function ReportIncidentDialog({ variant = 'default' }: { variant?: 'default' | 'outline' }) {
-  const [open, setOpen] = useState(false)
+export function ReportIncidentDialog({
+  variant = 'default',
+  open: openProp,
+  onOpenChange,
+}: {
+  variant?: 'default' | 'outline'
+  /** Controlled open state. When provided, the built-in trigger button is hidden. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}) {
+  const [internalOpen, setInternalOpen] = useState(false)
+  const isControlled = openProp !== undefined
+  const open = isControlled ? openProp : internalOpen
   const [backfill, setBackfill] = useState(false)
-  const navigate = useNavigate({ from: Route.fullPath })
-  const search = Route.useSearch()
+  const navigate = useNavigate()
   const createMutation = useCreateStatusIncident()
-
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [affected, setAffected] = useState<AffectedRow[]>([])
@@ -60,6 +68,14 @@ export function ReportIncidentDialog({ variant = 'default' }: { variant?: 'defau
   const [notify, setNotify] = useState(true)
   const [backfillStart, setBackfillStart] = useState<Date | undefined>(undefined)
   const [backfillEnd, setBackfillEnd] = useState<Date | undefined>(undefined)
+
+  function setOpen(next: boolean) {
+    if (isControlled) {
+      onOpenChange?.(next)
+    } else {
+      setInternalOpen(next)
+    }
+  }
 
   function reset() {
     setBackfill(false)
@@ -76,11 +92,13 @@ export function ReportIncidentDialog({ variant = 'default' }: { variant?: 'defau
 
   const derivedImpact = deriveImpact(affected.map((a) => a.componentStatus))
   const effectiveImpact = templateImpact ?? derivedImpact
+  const backfillOutOfOrder =
+    !!backfillStart && !!backfillEnd && backfillEnd.getTime() <= backfillStart.getTime()
   const canSubmit =
     title.trim().length > 0 &&
     body.trim().length > 0 &&
     affected.length > 0 &&
-    (!backfill || (!!backfillStart && !!backfillEnd))
+    (!backfill || (!!backfillStart && !!backfillEnd && !backfillOutOfOrder))
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -105,7 +123,7 @@ export function ReportIncidentDialog({ variant = 'default' }: { variant?: 'defau
       reset()
       void navigate({
         to: '/admin/status',
-        search: { ...search, view: 'open', incident: created.id },
+        search: { view: 'open', incident: created.id },
       })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to report incident')
@@ -120,18 +138,20 @@ export function ReportIncidentDialog({ variant = 'default' }: { variant?: 'defau
         if (!o) reset()
       }}
     >
-      <DialogTrigger asChild>
-        <Button size="sm" variant={variant}>
-          <PlusIcon className="h-4 w-4 mr-1.5" />
-          Report incident
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto">
+      {!isControlled && (
+        <DialogTrigger asChild>
+          <Button size="sm" variant={variant}>
+            <PlusIcon className="h-4 w-4 mr-1.5" />
+            Report incident
+          </Button>
+        </DialogTrigger>
+      )}
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{backfill ? 'Log a past incident' : 'Report an incident'}</DialogTitle>
           <DialogDescription>
             {backfill
-              ? 'Adds to incident history and uptime. Subscribers are not emailed.'
+              ? 'Adds a resolved incident to your incident history. It does not change uptime or service status, and subscribers are not emailed.'
               : 'Publishes to your status page and emails subscribers once.'}
           </DialogDescription>
         </DialogHeader>
@@ -209,12 +229,19 @@ export function ReportIncidentDialog({ variant = 'default' }: { variant?: 'defau
               </div>
               <div className="space-y-2">
                 <Label>Resolved at</Label>
+                {/* No minDate: the picker would move a time before the start up
+                    to the start. The admin's value stays, with the error below. */}
                 <DateTimePicker
                   value={backfillEnd}
                   onChange={setBackfillEnd}
                   maxDate={new Date()}
                 />
               </div>
+              {backfillOutOfOrder && (
+                <p className="col-span-2 text-xs text-destructive">
+                  It must be resolved after it started.
+                </p>
+              )}
             </div>
           ) : (
             <label className="flex items-start gap-2 cursor-pointer">
@@ -222,6 +249,7 @@ export function ReportIncidentDialog({ variant = 'default' }: { variant?: 'defau
                 checked={notify}
                 onCheckedChange={(c) => setNotify(c === true)}
                 className="mt-0.5"
+                data-in-label
               />
               <span className="text-sm">
                 Email subscribers

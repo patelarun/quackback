@@ -4,21 +4,42 @@ import { HelpCenterHero } from '@/components/help-center/help-center-hero'
 import { HelpCenterHeroSearch } from '@/components/help-center/help-center-search'
 import { HelpCenterCategoryGrid } from '@/components/help-center/help-center-category-grid'
 import { getTopLevelCategories } from '@/components/help-center/help-center-utils'
+import {
+  helpCenterAbsoluteUrl,
+  helpCenterHeadMessages,
+  helpCenterHeadPortal,
+} from '@/components/help-center/help-center-head'
 import { listPublicCategoriesFn } from '@/lib/server/functions/help-center'
-import { portalHeadMessage } from '@/lib/shared/portal-head-message'
-import type { HelpCenterConfig } from '@/lib/shared/types/settings'
+import { localizedHcPath } from '@/lib/shared/help-center-url'
+import { DEFAULT_HELP_CENTER_CONFIG, type HelpCenterConfig } from '@/lib/shared/types/settings'
 import { resolvePortalOgImageUrl } from '@/lib/shared/portal-og-image'
 
-/** Fallbacks for a locale whose admin-authored chrome strings are still empty.
- *  Resolved through react-intl so the page reads in the visitor's language
- *  rather than English. */
-const DEFAULT_TITLE_MESSAGE = {
-  id: 'portal.hc.home.defaultTitle',
-  defaultMessage: 'How can we help?',
-}
-const DEFAULT_DESCRIPTION_MESSAGE = {
-  id: 'portal.hc.home.defaultDescriptionBrowse',
-  defaultMessage: 'Search our knowledge base or browse by category',
+type Copy = { id: string; defaultMessage: string }
+
+/**
+ * The landing title and description for a language: its own wording, or the
+ * defaults in the page's language. Enabling a language stores the English
+ * default title, so a stored default is worded like a missing one. `word` turns
+ * a message into the page's language (react-intl in the page, the help
+ * center's loaded strings in `head`).
+ */
+function landingCopy(
+  chromeTitle: string | null,
+  chromeDescription: string | null,
+  word: (copy: Copy) => string
+) {
+  const title =
+    chromeTitle && chromeTitle !== DEFAULT_HELP_CENTER_CONFIG.homepageTitle
+      ? chromeTitle
+      : word({ id: 'portal.hc.home.title', defaultMessage: 'How can we help?' })
+  const description =
+    chromeDescription && chromeDescription !== DEFAULT_HELP_CENTER_CONFIG.homepageDescription
+      ? chromeDescription
+      : word({
+          id: 'portal.hc.home.localeDescription',
+          defaultMessage: 'Search our knowledge base or browse by category',
+        })
+  return { title, description }
 }
 
 /**
@@ -38,8 +59,10 @@ export const Route = createFileRoute('/_portal/hc/$locale/')({
 
     return {
       categories,
-      title: chrome?.homepageTitle || '',
-      description: chrome?.homepageDescription || '',
+      // Unset chrome falls back to the default copy in the app's language,
+      // on the page and in its metadata.
+      title: chrome?.homepageTitle || null,
+      description: chrome?.homepageDescription || null,
       searchPlaceholder: chrome?.searchPlaceholder || undefined,
       workspaceName: settings?.name ?? 'Help Center',
       logoUrl: resolvePortalOgImageUrl(
@@ -48,12 +71,17 @@ export const Route = createFileRoute('/_portal/hc/$locale/')({
       ),
     }
   },
-  head: ({ loaderData, matches }) => {
+  head: ({ loaderData, params, matches }) => {
     if (!loaderData) return {}
     const { workspaceName, logoUrl } = loaderData
-    const title = loaderData.title || portalHeadMessage(matches, DEFAULT_TITLE_MESSAGE)
-    const description =
-      loaderData.description || portalHeadMessage(matches, DEFAULT_DESCRIPTION_MESSAGE)
+    const { baseUrl } = helpCenterHeadPortal(matches)
+    const canonicalUrl = helpCenterAbsoluteUrl(baseUrl, localizedHcPath(params.locale, '/hc'))
+    const messages = helpCenterHeadMessages(matches)
+    const { title, description } = landingCopy(
+      loaderData.title,
+      loaderData.description,
+      (copy) => messages[copy.id] ?? copy.defaultMessage
+    )
     const pageTitle = `${title} - ${workspaceName}`
     return {
       meta: [
@@ -63,6 +91,7 @@ export const Route = createFileRoute('/_portal/hc/$locale/')({
         { property: 'og:description', content: description },
         { property: 'og:image', content: logoUrl },
       ],
+      links: canonicalUrl ? [{ rel: 'canonical', href: canonicalUrl }] : [],
     }
   },
   component: LocaleHelpCenterLandingPage,
@@ -70,17 +99,21 @@ export const Route = createFileRoute('/_portal/hc/$locale/')({
 
 function LocaleHelpCenterLandingPage() {
   const intl = useIntl()
-  const { categories, title, description, searchPlaceholder } = Route.useLoaderData()
+  const {
+    categories,
+    title: chromeTitle,
+    description: chromeDescription,
+    searchPlaceholder,
+  } = Route.useLoaderData()
   const { locale } = Route.useParams()
   const collectionCount = getTopLevelCategories(categories).length
+  const { title, description } = landingCopy(chromeTitle, chromeDescription, (copy) =>
+    intl.formatMessage(copy)
+  )
 
   return (
     <>
-      <HelpCenterHero
-        variant="home"
-        title={title || intl.formatMessage(DEFAULT_TITLE_MESSAGE)}
-        description={description || intl.formatMessage(DEFAULT_DESCRIPTION_MESSAGE)}
-      >
+      <HelpCenterHero variant="home" title={title} description={description}>
         <HelpCenterHeroSearch locale={locale} placeholder={searchPlaceholder} />
       </HelpCenterHero>
 

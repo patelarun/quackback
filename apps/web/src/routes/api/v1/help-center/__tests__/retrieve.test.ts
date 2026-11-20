@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ApiAuthContext } from '@/lib/server/domains/api/auth'
+import { SYSTEM_ROLE_PERMISSIONS } from '@/lib/shared/permissions'
 import type { ApiKeyId } from '@/lib/server/domains/api-keys'
 import type { PrincipalId } from '@quackback/ids'
 
@@ -55,6 +56,7 @@ function authWithScopes(scopes: ApiKeyScope[] | null): ApiAuthContext {
       id: 'api_key_test' as ApiKeyId,
       name: 'bos-assistant',
       keyPrefix: 'qb_',
+      kind: 'workspace',
       createdById: null,
       principalId: 'principal_1' as PrincipalId,
       lastUsedAt: null,
@@ -65,6 +67,7 @@ function authWithScopes(scopes: ApiKeyScope[] | null): ApiAuthContext {
     },
     principalId: 'principal_1' as PrincipalId,
     role: 'admin',
+    permissions: new Set(SYSTEM_ROLE_PERMISSIONS.owner),
     principal: null,
     importMode: false,
   }
@@ -98,11 +101,17 @@ describe('POST /api/v1/help-center/retrieve', () => {
     expect(res.status).toBe(401)
   })
 
-  it('returns 403 for a scoped key without read:article', async () => {
-    vi.mocked(withApiKeyAuth).mockResolvedValue(authWithScopes(['read:feedback', 'write:article']))
+  it('returns 403 for a scoped key without any article scope', async () => {
+    vi.mocked(withApiKeyAuth).mockResolvedValue(authWithScopes(['read:feedback', 'write:feedback']))
     const res = await POST({ request: retrieveRequest({ query: 'x' }) })
     expect(res.status).toBe(403)
     expect(searchChunks).not.toHaveBeenCalled()
+  })
+
+  it('accepts write:article, which implies read:article (upstream v0.15 scope rule)', async () => {
+    vi.mocked(withApiKeyAuth).mockResolvedValue(authWithScopes(['write:article']))
+    const res = await POST({ request: retrieveRequest({ query: 'x' }) })
+    expect(res.status).not.toBe(403)
   })
 
   it('accepts a legacy full-authority key (no stored scopes)', async () => {

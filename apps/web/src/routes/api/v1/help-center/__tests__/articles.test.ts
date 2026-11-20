@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ApiAuthContext } from '@/lib/server/domains/api/auth'
+import { SYSTEM_ROLE_PERMISSIONS } from '@/lib/shared/permissions'
 import type { ApiKeyId } from '@/lib/server/domains/api-keys'
 import type { HelpCenterArticleWithCategory } from '@/lib/server/domains/help-center/help-center.types'
 import type { KbArticleFeedbackId, KbArticleId, KbCategoryId, PrincipalId } from '@quackback/ids'
@@ -84,6 +85,7 @@ const mockAuthContext: ApiAuthContext = {
   apiKey: {
     id: 'api_key_test' as ApiKeyId,
     name: 'test',
+    kind: 'personal' as const,
     keyPrefix: 'qb_',
     createdById: null,
     principalId: 'principal_1' as PrincipalId,
@@ -95,12 +97,13 @@ const mockAuthContext: ApiAuthContext = {
   },
   principalId: 'principal_1' as PrincipalId,
   role: 'admin',
+  permissions: new Set(SYSTEM_ROLE_PERMISSIONS.owner),
   principal: null,
   importMode: false,
 }
 
 const mockArticle: HelpCenterArticleWithCategory = {
-  id: 'kb_article_1' as KbArticleId,
+  id: 'article_1' as KbArticleId,
   categoryId: 'kb_category_1' as KbCategoryId,
   slug: 'how-to-start',
   title: 'How to Get Started',
@@ -150,7 +153,7 @@ describe('GET /api/v1/help-center/articles', () => {
     expect(response.status).toBe(200)
     const json = await response.json()
     expect(json.data).toHaveLength(1)
-    expect(json.data[0].id).toBe('kb_article_1')
+    expect(json.data[0].id).toBe('article_1')
     expect(json.data[0].title).toBe('How to Get Started')
     expect(json.data[0].publishedAt).toBe('2026-01-15T00:00:00.000Z')
     expect(json.meta.pagination).toEqual({ cursor: null, hasMore: false })
@@ -212,7 +215,7 @@ describe('POST /api/v1/help-center/articles', () => {
 
     expect(response.status).toBe(201)
     const json = await response.json()
-    expect(json.data.id).toBe('kb_article_1')
+    expect(json.data.id).toBe('article_1')
     expect(createArticle).toHaveBeenCalledWith(body, 'principal_1', undefined)
   })
 
@@ -315,12 +318,12 @@ describe('GET /api/v1/help-center/articles/:id', () => {
     const request = createRequest('GET', 'http://localhost/api/v1/help-center/articles/article_1')
     const response = await detailHandlers.GET({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(200)
     const json = await response.json()
-    expect(json.data.id).toBe('kb_article_1')
+    expect(json.data.id).toBe('article_1')
     expect(json.data.category).toEqual({
       id: 'kb_category_1',
       urlId: 1,
@@ -368,17 +371,13 @@ describe('PATCH /api/v1/help-center/articles/:id', () => {
     )
     const response = await detailHandlers.PATCH({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(200)
     const json = await response.json()
     expect(json.data.title).toBe('Updated Title')
-    expect(updateArticle).toHaveBeenCalledWith(
-      'kb_article_1',
-      { title: 'Updated Title' },
-      undefined
-    )
+    expect(updateArticle).toHaveBeenCalledWith('article_1', { title: 'Updated Title' }, undefined)
   })
 
   it('reassigns author when authorId is provided', async () => {
@@ -397,11 +396,11 @@ describe('PATCH /api/v1/help-center/articles/:id', () => {
     )
     const response = await detailHandlers.PATCH({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(200)
-    expect(updateArticle).toHaveBeenCalledWith('kb_article_1', {}, 'principal_2')
+    expect(updateArticle).toHaveBeenCalledWith('article_1', {}, 'principal_2')
   })
 
   it('returns 400 when authorId format is invalid', async () => {
@@ -417,7 +416,7 @@ describe('PATCH /api/v1/help-center/articles/:id', () => {
     )
     const response = await detailHandlers.PATCH({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(400)
@@ -437,7 +436,7 @@ describe('PATCH /api/v1/help-center/articles/:id', () => {
     )
     const response = await detailHandlers.PATCH({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(400)
@@ -457,11 +456,11 @@ describe('PATCH /api/v1/help-center/articles/:id', () => {
     )
     const response = await detailHandlers.PATCH({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(200)
-    expect(publishArticle).toHaveBeenCalledWith('kb_article_1')
+    expect(publishArticle).toHaveBeenCalledWith('article_1')
     expect(updateArticle).not.toHaveBeenCalled()
   })
 
@@ -477,11 +476,11 @@ describe('PATCH /api/v1/help-center/articles/:id', () => {
     )
     const response = await detailHandlers.PATCH({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(200)
-    expect(unpublishArticle).toHaveBeenCalledWith('kb_article_1')
+    expect(unpublishArticle).toHaveBeenCalledWith('article_1')
     expect(updateArticle).not.toHaveBeenCalled()
   })
 
@@ -498,7 +497,7 @@ describe('PATCH /api/v1/help-center/articles/:id', () => {
     )
     const response = await detailHandlers.PATCH({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(403)
@@ -513,7 +512,7 @@ describe('PATCH /api/v1/help-center/articles/:id', () => {
     )
     const response = await detailHandlers.PATCH({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(400)
@@ -539,11 +538,11 @@ describe('DELETE /api/v1/help-center/articles/:id', () => {
     )
     const response = await detailHandlers.DELETE({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(204)
-    expect(deleteArticle).toHaveBeenCalledWith('kb_article_1')
+    expect(deleteArticle).toHaveBeenCalledWith('article_1')
   })
 
   it('requires admin role', async () => {
@@ -557,7 +556,7 @@ describe('DELETE /api/v1/help-center/articles/:id', () => {
     )
     const response = await detailHandlers.DELETE({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(403)
@@ -585,13 +584,13 @@ describe('POST /api/v1/help-center/articles/:id/feedback', () => {
     )
     const response = await feedbackHandlers.POST({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(200)
     const json = await response.json()
     expect(json.data.success).toBe(true)
-    expect(recordArticleFeedback).toHaveBeenCalledWith('kb_article_1', true, 'principal_1')
+    expect(recordArticleFeedback).toHaveBeenCalledWith('article_1', true, 'principal_1')
   })
 
   it('records helpful=false feedback', async () => {
@@ -607,11 +606,11 @@ describe('POST /api/v1/help-center/articles/:id/feedback', () => {
     )
     const response = await feedbackHandlers.POST({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(200)
-    expect(recordArticleFeedback).toHaveBeenCalledWith('kb_article_1', false, 'principal_1')
+    expect(recordArticleFeedback).toHaveBeenCalledWith('article_1', false, 'principal_1')
   })
 
   it('returns 400 for invalid body (missing helpful field)', async () => {
@@ -623,7 +622,7 @@ describe('POST /api/v1/help-center/articles/:id/feedback', () => {
     )
     const response = await feedbackHandlers.POST({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(400)
@@ -644,7 +643,7 @@ describe('POST /api/v1/help-center/articles/:id/feedback', () => {
     )
     const response = await feedbackHandlers.POST({
       request,
-      params: { articleId: 'kb_article_1' },
+      params: { articleId: 'article_1' },
     })
 
     expect(response.status).toBe(403)

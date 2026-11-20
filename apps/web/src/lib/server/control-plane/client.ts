@@ -1,11 +1,19 @@
 import { createHmac } from 'node:crypto'
+import { canonicalPlanId, isPlanId } from '@/lib/server/domains/settings/cloud/cloud.types'
+import type {
+  HostnameProof,
+  HostnameProofSource,
+} from '@/lib/server/domains/domain-proof/hostname-proof'
 import {
   getCurrentWorkspace,
   getWorkspaceSecretKey,
 } from '@/lib/server/workspaces/workspace-context'
 
 export class ControlPlaneUnavailableError extends Error {
-  constructor(message = 'Quackback Cloud is temporarily unavailable. Please try again.') {
+  constructor(
+    message = 'Quackback Cloud is temporarily unavailable. Please try again.',
+    public readonly status?: number
+  ) {
     super(message)
     this.name = 'ControlPlaneUnavailableError'
   }
@@ -19,13 +27,23 @@ export type CustomDomainInstruction = {
   isPrimary: boolean
   updatedAt: string
   cnameTarget: string
+  /** The hosting provider's own validation record. Never shown to admins. */
   ownershipTxt: { name: string; value: string } | null
+  /**
+   * The TXT record that proves this workspace controls the hostname, present
+   * until the proof is seen. A domain goes live only after it is published.
+   */
+  ownershipProof?: { name: string; value: string } | null
+  /** Set when a zone this workspace already proved stood in for that record. */
+  ownership?: 'proven-zone'
+  ownershipSource?: HostnameProofSource
 }
 
 export async function requestWorkspaceIdentityMutation(input: {
   displayName?: string
   platformLabel?: string
-  customDomain?: { action: CustomDomainAction; hostname: string }
+  /** `proof` goes with `add` and `refresh` only. */
+  customDomain?: { action: CustomDomainAction; hostname: string; proof?: HostnameProof }
 }): Promise<{ projectionToken: string }> {
   const result = await requestWorkspaceControlPlane<{ projectionToken?: unknown }>(
     '/api/v1/internal/identity',
@@ -99,6 +117,18 @@ export async function getWorkspaceControlPlane<T>(path: string): Promise<T> {
   return requestWorkspaceControlPlane<T>(path, { method: 'GET' })
 }
 
+export async function putWorkspaceControlPlane<T>(path: string, body: unknown): Promise<T> {
+  return requestWorkspaceControlPlane<T>(path, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteWorkspaceControlPlane<T>(path: string): Promise<T> {
+  return requestWorkspaceControlPlane<T>(path, { method: 'DELETE' })
+}
+
 async function requestWorkspaceControlPlane<T>(
   path: string,
   init: RequestInit,
@@ -121,13 +151,16 @@ async function requestWorkspaceControlPlane<T>(
   const payload = (await response.json().catch(() => null)) as { error?: unknown } | null
   if (!response.ok) {
     const message = typeof payload?.error === 'string' ? payload.error : undefined
-    throw new ControlPlaneUnavailableError(message)
+    throw new ControlPlaneUnavailableError(message, response.status)
   }
   return payload as T
 }
 
 export async function fetchBillingCatalogue(): Promise<BillingCatalogue> {
-  return getWorkspaceControlPlane<BillingCatalogue>('/api/v1/internal/billing/catalogue')
+  const catalogue = await getWorkspaceControlPlane<BillingCatalogue>(
+    '/api/v1/internal/billing/catalogue'
+  )
+  return normalizeBillingCatalogue(catalogue)
 }
 
 export async function fetchBillingInvoices(): Promise<CustomerInvoice[]> {
@@ -137,13 +170,16 @@ export async function fetchBillingInvoices(): Promise<CustomerInvoice[]> {
   return Array.isArray(result.invoices) ? result.invoices : []
 }
 
-export type CataloguePlanId = 'free' | 'growth' | 'pro' | 'scale'
+export type CanonicalCataloguePlanId = 'free' | 'pro' | 'business' | 'enterprise'
+/** Incoming CP slugs; leftover growth/scale are normalised to {@link CanonicalCataloguePlanId} on fetch. */
+export type CataloguePlanId = CanonicalCataloguePlanId | 'growth' | 'scale'
+export type PaidCataloguePlanId = Exclude<CataloguePlanId, 'free'>
 
 export type BillingCatalogue = {
   version: 1
   currency: 'usd'
   annualDiscountMonths: number
-  recommendedPlanId: 'growth' | 'pro' | 'scale'
+  recommendedPlanId: PaidCataloguePlanId
   /** @deprecated unread; older catalogues may still send this. */
   aiOutcomePriceCents?: number
   /** @deprecated unread; older catalogues may still send this. */
@@ -156,9 +192,12 @@ export type BillingCatalogue = {
   /** @deprecated unread; older catalogues may still send this. */
   liteSeatsIncluded?: Record<CataloguePlanId, number | null>
   aiIncludedCentsPerMonth?: Partial<Record<CataloguePlanId, number>>
+  /** @deprecated unread; older catalogues may still send this. */
   aiTopUpPackCents?: number
   aiBlendedCentsPerMTok?: number
+  /** @deprecated unread; older catalogues may still send this. */
   emailTopUpPackCents?: number
+  /** @deprecated unread; older catalogues may still send this. */
   emailTopUpPackUnits?: number
   plans: Array<{
     id: CataloguePlanId
@@ -167,13 +206,58 @@ export type BillingCatalogue = {
     priceMonthlyCents: number
     priceYearlyCents: number
     billedPer: 'seat' | 'workspace'
+    annualSavingsCents?: number
     bestFor: string
     highlights: string[]
     recommended: boolean
   }>
   trialDays?: number
-  trialedPlanIds?: Array<'growth' | 'pro' | 'scale'>
-  lastTrialPlanId?: 'growth' | 'pro' | 'scale' | null
+  trialedPlanIds?: PaidCataloguePlanId[]
+  lastTrialPlanId?: PaidCataloguePlanId | null
+}
+
+function canonicalCataloguePlanId(id: string): CataloguePlanId {
+  const canonical = canonicalPlanId(id)
+  return isPlanId(canonical) ? canonical : (id as CataloguePlanId)
+}
+
+function remapPlanKeyedRecord<T>(
+  record: Partial<Record<CataloguePlanId, T>> | undefined
+): Partial<Record<CataloguePlanId, T>> | undefined {
+  if (!record) return record
+  const next: Partial<Record<CataloguePlanId, T>> = {}
+  for (const [key, value] of Object.entries(record)) {
+    next[canonicalCataloguePlanId(key)] = value as T
+  }
+  return next
+}
+
+/** Maps leftover `growth`/`scale` onto stored `pro`/`enterprise` without dropping the payload. */
+export function normalizeBillingCatalogue(catalogue: BillingCatalogue): BillingCatalogue {
+  return {
+    ...catalogue,
+    recommendedPlanId: canonicalCataloguePlanId(catalogue.recommendedPlanId) as PaidCataloguePlanId,
+    lastTrialPlanId:
+      catalogue.lastTrialPlanId == null
+        ? catalogue.lastTrialPlanId
+        : (canonicalCataloguePlanId(catalogue.lastTrialPlanId) as PaidCataloguePlanId),
+    trialedPlanIds: catalogue.trialedPlanIds
+      ? [
+          ...new Set(
+            catalogue.trialedPlanIds.map(
+              (id) => canonicalCataloguePlanId(id) as PaidCataloguePlanId
+            )
+          ),
+        ]
+      : undefined,
+    plans: catalogue.plans.map((plan) => ({
+      ...plan,
+      id: canonicalCataloguePlanId(plan.id),
+    })),
+    liteSeatsIncluded: remapPlanKeyedRecord(catalogue.liteSeatsIncluded) as
+      Record<CataloguePlanId, number | null> | undefined,
+    aiIncludedCentsPerMonth: remapPlanKeyedRecord(catalogue.aiIncludedCentsPerMonth),
+  }
 }
 
 export type CustomerInvoice = {
@@ -190,15 +274,13 @@ export type HostedBillingSessionInput =
   | { action: 'portal' }
   | {
       action: 'checkout'
-      planId: 'growth' | 'pro' | 'scale'
+      planId: PaidCataloguePlanId
       billingPeriod: 'monthly' | 'annual'
       quantity?: number
       /** Bundle branding removal into the same subscription and checkout. */
       brandingRemoval?: boolean
     }
   | { action: 'downgrade'; planId: 'free' }
-  | { action: 'seats'; quantity: number }
-  | { action: 'topup'; meter: 'ai' | 'email'; packs: number }
   | { action: 'branding'; billingPeriod: 'monthly' | 'annual' }
   | { action: 'branding-remove' }
 
@@ -207,12 +289,19 @@ export type HostedBillingSessionResult = {
   status?: 'downgraded' | 'scheduled' | 'updated'
 }
 
+function canonicalizeSessionInput(input: HostedBillingSessionInput): HostedBillingSessionInput {
+  if (input.action !== 'checkout') return input
+  const planId = canonicalCataloguePlanId(input.planId)
+  return { ...input, planId: planId as PaidCataloguePlanId }
+}
+
 export async function createHostedBillingSession(
   input: HostedBillingSessionInput
 ): Promise<HostedBillingSessionResult> {
+  const payload = canonicalizeSessionInput(input)
   const result = await callWorkspaceControlPlane<{ url?: unknown; status?: unknown }>(
     '/api/v1/internal/billing/session',
-    input
+    payload
   )
   if (typeof result.url === 'string' && result.url.startsWith('https://')) {
     return { url: result.url }
@@ -224,7 +313,6 @@ export async function createHostedBillingSession(
     throw new ControlPlaneUnavailableError()
   }
   if (
-    input.action === 'seats' ||
     input.action === 'branding' ||
     input.action === 'branding-remove' ||
     input.action === 'checkout'
@@ -235,29 +323,6 @@ export async function createHostedBillingSession(
     throw new ControlPlaneUnavailableError()
   }
   throw new ControlPlaneUnavailableError()
-}
-
-export type SeatsPreview = {
-  amountDueCents: number | null
-  currency?: 'usd'
-  periodEnd?: string
-}
-
-export async function fetchSeatsPreview(quantity: number): Promise<SeatsPreview> {
-  const result = await getWorkspaceControlPlane<{
-    amountDueCents?: unknown
-    currency?: unknown
-    periodEnd?: unknown
-  }>(`/api/v1/internal/billing/seats-preview?quantity=${encodeURIComponent(String(quantity))}`)
-  if (result.amountDueCents === null) return { amountDueCents: null }
-  if (typeof result.amountDueCents !== 'number' || !Number.isFinite(result.amountDueCents)) {
-    return { amountDueCents: null }
-  }
-  return {
-    amountDueCents: result.amountDueCents,
-    currency: result.currency === 'usd' ? 'usd' : undefined,
-    periodEnd: typeof result.periodEnd === 'string' ? result.periodEnd : undefined,
-  }
 }
 
 export type WorkspaceUsageReport = {
@@ -275,11 +340,11 @@ export async function reportWorkspaceUsage(report: WorkspaceUsageReport): Promis
 }
 
 export async function startWorkspaceTrial(
-  planId: 'growth' | 'pro' | 'scale'
+  planId: PaidCataloguePlanId
 ): Promise<'started' | 'already_started'> {
   const result = await callWorkspaceControlPlane<{ status?: unknown }>(
     '/api/v1/internal/billing/start-trial',
-    { planId }
+    { planId: canonicalCataloguePlanId(planId) }
   )
   if (result.status !== 'started' && result.status !== 'already_started') {
     throw new ControlPlaneUnavailableError()

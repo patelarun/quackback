@@ -20,7 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { TimeAgo } from '@/components/ui/time-ago'
 import { cn } from '@/lib/shared/utils'
 import { PERMISSIONS } from '@/lib/shared/permissions'
-import { useHasPermission } from '@/lib/client/use-permissions'
+import { useHasPermission } from '@/lib/client/hooks/use-root-context'
 import {
   getPublicUserProfileFn,
   getProfileTeamContextFn,
@@ -124,7 +124,7 @@ export function AdminAuthorHoverCard({
         className="w-72 p-3"
         align="start"
         sideOffset={6}
-        onOpenAutoFocus={(e) => e.preventDefault()}
+        initialFocus={false}
         onMouseEnter={scheduleOpen}
         onMouseLeave={scheduleClose}
       >
@@ -231,14 +231,14 @@ function TeamInfoRows({
               ) : null}
             </>
           ) : (
-            <span className="font-normal text-muted-foreground">—</span>
+            <span className="font-normal text-muted-foreground">-</span>
           )}
         </span>
       </div>
       <div className="flex items-center justify-between gap-2">
         <span className="shrink-0 text-muted-foreground">Last seen</span>
         <span className="min-w-0 truncate">
-          {team.lastSeenAt ? <TimeAgo date={team.lastSeenAt} /> : '—'}
+          {team.lastSeenAt ? <TimeAgo date={team.lastSeenAt} /> : '-'}
         </span>
       </div>
       {segments.length > 0 && (

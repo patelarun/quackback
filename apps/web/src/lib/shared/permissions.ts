@@ -1,11 +1,14 @@
 /**
  * Client-safe mirror of the RBAC permission catalogue.
  *
+ * GENERATED — do not edit by hand. Edit `packages/db/src/rbac-catalogue.ts`
+ * then run `bun run db:permissions` from the repo root.
+ *
  * The widget/portal client bundles can't import `@quackback/db` (it drags in
- * postgres), so the catalogue is duplicated here as plain data for the admin
+ * postgres), so the catalogue is projected here as plain data for the admin
  * UI. A drift test (permissions-catalogue-drift.test.ts) asserts this stays
  * identical to the `@quackback/db` source of truth: edit the catalogue there
- * first, then mirror the change here.
+ * first, then regenerate here.
  */
 
 export const PERMISSIONS = {
@@ -14,7 +17,7 @@ export const PERMISSIONS = {
   SETTINGS_BRANDING: 'settings.branding',
   SETTINGS_MODERATION: 'settings.moderation',
   SETTINGS_NOTIFICATIONS: 'settings.notifications',
-  SETTINGS_CUSTOM_DOMAIN: 'settings.custom_domain', // Settings → Domains
+  SETTINGS_CUSTOM_DOMAIN: 'settings.custom_domain',
   BILLING_MANAGE: 'billing.manage',
   ROLE_MANAGE: 'role.manage',
   API_KEY_MANAGE: 'api_key.manage',
@@ -103,8 +106,7 @@ export const PERMISSIONS = {
   INTEGRATION_VIEW: 'integration.view',
   INTEGRATION_MANAGE: 'integration.manage',
 
-  // support (dormant until the support platform lands). Tickets are a peer aggregate with their own
-  // resource verbs, team-scoped for humans and workspace-scoped for machine/AI principals.
+  // support
   TICKET_VIEW: 'ticket.view',
   TICKET_VIEW_ALL: 'ticket.view_all',
   TICKET_REPLY: 'ticket.reply',
@@ -121,11 +123,11 @@ export const PERMISSIONS = {
   CHANNEL_ACCOUNT_MANAGE: 'channel_account.manage',
 
   // ai
-  ASSISTANT_MANAGE: 'assistant.manage',
+  AI_CUSTOMER_MANAGE: 'ai.customer.manage',
+  AI_TEAMMATE_MANAGE: 'ai.teammate.manage',
   COPILOT_USE: 'copilot.use',
 
-  // status_page (named status_page.* to avoid colliding with the existing
-  // post-status-taxonomy STATUS_VIEW/STATUS_MANAGE keys above)
+  // status_page
   STATUS_PAGE_MANAGE: 'status_page.manage',
   STATUS_PAGE_PUBLISH: 'status_page.publish',
 } as const
@@ -155,7 +157,7 @@ export const PERMISSION_CATEGORIES = [
 export type PermissionCategory = (typeof PERMISSION_CATEGORIES)[number]
 
 // --------------------------------------------------------------- presets ---
-// Mirrored from @quackback/db (the drift test enforces equality). The policy
+// Projected from @quackback/db (the drift test enforces equality). The policy
 // layer resolves an actor's permissions from these, and the read-only Roles UI
 // renders them, so they must be client-safe.
 
@@ -163,6 +165,7 @@ export const SYSTEM_ROLES = {
   OWNER: 'owner',
   ADMIN: 'admin',
   MANAGER: 'manager',
+  SUPPORT_LEAD: 'support_lead',
   CONTRIBUTOR: 'contributor',
 } as const
 
@@ -190,14 +193,28 @@ export const WORKSPACE_ADMIN_PERMISSIONS: readonly PermissionKey[] = [
   PERMISSIONS.TEAM_MANAGE,
   PERMISSIONS.WORKFLOW_MANAGE,
   PERMISSIONS.CHANNEL_ACCOUNT_MANAGE,
-  PERMISSIONS.ASSISTANT_MANAGE,
+  PERMISSIONS.AI_CUSTOMER_MANAGE,
+  PERMISSIONS.AI_TEAMMATE_MANAGE,
   PERMISSIONS.STATUS_PAGE_MANAGE,
+]
+
+export const SUPPORT_LEAD_EXTRA_PERMISSIONS: readonly PermissionKey[] = [
+  PERMISSIONS.ROUTING_MANAGE,
+  PERMISSIONS.WORKFLOW_MANAGE,
+  PERMISSIONS.SLA_MANAGE,
+  PERMISSIONS.OFFICE_HOURS_MANAGE,
+  PERMISSIONS.CHANNEL_ACCOUNT_MANAGE,
+  PERMISSIONS.CUSTOM_FIELD_MANAGE,
+  PERMISSIONS.AI_CUSTOMER_MANAGE,
 ]
 
 export const SYSTEM_ROLE_PERMISSIONS: Record<SystemRoleKey, PermissionKey[]> = {
   owner: ALL_PERMISSIONS,
   admin: ALL_PERMISSIONS.filter((p) => p !== PERMISSIONS.BILLING_MANAGE),
   manager: ALL_PERMISSIONS.filter((p) => !WORKSPACE_ADMIN_PERMISSIONS.includes(p)),
+  support_lead: ALL_PERMISSIONS.filter(
+    (p) => !WORKSPACE_ADMIN_PERMISSIONS.includes(p) || SUPPORT_LEAD_EXTRA_PERMISSIONS.includes(p)
+  ),
   contributor: [
     PERMISSIONS.POST_VIEW_PRIVATE,
     PERMISSIONS.POST_CREATE,
@@ -333,7 +350,8 @@ export const PERMISSION_CATALOGUE: ReadonlyArray<{
   { key: PERMISSIONS.TEAM_MANAGE, category: 'support' },
   { key: PERMISSIONS.WORKFLOW_MANAGE, category: 'support' },
   { key: PERMISSIONS.CHANNEL_ACCOUNT_MANAGE, category: 'support' },
-  { key: PERMISSIONS.ASSISTANT_MANAGE, category: 'ai' },
+  { key: PERMISSIONS.AI_CUSTOMER_MANAGE, category: 'ai' },
+  { key: PERMISSIONS.AI_TEAMMATE_MANAGE, category: 'ai' },
   { key: PERMISSIONS.COPILOT_USE, category: 'ai' },
   { key: PERMISSIONS.STATUS_PAGE_MANAGE, category: 'status_page' },
   { key: PERMISSIONS.STATUS_PAGE_PUBLISH, category: 'status_page' },

@@ -7,6 +7,7 @@ import {
   db,
   eq,
   and,
+  sql,
   helpCenterArticleTranslations,
   helpCenterCategoryTranslations,
   type TiptapContent,
@@ -18,6 +19,7 @@ import {
   deleteArticleLocaleChunks,
 } from './help-center-chunk-index.service'
 import { NotFoundError } from '@/lib/shared/errors'
+import { cancelPendingAutoTranslations } from './help-center-translate-jobs'
 import type {
   HelpCenterArticleTranslation,
   HelpCenterCategoryTranslation,
@@ -68,9 +70,15 @@ export async function getPublishedArticleTranslation(
   return row && row.status === 'published' ? row : null
 }
 
-/** Create-or-update; a fresh translation always starts as a draft. */
+/**
+ * Create-or-update a translation; a fresh one always starts as a draft. A
+ * manual write (the default) also drops pending auto-translate jobs for that
+ * locale, so a job parked at the AI allowance can never later replace it.
+ * Auto-translate passes `source: 'auto'`.
+ */
 export async function upsertArticleTranslation(
-  input: UpsertArticleTranslationInput
+  input: UpsertArticleTranslationInput,
+  opts: { source?: 'manual' | 'auto' } = {}
 ): Promise<HelpCenterArticleTranslation> {
   // The public page renders `contentJson`, and `getPublicArticleBySlugForLocale` falls back to the
   // base article's when a translation has none -- so a null here does not show an empty body, it
@@ -79,6 +87,7 @@ export async function upsertArticleTranslation(
   // translated body on every save.
   const contentJson = input.contentJson ?? markdownToTiptapJson(input.content)
 
+  if (opts.source !== 'auto') await cancelPendingAutoTranslations(input.articleId, input.locale)
   const [row] = await db
     .insert(helpCenterArticleTranslations)
     .values({
@@ -107,11 +116,55 @@ export async function upsertArticleTranslation(
   return row
 }
 
+/**
+ * Auto-translate's write for a job parked at the AI allowance: one statement
+ * that writes only if the translation is still what the job saw when parked
+ * (`baselineUpdatedAt`, or no row at all when null). A person's change that
+ * lands at any point before this statement wins, including a published
+ * translation, which stays exactly as they left it. Returns whether a row
+ * was written.
+ *
+ * Compared at millisecond precision because the baseline went through a JS
+ * Date, which keeps only milliseconds.
+ */
+export async function writeGuardedArticleTranslation(
+  input: UpsertArticleTranslationInput,
+  baselineUpdatedAt: string | null
+): Promise<boolean> {
+  const values = {
+    articleId: input.articleId,
+    locale: input.locale,
+    title: input.title,
+    description: input.description ?? null,
+    content: input.content,
+    contentJson: input.contentJson ?? null,
+  }
+  const insert = db.insert(helpCenterArticleTranslations).values(values)
+  const rows =
+    baselineUpdatedAt === null
+      ? await insert.onConflictDoNothing().returning({ id: helpCenterArticleTranslations.id })
+      : await insert
+          .onConflictDoUpdate({
+            target: [helpCenterArticleTranslations.articleId, helpCenterArticleTranslations.locale],
+            set: {
+              title: values.title,
+              description: values.description,
+              content: values.content,
+              contentJson: values.contentJson,
+              updatedAt: new Date(),
+            },
+            setWhere: sql`date_trunc('milliseconds', ${helpCenterArticleTranslations.updatedAt}) = ${baselineUpdatedAt}::timestamptz`,
+          })
+          .returning({ id: helpCenterArticleTranslations.id })
+  return rows.length > 0
+}
+
 export async function setArticleTranslationStatus(
   articleId: KbArticleId,
   locale: string,
   status: 'draft' | 'published'
 ): Promise<HelpCenterArticleTranslation> {
+  await cancelPendingAutoTranslations(articleId, locale)
   const [row] = await db
     .update(helpCenterArticleTranslations)
     .set({ status, updatedAt: new Date() })
@@ -135,6 +188,7 @@ export async function deleteArticleTranslation(
   articleId: KbArticleId,
   locale: string
 ): Promise<void> {
+  await cancelPendingAutoTranslations(articleId, locale)
   await db
     .delete(helpCenterArticleTranslations)
     .where(
@@ -149,16 +203,19 @@ export async function deleteArticleTranslation(
 /** One entry per enabled additional locale, for the admin editor's status pills. */
 export async function getArticleTranslationStatuses(
   articleId: KbArticleId,
-  enabledLocales: string[]
+  enabledLocales: string[],
+  pausedLocales: readonly string[] = []
 ): Promise<ArticleTranslationStatusEntry[]> {
   const rows = await listArticleTranslations(articleId)
   const byLocale = new Map(rows.map((r) => [r.locale, r]))
+  const paused = new Set(pausedLocales)
   return enabledLocales.map((locale) => {
     const row = byLocale.get(locale)
     return {
       locale,
       status: row ? row.status : 'untranslated',
       updatedAt: row?.updatedAt ?? null,
+      autoTranslatePaused: paused.has(locale),
     }
   })
 }

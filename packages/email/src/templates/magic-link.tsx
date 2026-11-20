@@ -7,6 +7,8 @@ interface MagicLinkEmailProps {
   signInUrl: string
   code: string
   logoUrl?: string
+  /** The workspace being signed in to. */
+  workspaceName?: string
 }
 
 /**
@@ -18,11 +20,14 @@ interface MagicLinkEmailProps {
  * verification record on the server, so the user can pick whichever is
  * convenient.
  */
-export function MagicLinkEmail({ signInUrl, code, logoUrl }: MagicLinkEmailProps) {
+export function MagicLinkEmail({ signInUrl, code, logoUrl, workspaceName }: MagicLinkEmailProps) {
+  const name = workspaceName?.trim()
   return (
     <EmailLayout preview={emailText('magicLink.preview')} logoUrl={logoUrl}>
       <Heading style={{ ...typography.h1, textAlign: 'center' }}>
-        {emailText('magicLink.heading')}
+        {name
+          ? emailText('magicLink.headingFor', { workspaceName: name })
+          : emailText('magicLink.heading')}
       </Heading>
       <Text style={{ ...typography.text, textAlign: 'center' }}>{emailText('magicLink.body')}</Text>
 

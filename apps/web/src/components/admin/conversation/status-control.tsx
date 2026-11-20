@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ChevronDownIcon } from '@heroicons/react/24/solid'
 import { toast } from 'sonner'
@@ -16,14 +16,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useLocalDateFormatter } from '@/components/ui/local-date'
 
-/** Compact label for a snooze wake time, in the agent's local (workspace) time. */
-const wakeFormatter = new Intl.DateTimeFormat(undefined, {
+/** Compact label for a snooze wake time, in the agent's local time. */
+const WAKE_FORMAT: Intl.DateTimeFormatOptions = {
   month: 'short',
   day: 'numeric',
   hour: 'numeric',
   minute: '2-digit',
-})
+}
 
 /**
  * The conversation status control: Open and Closed set the status directly;
@@ -39,7 +40,7 @@ const wakeFormatter = new Intl.DateTimeFormat(undefined, {
  * hidden in that state so the way out of spam is always the marker-clearing
  * restore, never a bare reopen that would leave the thread mislabeled.
  */
-export function StatusControl({
+export const StatusControl = memo(function StatusControl({
   conversationId,
   status,
   snoozedUntil,
@@ -55,6 +56,7 @@ export function StatusControl({
   onChanged: () => void
 }) {
   const queryClient = useQueryClient()
+  const formatDate = useLocalDateFormatter()
   // Required-to-close refusal from the server: raise the blocking prompt
   // instead of a generic error toast.
   const [closeBlocked, setCloseBlocked] = useState<string[] | null>(null)
@@ -86,7 +88,7 @@ export function StatusControl({
 
   const isSpam = endReason === 'spam'
   const wakeLabel =
-    status === 'snoozed' && snoozedUntil ? wakeFormatter.format(new Date(snoozedUntil)) : null
+    status === 'snoozed' && snoozedUntil ? formatDate(snoozedUntil, WAKE_FORMAT) : null
 
   return (
     <>
@@ -125,4 +127,4 @@ export function StatusControl({
       <RequiredAttributesDialog messages={closeBlocked} onClose={() => setCloseBlocked(null)} />
     </>
   )
-}
+})

@@ -3,6 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 
 const mockListTickets = vi.fn()
 const mockGetTicket = vi.fn()
+const mockAssertTicketVisible = vi.fn()
 const mockCreateTicket = vi.fn()
 const mockListMessages = vi.fn()
 const mockSendMessage = vi.fn()
@@ -11,6 +12,7 @@ const mockAddNote = vi.fn()
 vi.mock('@/lib/server/domains/tickets/ticket.service', () => ({
   listTickets: (...a: unknown[]) => mockListTickets(...a),
   getTicket: (...a: unknown[]) => mockGetTicket(...a),
+  assertTicketVisible: (...a: unknown[]) => mockAssertTicketVisible(...a),
   createTicket: (...a: unknown[]) => mockCreateTicket(...a),
 }))
 vi.mock('@/lib/server/domains/tickets/ticket-message.service', () => ({
@@ -106,6 +108,7 @@ describe('ticket MCP tools', () => {
     const body = parse(out)
     expect(body.tickets[0]).toEqual({
       id: 'ticket_1',
+      url: '/admin/inbox?i=ticket_1',
       number: 42,
       reference: '#42',
       type: 'customer',
@@ -166,10 +169,15 @@ describe('ticket MCP tools', () => {
       hasMore: true,
     })
     const out = await collect(teamAuth).get('get_ticket')!({ ticketId: 'ticket_1' })
+    expect(mockAssertTicketVisible).toHaveBeenCalledWith(
+      'ticket_1',
+      expect.objectContaining({ principalId: 'principal_key' })
+    )
     expect(mockGetTicket).toHaveBeenCalledWith('ticket_1')
     expect(mockListMessages).toHaveBeenCalledWith('ticket_1', {
       before: undefined,
       includeInternal: false,
+      preferAccountName: true,
     })
     const body = parse(out)
     expect(body.ticket).toMatchObject({ id: 'ticket_1', reference: '#42', stage: 'in_progress' })
@@ -177,6 +185,20 @@ describe('ticket MCP tools', () => {
     expect(body.messages.map((m: { content: string }) => m.content)).toEqual(['first', 'reply'])
     expect(body.hasMore).toBe(true)
     expect(body.nextCursor).toBe('m_old')
+  })
+
+  it('get_ticket refuses a ticket the caller cannot see, without reading it or its thread', async () => {
+    const { NotFoundError } = await import('@/lib/shared/errors')
+    mockAssertTicketVisible.mockRejectedValueOnce(
+      new NotFoundError('TICKET_NOT_FOUND', 'Ticket not found')
+    )
+    const out = await collect(teamAuth).get('get_ticket')!({
+      ticketId: 'ticket_1',
+      includeInternal: true,
+    })
+    expect(out.isError).toBe(true)
+    expect(mockGetTicket).not.toHaveBeenCalled()
+    expect(mockListMessages).not.toHaveBeenCalled()
   })
 
   it('get_ticket renders an image-bearing message as markdown, never empty', async () => {
@@ -378,6 +400,32 @@ describe('ticket MCP tools', () => {
     })
   })
 
+  it('reply_to_ticket passes fileIds through as attachment refs the service resolves', async () => {
+    mockSendMessage.mockResolvedValue({
+      message: { id: 'm_1', ticketId: 'ticket_1', createdAt: '2026-07-04T00:02:00.000Z' },
+    })
+    await collect(teamAuth).get('reply_to_ticket')!({
+      ticketId: 'ticket_1',
+      content: 'See attached',
+      fileIds: ['file_1', 'file_2'],
+    })
+    const [, input] = mockSendMessage.mock.calls[0]
+    expect(input.attachments).toEqual([{ fileId: 'file_1' }, { fileId: 'file_2' }])
+  })
+
+  it('add_ticket_note passes fileIds through as attachment refs the service resolves', async () => {
+    mockAddNote.mockResolvedValue({
+      message: { id: 'm_2', ticketId: 'ticket_1', createdAt: '2026-07-04T00:03:00.000Z' },
+    })
+    await collect(teamAuth).get('add_ticket_note')!({
+      ticketId: 'ticket_1',
+      content: 'internal',
+      fileIds: ['file_3'],
+    })
+    const [, input] = mockAddNote.mock.calls[0]
+    expect(input.attachments).toEqual([{ fileId: 'file_3' }])
+  })
+
   it('link_ticket links a customer ticket to a tracker and returns the linked ids', async () => {
     mockLink.mockResolvedValue(undefined)
     mockListLinked.mockResolvedValue(['ticket_customer'])
@@ -394,6 +442,41 @@ describe('ticket MCP tools', () => {
       trackerTicketId: 'ticket_tracker',
       linkedTicketIds: ['ticket_customer'],
     })
+    // The returned links are only the ones the caller can see.
+    expect(mockListLinked).toHaveBeenCalledWith(
+      'ticket_tracker',
+      expect.objectContaining({ principalId: 'principal_key' })
+    )
+  })
+
+  it('link_ticket refuses when the caller cannot see the customer ticket, without linking', async () => {
+    const { NotFoundError } = await import('@/lib/shared/errors')
+    mockAssertTicketVisible
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new NotFoundError('TICKET_NOT_FOUND', 'Ticket not found'))
+    const out = await collect(teamAuth).get('link_ticket')!({
+      trackerTicketId: 'ticket_tracker',
+      ticketId: 'ticket_customer',
+    })
+    expect(out.isError).toBe(true)
+    expect(mockAssertTicketVisible.mock.calls.map((c) => c[0])).toEqual([
+      'ticket_tracker',
+      'ticket_customer',
+    ])
+    expect(mockLink).not.toHaveBeenCalled()
+  })
+
+  it('reply_to_ticket refuses a ticket the caller cannot see, without sending', async () => {
+    const { NotFoundError } = await import('@/lib/shared/errors')
+    mockAssertTicketVisible.mockRejectedValueOnce(
+      new NotFoundError('TICKET_NOT_FOUND', 'Ticket not found')
+    )
+    const out = await collect(teamAuth).get('reply_to_ticket')!({
+      ticketId: 'ticket_1',
+      content: 'hello',
+    })
+    expect(out.isError).toBe(true)
+    expect(mockSendMessage).not.toHaveBeenCalled()
   })
 
   it('unlink_ticket removes the link', async () => {

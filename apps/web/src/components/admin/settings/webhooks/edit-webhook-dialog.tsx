@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
+import { SettingRow } from '@/components/admin/settings/setting-row'
 import {
   Dialog,
   DialogContent,
@@ -30,6 +31,12 @@ interface EditWebhookDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
+/** Drops event ids no longer offered, so a removed event never blocks saving. */
+function knownEvents(events: string[]): string[] {
+  const known = new Set<string>(WEBHOOK_EVENTS)
+  return events.filter((event) => known.has(event))
+}
+
 export function EditWebhookDialog({ webhook, open, onOpenChange }: EditWebhookDialogProps) {
   const router = useRouter()
   const queryClient = useQueryClient()
@@ -37,7 +44,7 @@ export function EditWebhookDialog({ webhook, open, onOpenChange }: EditWebhookDi
 
   // Form state
   const [url, setUrl] = useState(webhook.url)
-  const [selectedEvents, setSelectedEvents] = useState<string[]>(webhook.events)
+  const [selectedEvents, setSelectedEvents] = useState<string[]>(() => knownEvents(webhook.events))
   const [isEnabled, setIsEnabled] = useState(webhook.status === 'active')
   const [error, setError] = useState<string | null>(null)
 
@@ -48,7 +55,7 @@ export function EditWebhookDialog({ webhook, open, onOpenChange }: EditWebhookDi
   // Reset form when webhook changes
   useEffect(() => {
     setUrl(webhook.url)
-    setSelectedEvents(webhook.events)
+    setSelectedEvents(knownEvents(webhook.events))
     setIsEnabled(webhook.status === 'active')
     setError(null)
     setNewSecret(null)
@@ -101,7 +108,7 @@ export function EditWebhookDialog({ webhook, open, onOpenChange }: EditWebhookDi
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Edit Webhook</DialogTitle>
+            <DialogTitle>Edit webhook</DialogTitle>
             <DialogDescription>Update webhook configuration.</DialogDescription>
           </DialogHeader>
 
@@ -134,6 +141,7 @@ export function EditWebhookDialog({ webhook, open, onOpenChange }: EditWebhookDi
                         disabled={isPending}
                         className="mt-0.5"
                         aria-label={`Subscribe to ${event.label} events`}
+                        data-in-label
                       />
                       <div>
                         <p className="text-sm font-medium">{event.label}</p>
@@ -144,25 +152,23 @@ export function EditWebhookDialog({ webhook, open, onOpenChange }: EditWebhookDi
                 </div>
               </div>
 
-              <div className="flex items-center justify-between rounded-lg border p-4">
-                <div>
-                  <Label htmlFor="webhook-enabled" className="text-sm font-medium">
-                    Webhook Enabled
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    {wasAutoDisabled
-                      ? 'Re-enabling will reset the failure count'
-                      : 'Disabled webhooks will not receive events'}
-                  </p>
-                </div>
-                <Switch
-                  id="webhook-enabled"
-                  checked={isEnabled}
-                  onCheckedChange={setIsEnabled}
-                  disabled={isPending}
-                  aria-label="Toggle webhook enabled"
-                />
-              </div>
+              <SettingRow
+                label="Send events"
+                htmlFor="webhook-enabled"
+                description={
+                  wasAutoDisabled
+                    ? 'Turning this on resets the failure count'
+                    : 'When off, the webhook receives no events'
+                }
+                control={
+                  <Switch
+                    id="webhook-enabled"
+                    checked={isEnabled}
+                    onCheckedChange={setIsEnabled}
+                    disabled={isPending}
+                  />
+                }
+              />
 
               {wasAutoDisabled && (
                 <WarningBox
@@ -172,13 +178,15 @@ export function EditWebhookDialog({ webhook, open, onOpenChange }: EditWebhookDi
                 />
               )}
 
-              {/* Rotate Secret Section */}
+              {/* Rotate secret section */}
               <div className="space-y-2">
-                <Label>Signing Secret</Label>
+                <Label>Signing secret</Label>
                 {newSecret ? (
                   <div className="space-y-2">
-                    <div className="flex items-center gap-2 rounded-lg bg-green-500/10 border border-green-500/20 p-3">
-                      <code className="flex-1 text-sm font-mono break-all">{newSecret}</code>
+                    <div className="flex items-center gap-2 rounded-lg bg-success/10 border border-success/20 p-3">
+                      <code className="ph-mask flex-1 text-sm font-mono break-all">
+                        {newSecret}
+                      </code>
                       <CopyButton
                         value={newSecret}
                         variant="ghost"
@@ -201,10 +209,9 @@ export function EditWebhookDialog({ webhook, open, onOpenChange }: EditWebhookDi
                       size="sm"
                       onClick={() => setRotateDialogOpen(true)}
                       disabled={isPending}
-                      aria-label="Rotate signing secret"
                     >
                       <ArrowPathIcon className="h-4 w-4 mr-1.5" />
-                      Rotate Secret
+                      Rotate secret
                     </Button>
                   </div>
                 )}
@@ -223,7 +230,7 @@ export function EditWebhookDialog({ webhook, open, onOpenChange }: EditWebhookDi
                 Cancel
               </Button>
               <Button type="submit" disabled={isPending || !url || selectedEvents.length === 0}>
-                {isPending ? 'Saving...' : 'Save Changes'}
+                {isPending ? 'Saving...' : 'Save changes'}
               </Button>
             </DialogFooter>
           </form>

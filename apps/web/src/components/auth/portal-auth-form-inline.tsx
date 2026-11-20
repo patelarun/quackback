@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { lazy, Suspense, useState, useEffect, useRef } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
 import { useIntl, FormattedMessage } from 'react-intl'
@@ -29,6 +29,7 @@ import {
   useAuthBroadcast,
 } from '@/lib/client/hooks/use-auth-broadcast'
 import { authClient } from '@/lib/client/auth-client'
+import { startOidcSignIn } from '@/lib/client/start-oidc-sign-in'
 import { stashSsoAttempt, takeSsoAttempt } from '@/lib/client/sso-attempt-stash'
 import { startProviderLink } from '@/lib/client/start-provider-link'
 import { AUTH_BLOCK_MESSAGES } from '@/lib/server/auth/redirect-errors'
@@ -38,9 +39,15 @@ import { signinErrorLanding } from '@/lib/shared/auth-prompt'
 import { lookupAuthMethodsFn, type LookupAuthMethodsResult } from '@/lib/server/functions/auth'
 import { OtpCodeStep } from './otp-code-step'
 import { useEmailSignin } from './use-email-signin'
-import { TwoFactorEnrollSteps } from './two-factor-enroll-steps'
+import { Spinner } from '@/components/shared/spinner'
 import { TwoFactorChallengeStep } from './two-factor-challenge-step'
 import type { AuthFormStep } from './email-signin-types'
+
+// Enrollment carries the QR code library and is reached only by a password
+// sign-in to a workspace that requires two-factor, so it loads when reached.
+const TwoFactorEnrollSteps = lazy(() =>
+  import('./two-factor-enroll-steps').then((m) => ({ default: m.TwoFactorEnrollSteps }))
+)
 
 interface OrgAuthConfig {
   found: boolean
@@ -77,6 +84,9 @@ interface PortalAuthFormInlineProps {
   onModeSwitch?: (mode: 'login' | 'signup') => void
   /** Lets the surrounding dialog adapt its header to the form's step. */
   onContextChange?: (ctx: { step: AuthFormStep; email: string }) => void
+  /** Sign in this address only: the form opens on the methods step with it
+   *  filled in, and it cannot be changed (signing in again). */
+  lockedEmail?: string
 }
 
 /**
@@ -140,7 +150,7 @@ function OAuthButton({
  *    the form lives inside a dialog).
  *
  *  Stage 2: routed by `lookupAuthMethodsFn` —
- *    - `sso-redirect`     → `authClient.signIn.oauth2(...)` same-tab
+ *    - `sso-redirect`     → `startOidcSignIn(...)` same-tab
  *      (the dialog is closing anyway since the page navigates).
  *    - `sso-default`      → "Workspace uses SSO" card + escape hatch.
  *    - `methods`          → password + magic-link form, email locked.
@@ -159,6 +169,7 @@ export function PortalAuthFormInline({
   linkConflict,
   onModeSwitch,
   onContextChange,
+  lockedEmail,
 }: PortalAuthFormInlineProps) {
   const intl = useIntl()
   const effectiveCallbackUrl = callbackUrl ?? '/'
@@ -183,17 +194,18 @@ export function PortalAuthFormInline({
     | { stage: 'two-factor-enroll' }
     | { stage: 'link-conflict' }
 
-  // Invitation flow: the email is server-known, so Stage 1 is moot.
+  // Invitation flow: the email is server-known, so Stage 1 is moot. The same
+  // holds for a locked email.
   const [view, setView] = useState<View>(
     linkConflict
       ? { stage: 'link-conflict' }
-      : invitationId
+      : invitationId || lockedEmail
         ? { stage: 'methods-step', step: methodsDefaultStep }
         : { stage: 'email' }
   )
 
   const [name, setName] = useState('')
-  const [email, setEmail] = useState(linkConflict?.email ?? '')
+  const [email, setEmail] = useState(lockedEmail ?? linkConflict?.email ?? '')
   // Provider context for link-conflict recovery. Survives the move to the
   // OTP code step, where a successful verify resumes the link instead of
   // plain sign-in success. A ref mirror lets the emailSignin onSuccess
@@ -265,7 +277,7 @@ export function PortalAuthFormInline({
           providerType: attempt?.providerType,
           email: attempt?.email,
         })
-        if (attempt?.email) setEmail(attempt.email)
+        if (attempt?.email && !lockedEmail) setEmail(attempt.email)
         setError('')
         setView({ stage: 'link-conflict' })
         return
@@ -382,10 +394,11 @@ export function PortalAuthFormInline({
           email: trimmed,
           callbackUrl: effectiveCallbackUrl,
         })
-        await authClient.signIn.oauth2({
+        await startOidcSignIn({
           providerId: result.providerId,
           callbackURL: effectiveCallbackUrl,
           errorCallbackURL: signinErrorLanding(effectiveCallbackUrl),
+          loginHint: trimmed,
         })
         return
       }
@@ -585,13 +598,14 @@ export function PortalAuthFormInline({
 
   const handleResend = () => emailSignin.resend(email)
 
-  /** Stage 2 → Stage 1 escape hatch. */
+  /** Stage 2 → Stage 1 escape hatch. A locked email has no Stage 1 to go
+   *  back to, so it returns to the methods step instead. */
   const backToEmail = () => {
     setError('')
     setPassword('')
     setConflict(null)
     emailSignin.reset()
-    setView({ stage: 'email' })
+    setView(lockedEmail ? { stage: 'methods-step', step: methodsDefaultStep } : { stage: 'email' })
   }
 
   /** Link-conflict recovery: email a confirmation (magic link + code).
@@ -797,10 +811,15 @@ export function PortalAuthFormInline({
             <div className="space-y-3">
               {enabledProviders.map((provider) => {
                 const IconComp = AUTH_PROVIDER_ICON_MAP[provider.id]
+                const icon = provider.logoUrl ? (
+                  <img src={provider.logoUrl} alt="" className="h-5 w-5 rounded object-contain" />
+                ) : IconComp ? (
+                  <IconComp className="h-5 w-5" />
+                ) : null
                 return (
                   <OAuthButton
                     key={provider.id}
-                    icon={IconComp ? <IconComp className="h-5 w-5" /> : null}
+                    icon={icon}
                     label={provider.name}
                     mode={mode}
                     loading={loadingAction === provider.id}
@@ -857,7 +876,8 @@ export function PortalAuthFormInline({
                   <ArrowPathIcon className="h-4 w-4 animate-spin" />
                 ) : (
                   <>
-                    <FormattedMessage id="portal.auth.continue" defaultMessage="Continue" /> &rarr;
+                    <FormattedMessage id="portal.auth.continue" defaultMessage="Continue" />{' '}
+                    <span aria-hidden="true">&rarr;</span>
                   </>
                 )}
               </Button>
@@ -932,7 +952,7 @@ export function PortalAuthFormInline({
       })
     return (
       <div className="space-y-4">
-        <BackToEmailLink onClick={backToEmail} />
+        {!lockedEmail && <BackToEmailLink onClick={backToEmail} />}
         <div className="space-y-2 text-center">
           <ShieldCheckIcon className="mx-auto h-8 w-8 text-primary" />
           <p className="font-medium text-foreground">
@@ -976,6 +996,7 @@ export function PortalAuthFormInline({
               })}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              readOnly={!!lockedEmail}
               disabled={loadingAction !== null}
               required
             />
@@ -1057,10 +1078,11 @@ export function PortalAuthFormInline({
                 email: email.trim() || undefined,
                 callbackUrl: effectiveCallbackUrl,
               })
-              await authClient.signIn.oauth2({
+              await startOidcSignIn({
                 providerId: view.providerId,
                 callbackURL: effectiveCallbackUrl,
                 errorCallbackURL: signinErrorLanding(effectiveCallbackUrl),
+                loginHint: email.trim() || undefined,
               })
             } catch (err) {
               setError(
@@ -1175,18 +1197,26 @@ export function PortalAuthFormInline({
   // ============================================================
   if (view.stage === 'two-factor-enroll') {
     return (
-      <TwoFactorEnrollSteps
-        password={password}
-        onComplete={postAuthSuccess}
-        onCancel={async () => {
-          try {
-            await authClient.signOut()
-          } finally {
-            setError('')
-            setView({ stage: 'methods-step', step: methodsDefaultStep })
-          }
-        }}
-      />
+      <Suspense
+        fallback={
+          <div className="flex justify-center py-10">
+            <Spinner />
+          </div>
+        }
+      >
+        <TwoFactorEnrollSteps
+          password={password}
+          onComplete={postAuthSuccess}
+          onCancel={async () => {
+            try {
+              await authClient.signOut()
+            } finally {
+              setError('')
+              setView({ stage: 'methods-step', step: methodsDefaultStep })
+            }
+          }}
+        />
+      </Suspense>
     )
   }
 
@@ -1194,7 +1224,7 @@ export function PortalAuthFormInline({
   // Stage 2 — methods (password / magic link / forgot / reset / code)
   // ============================================================
   const step = view.step
-  const showBack = !invitation
+  const showBack = !invitation && !lockedEmail
 
   return (
     <div className="space-y-6">
@@ -1210,13 +1240,7 @@ export function PortalAuthFormInline({
             </Label>
             {showBack && <BackToEmailLink onClick={backToEmail} />}
           </div>
-          <Input
-            id="inline-email-locked"
-            type="email"
-            value={email}
-            readOnly
-            className="bg-muted/40"
-          />
+          <Input id="inline-email-locked" type="email" value={email} readOnly />
         </div>
       )}
 
@@ -1433,6 +1457,7 @@ export function PortalAuthFormInline({
               })}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              readOnly={!!lockedEmail}
               disabled={loadingAction !== null}
               autoComplete="email"
             />

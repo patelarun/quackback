@@ -43,6 +43,7 @@ export type ConnectorToolGroup = (typeof CONNECTOR_TOOL_GROUPS)[number]
 export const connectorAssignmentsSchema = z.object({
   agent: z.boolean(),
   copilot: z.boolean(),
+  workspace: z.boolean().optional(),
 })
 export type ConnectorAssignments = z.infer<typeof connectorAssignmentsSchema>
 
@@ -76,7 +77,7 @@ export const connectorCreateInputSchema = z.object({
     }, 'Enter an HTTPS MCP server URL'),
   authMode: connectorAuthModeSchema.default('none'),
   bearerToken: z.string().max(CONNECTOR_BEARER_TOKEN_MAX_LENGTH).optional(),
-  assignments: connectorAssignmentsSchema.default({ agent: true, copilot: true }),
+  assignments: connectorAssignmentsSchema.default({ agent: false, copilot: true }),
 })
 export type ConnectorCreateInput = z.infer<typeof connectorCreateInputSchema>
 

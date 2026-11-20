@@ -66,6 +66,7 @@ export const EVENT_TYPES = [
   'message.created',
   'message.note_created',
   'message.deleted',
+  'message.updated',
   'ticket.created',
   'ticket.status_changed',
   'ticket.assigned',
@@ -158,6 +159,8 @@ export interface EventPostMentionedData {
   postId: string
   postTitle: string
   postUrl: string
+  /** Board the post lives on; lets webhook board filters apply. */
+  boardId?: string
   mentionedPrincipalId: string
   mentioningPrincipalId: string
   /** Text of the paragraph containing the mention (≤200 chars), used as email body context. */
@@ -179,6 +182,8 @@ export interface PostOwnerAssignedPayload {
   postTitle: string
   boardSlug: string
   postUrl: string
+  /** Board the post lives on; lets webhook board filters apply. */
+  boardId?: string
   ownerPrincipalId: string
   previousOwnerPrincipalId: string | null
 }
@@ -250,6 +255,8 @@ export interface StatusIncidentEventData {
   scheduledEndAt: string | null
   startedAt: string
   componentIds: string[]
+  /** On the publish events: false when the publication does not email subscribers. */
+  notifySubscribers?: boolean
 }
 
 /** status.incident_created + status.maintenance_scheduled (the publish events). */
@@ -403,6 +410,11 @@ export interface MessageNoteCreatedPayload {
 export interface MessageDeletedPayload {
   message: { id: string; conversationId: string }
   conversation: EventConversationRef
+}
+export interface MessageUpdatedPayload {
+  message: EventMessageData
+  conversation: EventConversationRef
+  editedAt: string
 }
 
 // Ticket events (support platform §4.2). A ticket is a tracked-work peer of the
@@ -708,6 +720,9 @@ export interface MessageNoteCreatedEvent extends EventBase<'message.note_created
 export interface MessageDeletedEvent extends EventBase<'message.deleted'> {
   data: MessageDeletedPayload
 }
+export interface MessageUpdatedEvent extends EventBase<'message.updated'> {
+  data: MessageUpdatedPayload
+}
 export interface TicketCreatedEvent extends EventBase<'ticket.created'> {
   data: TicketCreatedPayload
 }
@@ -789,6 +804,7 @@ export type EventData =
   | MessageCreatedEvent
   | MessageNoteCreatedEvent
   | MessageDeletedEvent
+  | MessageUpdatedEvent
   | TicketCreatedEvent
   | TicketStatusChangedEvent
   | TicketAssignedEvent

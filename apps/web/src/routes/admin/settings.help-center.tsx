@@ -4,16 +4,14 @@ import { assertRoutePermission } from '@/lib/shared/route-permission'
 import { createFileRoute, useRouter, useNavigate, redirect } from '@tanstack/react-router'
 import { useSuspenseQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import { BookOpenIcon, GlobeAltIcon } from '@heroicons/react/24/solid'
-import { InlineSpinner } from '@/components/admin/settings/inline-spinner'
-import { BackLink } from '@/components/ui/back-link'
-import { PageHeader } from '@/components/shared/page-header'
+import { SettingsPage } from '@/components/admin/settings/settings-page'
+import { HeaderLinksCard } from '@/components/admin/settings/help-center/header-links-card'
 import { SettingsCard } from '@/components/admin/settings/settings-card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { PlusIcon, TrashIcon } from '@heroicons/react/24/solid'
+import { InlineSpinner } from '@/components/admin/settings/inline-spinner'
+import { SettingRow, SettingRows } from '@/components/admin/settings/setting-row'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DomainsLanguagesTab } from '@/components/admin/settings/help-center/domains-languages-tab'
 import { settingsQueries } from '@/lib/client/queries/settings'
@@ -22,11 +20,8 @@ import {
   useUpdateHelpCenterAccess,
 } from '@/lib/client/mutations/settings'
 import { useDebouncedSave } from '@/lib/client/hooks/use-debounced-save'
-import {
-  isProductEnabled,
-  type HelpCenterConfig,
-  type HelpCenterHeaderLink,
-} from '@/lib/shared/types/settings'
+import { isProductEnabled, type HelpCenterConfig } from '@/lib/shared/types/settings'
+import { adminPageHead } from '@/lib/client/admin-head'
 
 /**
  * Split by concern, matching the Access & Security page's `?tab=` pattern:
@@ -39,6 +34,7 @@ const searchSchema = z.object({
 })
 
 export const Route = createFileRoute('/admin/settings/help-center')({
+  head: adminPageHead('Help center settings'),
   validateSearch: searchSchema,
   beforeLoad: ({ context }) => {
     if (!isProductEnabled(context.settings?.featureFlags, 'helpCenter')) {
@@ -70,22 +66,13 @@ function HelpCenterSettingsPage() {
 
   const [homepageTitle, setHomepageTitle] = useState(config.homepageTitle)
   const [homepageDescription, setHomepageDescription] = useState(config.homepageDescription)
-  const [headerLinks, setHeaderLinks] = useState<HelpCenterHeaderLink[]>(config.headerLinks ?? [])
-  const [saving, setSaving] = useState(false)
-  const [isPending, startTransition] = useTransition()
+  const [, startTransition] = useTransition()
 
-  const isBusy = saving || isPending
-
-  async function saveField(data: Record<string, unknown>) {
-    setSaving(true)
-    try {
-      await updateHelpCenterConfig.mutateAsync(
-        data as Parameters<typeof updateHelpCenterConfig.mutateAsync>[0]
-      )
-      startTransition(() => router.invalidate())
-    } finally {
-      setSaving(false)
-    }
+  // A failed save shows the shared autosave toast, so nothing is caught here.
+  function saveField(data: Parameters<typeof updateHelpCenterConfig.mutate>[0]) {
+    updateHelpCenterConfig.mutate(data, {
+      onSuccess: () => startTransition(() => router.invalidate()),
+    })
   }
 
   // Debounced homepage title/description saves. `useDebouncedSave` flushes
@@ -111,43 +98,8 @@ function HelpCenterSettingsPage() {
     queueDescriptionSave(value)
   }
 
-  // Header links save explicitly (a list doesn't fit the debounced
-  // single-field pattern); rows where both fields are blank drop on save.
-  const HEADER_LINKS_MAX = 3
-
-  function handleHeaderLinkChange(index: number, patch: Partial<HelpCenterHeaderLink>) {
-    setHeaderLinks((links) => links.map((l, i) => (i === index ? { ...l, ...patch } : l)))
-  }
-
-  function handleHeaderLinkRemove(index: number) {
-    setHeaderLinks((links) => links.filter((_, i) => i !== index))
-  }
-
-  function handleHeaderLinkAdd() {
-    setHeaderLinks((links) =>
-      links.length >= HEADER_LINKS_MAX ? links : [...links, { label: '', url: '' }]
-    )
-  }
-
-  function handleHeaderLinksSave() {
-    const cleaned = headerLinks
-      .map((l) => ({ label: l.label.trim(), url: l.url.trim() }))
-      .filter((l) => l.label !== '' && l.url !== '')
-    setHeaderLinks(cleaned)
-    saveField({ headerLinks: cleaned })
-  }
-
   return (
-    <div className="space-y-6 max-w-5xl">
-      <div className="lg:hidden">
-        <BackLink to="/admin/settings">Settings</BackLink>
-      </div>
-      <PageHeader
-        icon={BookOpenIcon}
-        title="Help Center"
-        description="Configure your help center knowledge base"
-      />
-
+    <SettingsPage page="/admin/settings/help-center">
       <Tabs
         value={tab}
         onValueChange={(next) => {
@@ -161,20 +113,14 @@ function HelpCenterSettingsPage() {
         className="space-y-6"
       >
         <TabsList>
-          <TabsTrigger value="general">
-            <BookOpenIcon />
-            General
-          </TabsTrigger>
-          <TabsTrigger value="domains-languages">
-            <GlobeAltIcon />
-            Domains & languages
-          </TabsTrigger>
+          <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="domains-languages">Domains & languages</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="space-y-6">
           <AccessCard visibility={config.access?.visibility ?? 'public'} />
 
-          <SettingsCard title="Homepage" description="Customize the help center landing page">
+          <SettingsCard title="Homepage" description="Customize the help center landing page.">
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="homepage-title" className="text-sm font-medium">
@@ -185,7 +131,6 @@ function HelpCenterSettingsPage() {
                   value={homepageTitle}
                   onChange={(e) => handleTitleChange(e.target.value)}
                   placeholder="How can we help?"
-                  disabled={isBusy}
                 />
               </div>
 
@@ -198,74 +143,19 @@ function HelpCenterSettingsPage() {
                   value={homepageDescription}
                   onChange={(e) => handleDescriptionChange(e.target.value)}
                   placeholder="Search our knowledge base or browse by category"
-                  disabled={isBusy}
                 />
               </div>
             </div>
           </SettingsCard>
 
-          {/* Header links */}
-          <SettingsCard
-            title="Header links"
-            description="Up to 3 custom links shown in the help center header beside the navigation"
-          >
-            <div className="space-y-3">
-              {headerLinks.map((link, index) => (
-                <div key={index} className="flex items-center gap-2">
-                  <Input
-                    value={link.label}
-                    onChange={(e) => handleHeaderLinkChange(index, { label: e.target.value })}
-                    placeholder="Label"
-                    aria-label={`Link ${index + 1} label`}
-                    disabled={isBusy}
-                    className="max-w-48"
-                  />
-                  <Input
-                    value={link.url}
-                    onChange={(e) => handleHeaderLinkChange(index, { url: e.target.value })}
-                    placeholder="https://example.com or /path"
-                    aria-label={`Link ${index + 1} URL`}
-                    disabled={isBusy}
-                    className="flex-1"
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleHeaderLinkRemove(index)}
-                    disabled={isBusy}
-                    aria-label={`Remove link ${index + 1}`}
-                  >
-                    <TrashIcon className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-
-              <div className="flex items-center justify-between">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleHeaderLinkAdd}
-                  disabled={isBusy || headerLinks.length >= HEADER_LINKS_MAX}
-                >
-                  <PlusIcon className="me-2 h-4 w-4" />
-                  Add link
-                </Button>
-                <div className="flex items-center gap-2">
-                  <InlineSpinner visible={isBusy} />
-                  <Button size="sm" onClick={handleHeaderLinksSave} disabled={isBusy}>
-                    Save links
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </SettingsCard>
+          <HeaderLinksCard links={config.headerLinks ?? []} />
         </TabsContent>
 
         <TabsContent value="domains-languages">
           <DomainsLanguagesTab config={config} />
         </TabsContent>
       </Tabs>
-    </div>
+    </SettingsPage>
   )
 }
 
@@ -294,28 +184,25 @@ function AccessCard({ visibility }: { visibility: 'public' | 'authenticated' }) 
 
   return (
     <SettingsCard title="Access" description="Control who can read your help center">
-      <div className="flex items-center justify-between rounded-lg border border-border/50 p-4">
-        <div>
-          <Label htmlFor="hc-login-required" className="text-sm font-medium cursor-pointer">
-            Require sign-in to read the help center
-          </Label>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            On, visitors still see the Help tab but must log in or sign up to open it. Articles are
-            also removed from the sitemap, disallowed in robots.txt, and withheld from every public
-            help center API.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <InlineSpinner visible={updateAccess.isPending} />
-          <Switch
-            id="hc-login-required"
-            checked={loginRequired}
-            onCheckedChange={handleLoginRequiredChange}
-            disabled={updateAccess.isPending}
-            aria-label="Require sign-in to read the help center"
-          />
-        </div>
-      </div>
+      <SettingRows>
+        <SettingRow
+          label="Require sign-in to read the help center"
+          description="On, visitors still see the Help tab but must log in or sign up to open it. Articles are also removed from the sitemap, disallowed in robots.txt, and withheld from every public help center API."
+          htmlFor="hc-login-required"
+          control={
+            <div className="flex items-center gap-2">
+              <InlineSpinner visible={updateAccess.isPending} />
+              <Switch
+                id="hc-login-required"
+                checked={loginRequired}
+                onCheckedChange={handleLoginRequiredChange}
+                disabled={updateAccess.isPending}
+                aria-label="Require sign-in to read the help center"
+              />
+            </div>
+          }
+        />
+      </SettingRows>
     </SettingsCard>
   )
 }

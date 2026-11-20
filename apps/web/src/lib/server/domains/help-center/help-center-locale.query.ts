@@ -53,6 +53,7 @@ import type {
   HelpCenterCategoryWithCount,
   HelpCenterArticleWithCategory,
 } from './help-center.types'
+import { FALLBACK_UI_LOCALE } from '@/lib/shared/i18n'
 
 /**
  * The locale help-center content is AUTHORED in. Base rows on `kb_articles` /
@@ -71,8 +72,11 @@ import type {
  * halves of the same page disagreed.
  */
 async function getBaseContentLocale(): Promise<string> {
-  const config = await getHelpCenterConfig()
-  return config.locales.default
+  // An unreadable config (no settings row) falls back to upstream's assumption,
+  // English, rather than failing every localized read.
+  return getHelpCenterConfig()
+    .then((config) => config.locales.default)
+    .catch(() => FALLBACK_UI_LOCALE)
 }
 
 export async function listPublicCategoriesForLocale(

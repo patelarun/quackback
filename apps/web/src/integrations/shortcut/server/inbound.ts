@@ -18,6 +18,7 @@ import { logger } from '@/lib/server/logger'
 const log = logger.child({ component: 'shortcut' })
 
 export const shortcutInboundHandler: InboundWebhookHandler = {
+  statusMode: 'review',
   async verifySignature(request: Request, body: string, secret: string): Promise<true | Response> {
     const signature = request.headers.get('Payload-Signature')
     if (!signature) {

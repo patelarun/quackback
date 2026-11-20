@@ -25,7 +25,7 @@ export function HelpCenterPopularArticles({ articles, locale }: HelpCenterPopula
   return (
     <section aria-labelledby="hc-popular" className="mx-auto max-w-6xl px-4 pb-20 sm:px-6">
       <h2 id="hc-popular" className="mb-5 text-2xl font-semibold tracking-tight text-foreground">
-        <FormattedMessage id="portal.hc.home.popularArticles" defaultMessage="Popular articles" />
+        <FormattedMessage id="portal.hc.popularArticles.title" defaultMessage="Popular articles" />
       </h2>
       <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card">
         {articles.map((article) => (
@@ -38,7 +38,7 @@ export function HelpCenterPopularArticles({ articles, locale }: HelpCenterPopula
                 slug: article.slug,
               }) as '/hc'
             }
-            className="group flex items-center gap-4 px-6 py-5 transition-colors hover:bg-primary/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+            className="group flex items-center gap-4 px-6 py-5 transition-colors hover:bg-primary/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             <DocumentTextIcon className="size-5 shrink-0 text-primary" />
             <span className="flex-1 text-base font-medium text-foreground">{article.title}</span>

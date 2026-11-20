@@ -4,6 +4,7 @@
 
 import type { Post, Board, BoardAccess, PostTag, TiptapContent } from '@/lib/server/db'
 import type {
+  ChangelogId,
   PostId,
   BoardId,
   PostTagId,
@@ -12,6 +13,8 @@ import type {
   PostCommentId,
 } from '@quackback/ids'
 import type { CommentReactionCount, CommentStatusChange } from '@/lib/shared'
+import type { InboxPostSort, WidenedSearch } from '@/lib/shared/types/filters'
+import type { PostSearchMode } from './post.search'
 
 /**
  * Input for creating a new post
@@ -107,6 +110,8 @@ export interface PublicPostListItem {
   tags: Array<{ id: PostTagId; name: string; color: string }>
   board?: { id: BoardId; name: string; slug: string }
   moderationState?: 'published' | 'pending' | string
+  /** Newest published changelog entry announcing this post, if any. */
+  changelogEntry?: { id: ChangelogId; title: string } | null
 }
 
 /**
@@ -131,6 +136,10 @@ export interface InboxPostListParams {
   /** Filter by segment IDs - posts whose author is in any of these segments */
   segmentIds?: import('@quackback/ids').SegmentId[]
   ownerId?: string | null
+  /** Filter to posts authored by this teammate. */
+  authorId?: PrincipalId
+  /** Filter to posts whose author user email matches (case-insensitive). */
+  authorEmail?: string
   search?: string
   dateFrom?: Date
   dateTo?: Date
@@ -139,9 +148,13 @@ export interface InboxPostListParams {
   /** Filter by team response state */
   responded?: 'all' | 'responded' | 'unresponded'
   updatedBefore?: Date
-  sort?: 'newest' | 'oldest' | 'votes' | 'priority'
+  sort?: InboxPostSort
+  /** How loosely the search matches; see resolvePostSearchMode. Defaults to every word. */
+  searchMode?: PostSearchMode
   /** Show only soft-deleted posts (within 30-day restorable window) */
   showDeleted?: boolean
+  /** Leave out teammates' test ideas (API, MCP and Copilot reads). */
+  excludeTest?: boolean
   cursor?: string
   limit?: number
 }
@@ -153,6 +166,8 @@ export interface InboxPostListResult {
   items: PostListItem[]
   nextCursor: string | null
   hasMore: boolean
+  /** Set when no post matched every word and the search was widened. */
+  searchMode?: WidenedSearch
 }
 
 /**
@@ -374,6 +389,8 @@ export interface ChangeStatusResult extends Post {
   boardSlug: string
   previousStatus: string
   newStatus: string
+  /** The post moved into a complete status from one that was not: something shipped. */
+  enteredComplete: boolean
 }
 
 /**

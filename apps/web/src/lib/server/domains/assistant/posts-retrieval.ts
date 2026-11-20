@@ -16,6 +16,7 @@ import { db, posts, boards, postStatuses, and, eq, isNull, sql } from '@/lib/ser
 import { generateEmbedding } from '@/lib/server/domains/embeddings/embedding.service'
 import { orTermsTsQuery } from '@/lib/server/domains/help-center/help-center-search.service'
 import type { ContentAudience } from './audience'
+import { notTestPrincipal } from '@/lib/server/test-data'
 import {
   KNOWLEDGE_SNIPPET_CHARS,
   type KnowledgeSource,
@@ -96,6 +97,8 @@ export function postsVisibilityConditions(ceiling: ContentAudience) {
     isNull(posts.canonicalPostId),
     eq(posts.moderationState, 'published'),
     isNull(boards.deletedAt),
+    // A teammate's test idea is never cited to anyone.
+    notTestPrincipal(posts.principalId),
   ]
   if (ceiling === 'public') {
     return [...base, sql`${boards.access}->>'view' = 'anonymous'`]

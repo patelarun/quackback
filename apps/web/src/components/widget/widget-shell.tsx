@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { AnimatePresence, m, useReducedMotion } from 'framer-motion'
 import {
   ArrowLeftIcon,
   ArrowsPointingInIcon,
@@ -18,12 +18,13 @@ import { cn } from '@/lib/shared/utils'
 import { Avatar } from '@/components/ui/avatar'
 import { UserStatsBar } from '@/components/shared/user-stats'
 import { getWidgetAuthHeaders, generateOneTimeToken } from '@/lib/client/widget-auth'
+import { widgetGetUserStatsFn } from '@/lib/server/functions/widget/user'
 import { sendToHost } from '@/lib/client/widget-bridge'
 import { useWidgetAuth } from './widget-auth-provider'
 import { useMessengerUnread } from './use-messenger-unread'
 import { useChangelogUnread } from './use-changelog-unread'
 import { useTicketStageBadge } from './use-ticket-stage-badge'
-import { hasOpenSuggestionPopup } from '@/components/ui/suggestion-popup'
+import { hasOpenSuggestionPopup } from '@/components/ui/suggestion-popup-marker'
 
 import { type WidgetTab, type EnabledTabs, visibleTabsForVisitor } from './widget-nav'
 export type { WidgetTab }
@@ -89,8 +90,6 @@ interface WidgetShellProps {
    * separate domain).
    */
   portalOrigin?: string
-  /** Teammate avatars shown as a small cluster in the Home header. */
-  team?: { name: string; avatarUrl: string | null }[]
   /** Workspace logo shown top-left on Home (null hides it). */
   logoUrl?: string | null
   /** Extra header content beside the back button (e.g. the messenger thread's
@@ -107,7 +106,14 @@ interface WidgetShellProps {
   /** Manual panel-size control beside the close button (expandable views on
    *  desktop hosts only). Collapsing is sticky — it turns auto-expansion off. */
   expandControl?: { expanded: boolean; onToggle: () => void }
-  /** Self-hosted always shows the badge. Cloud hides it only after purchase. */
+  /**
+   * `orgSlug` and `showPoweredBy` are accepted so upstream's widget route and
+   * tests type-check, but never used: they only fed the Powered-by badge, which
+   * the fork dropped from the widget shell (getShowPoweredByFn returns false
+   * anyway).
+   */
+  orgSlug?: string
+  showPoweredBy?: boolean
   children: ReactNode
 }
 
@@ -118,7 +124,6 @@ export function WidgetShell({
   enabledTabs = { feedback: true, changelog: false, help: false, messages: false },
   portalAccess,
   portalOrigin,
-  team = [],
   logoUrl = null,
   headerContent,
   backdrop,
@@ -183,7 +188,7 @@ export function WidgetShell({
         reduceMotion || expanded ? { duration: 0 } : { duration: 0.16, ease: 'easeIn' as const },
     }),
   }
-  const { user, isIdentified, hmacRequired, closeWidget } = useWidgetAuth()
+  const { user, isIdentified, hmacRequired, canPortalHandoff, closeWidget } = useWidgetAuth()
 
   const onHome = activeTab === 'home' && !onBack
 
@@ -207,7 +212,8 @@ export function WidgetShell({
           // focused. Otherwise ProseMirror swallows Escape (preventDefault)
           // without doing anything visible, so the composer would trap the
           // key: blur it and let the next press close.
-          if (!suggestionWasOpen) target.blur()
+          if (suggestionWasOpen) return
+          target.blur()
           return
         }
         if (e.defaultPrevented) return
@@ -234,6 +240,13 @@ export function WidgetShell({
   const [portalCtaError, setPortalCtaError] = useState(false)
   const handleGoToPortal = useCallback(async () => {
     setPortalCtaError(false)
+    const origin = portalOrigin || window.location.origin
+    // Teammates skip OTT mint entirely — a portal cookie would replace a
+    // dashboard login. Send them to the site unsigned.
+    if (!canPortalHandoff) {
+      sendToHost({ type: 'quackback:navigate', url: `${origin}/?auth=signin` })
+      return
+    }
     const ott = await generateOneTimeToken()
     if (!ott) {
       setPortalCtaError(true)
@@ -242,10 +255,9 @@ export function WidgetShell({
     // Prefer the server-resolved portal origin so the handoff URL targets the
     // portal host — not the widget iframe's origin, which may differ in
     // self-hosted setups where the widget is served from a separate domain.
-    const origin = portalOrigin || window.location.origin
     const portalUrl = `${origin}/auth/widget-handoff?ott=${encodeURIComponent(ott)}`
     sendToHost({ type: 'quackback:navigate', url: portalUrl })
-  }, [])
+  }, [canPortalHandoff, portalOrigin])
 
   return (
     <div className="relative flex flex-col h-full bg-background text-foreground overflow-x-hidden">
@@ -288,10 +300,7 @@ export function WidgetShell({
         {!onBack && activeTab !== 'home' && (
           <h2 className="pointer-events-none absolute left-1/2 max-w-[55%] -translate-x-1/2 truncate text-center text-base font-semibold text-foreground">
             {activeTab === 'feedback' ? (
-              <FormattedMessage
-                id="widget.shell.heading.feedback"
-                defaultMessage="Share your ideas"
-              />
+              <FormattedMessage id="widget.shell.heading.feedback" defaultMessage="Post feedback" />
             ) : activeTab === 'messages' ? (
               <FormattedMessage id="widget.shell.heading.messages" defaultMessage="Messages" />
             ) : activeTab === 'tickets' ? (
@@ -306,19 +315,6 @@ export function WidgetShell({
 
         {/* Right: portal CTA, user menu, and the always-present close. */}
         <div className="flex items-center gap-1">
-          {/* Teammate cluster — Home only, a friendly "real people are here" cue. */}
-          {activeTab === 'home' && !onBack && team.length > 0 && (
-            <div className="flex items-center -space-x-2 me-1" aria-hidden>
-              {team.map((member, i) => (
-                <Avatar
-                  key={`${member.name}-${i}`}
-                  src={member.avatarUrl}
-                  name={member.name}
-                  className="size-7 text-xs ring-2 ring-background"
-                />
-              ))}
-            </div>
-          )}
           {showPortalCta && (
             <button
               type="button"
@@ -390,7 +386,7 @@ export function WidgetShell({
       >
         <AnimatePresence initial={false} custom={panelExpanded}>
           {showTabBar && (
-            <motion.div
+            <m.div
               key="tab-bar"
               custom={panelExpanded}
               variants={tabBarVariants}
@@ -472,7 +468,7 @@ export function WidgetShell({
                   )
                 })}
               </div>
-            </motion.div>
+            </m.div>
           )}
         </AnimatePresence>
       </div>
@@ -526,7 +522,10 @@ function UserAvatarPopover({
             </div>
           </div>
           <div className="border-t border-border px-3 py-2.5">
-            <UserStatsBar compact headers={getWidgetAuthHeaders()} />
+            <UserStatsBar
+              compact
+              fetchStats={() => widgetGetUserStatsFn({ headers: getWidgetAuthHeaders() })}
+            />
           </div>
         </div>
       )}

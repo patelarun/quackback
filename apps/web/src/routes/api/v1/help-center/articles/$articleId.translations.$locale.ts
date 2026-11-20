@@ -82,7 +82,7 @@ export const Route = createFileRoute(
         try {
           await withApiKeyAuth(request, { permission: PERMISSIONS.HELP_CENTER_MANAGE })
 
-          const articleId = parseTypeId<KbArticleId>(params.articleId, 'kb_article', 'article ID')
+          const articleId = parseTypeId<KbArticleId>(params.articleId, 'article', 'article ID')
           const locale = await resolveWritableHelpCenterLocale(params.locale)
 
           const translation = await getArticleTranslation(articleId, locale)
@@ -107,7 +107,7 @@ export const Route = createFileRoute(
         try {
           await withApiKeyAuth(request, { permission: PERMISSIONS.HELP_CENTER_MANAGE })
 
-          const articleId = parseTypeId<KbArticleId>(params.articleId, 'kb_article', 'article ID')
+          const articleId = parseTypeId<KbArticleId>(params.articleId, 'article', 'article ID')
           const locale = await resolveWritableHelpCenterLocale(params.locale)
 
           const body = await request.json()
@@ -162,7 +162,7 @@ export const Route = createFileRoute(
         try {
           await withApiKeyAuth(request, { permission: PERMISSIONS.HELP_CENTER_MANAGE })
 
-          const articleId = parseTypeId<KbArticleId>(params.articleId, 'kb_article', 'article ID')
+          const articleId = parseTypeId<KbArticleId>(params.articleId, 'article', 'article ID')
           const locale = await resolveWritableHelpCenterLocale(params.locale)
 
           await deleteArticleTranslation(articleId, locale)

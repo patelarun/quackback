@@ -19,6 +19,7 @@ import type {
   UpdateAttributeOptionInput,
 } from './conversation-attribute.types'
 import { logger } from '@/lib/server/logger'
+import { normalizeAttributeKey } from '@/lib/shared/normalize-attribute-key'
 
 const log = logger.child({ component: 'conversation-attributes' })
 
@@ -26,10 +27,7 @@ const SELECT_TYPES: ReadonlySet<string> = new Set(['select', 'multi_select'])
 
 export const ASSISTANT_ESCALATION_REASON_KEY = 'assistant_escalation_reason'
 
-/** Normalize a machine key: trimmed, lowercased, whitespace to underscores. */
-export function normalizeAttributeKey(key: string): string {
-  return key.trim().toLowerCase().replace(/\s+/g, '_')
-}
+export { normalizeAttributeKey }
 
 function rowToAttribute(
   row: typeof conversationAttributeDefinitions.$inferSelect
@@ -119,26 +117,45 @@ export async function listConversationAttributes(opts?: {
   }
 }
 
-/** Seed the system select used by handoff so the builder can branch on it. */
+/**
+ * Seed the system select used by handoff so the builder can branch on it. A
+ * definition seeded before a reason existed gets the missing options appended
+ * (existing options and their labels are kept), so the hand-off can record
+ * every reason.
+ */
 export async function ensureAssistantEscalationReasonAttribute(): Promise<void> {
+  const { ASSISTANT_HANDOFF_REASONS } = await import('@/lib/server/db')
+  const { HANDOFF_REASON_LABELS } = await import('@/lib/shared/conversation/types')
+  const reasonOption = (reason: string): ConversationAttributeOption => ({
+    id: reason,
+    label: HANDOFF_REASON_LABELS[reason] ?? reason,
+  })
   const [existing] = await db
-    .select({ id: conversationAttributeDefinitions.id })
+    .select({
+      id: conversationAttributeDefinitions.id,
+      options: conversationAttributeDefinitions.options,
+    })
     .from(conversationAttributeDefinitions)
     .where(eq(conversationAttributeDefinitions.key, ASSISTANT_ESCALATION_REASON_KEY))
     .limit(1)
-  if (existing) return
-  const { ASSISTANT_HANDOFF_REASONS } = await import('@/lib/server/db')
-  const { HANDOFF_REASON_LABELS } = await import('@/lib/shared/conversation/types')
+  if (existing) {
+    const current = existing.options ?? []
+    const known = new Set(current.map((o) => o.id))
+    const missing = ASSISTANT_HANDOFF_REASONS.filter((reason) => !known.has(reason))
+    if (missing.length === 0) return
+    await db
+      .update(conversationAttributeDefinitions)
+      .set({ options: [...current, ...missing.map(reasonOption)] })
+      .where(eq(conversationAttributeDefinitions.id, existing.id))
+    return
+  }
   try {
     await db.insert(conversationAttributeDefinitions).values({
       key: ASSISTANT_ESCALATION_REASON_KEY,
       label: 'Escalation reason',
       description: 'Why the AI agent handed this conversation to the team.',
       fieldType: 'select',
-      options: ASSISTANT_HANDOFF_REASONS.map((reason) => ({
-        id: reason,
-        label: HANDOFF_REASON_LABELS[reason] ?? reason,
-      })),
+      options: ASSISTANT_HANDOFF_REASONS.map(reasonOption),
       sourceHint: 'ai',
       aiDetect: false,
       detectOnClose: false,

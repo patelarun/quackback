@@ -14,10 +14,19 @@ import {
   changelogCategories,
   changelogEntryCategories,
 } from '@/lib/server/db'
+import type { SQL } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import type { ChangelogCategoryId, ChangelogId } from '@quackback/ids'
 import { NotFoundError, ValidationError, ConflictError } from '@/lib/shared/errors'
+import { TAXONOMY_DEFAULT_COLOR } from '@/lib/shared/schemas/taxonomy'
+import {
+  assertHexColor,
+  assertTrimmedName,
+  nextPosition,
+  positionCaseSql,
+} from '@/lib/server/utils'
 import type { Actor } from '@/lib/server/policy/types'
-import { segmentGateAllows } from '@/lib/server/policy/segment-gate'
+import { segmentGateAllows, segmentGateFilter } from '@/lib/server/policy/segment-gate'
 import type {
   ChangelogCategory,
   CreateChangelogCategoryInput,
@@ -27,24 +36,15 @@ import { logger } from '@/lib/server/logger'
 
 const log = logger.child({ component: 'changelog-categories' })
 
-const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/
-
 function validateName(name: string): string {
-  const trimmed = name.trim()
-  if (!trimmed) {
-    throw new ValidationError('VALIDATION_ERROR', 'Category name is required')
-  }
-  if (trimmed.length > 50) {
-    throw new ValidationError('VALIDATION_ERROR', 'Category name must not exceed 50 characters')
-  }
-  return trimmed
+  return assertTrimmedName(name, {
+    required: 'Category name is required',
+    tooLong: 'Category name must not exceed 50 characters',
+  })
 }
 
 function validateColor(color: string): string {
-  if (!HEX_COLOR_RE.test(color)) {
-    throw new ValidationError('VALIDATION_ERROR', 'Color must be a valid hex color (e.g., #6b7280)')
-  }
-  return color
+  return assertHexColor(color, 'Color must be a valid hex color (e.g., #6b7280)')
 }
 
 /** List categories ordered for the Labels settings card and the filter chips. */
@@ -59,7 +59,7 @@ export async function createChangelogCategory(
 ): Promise<ChangelogCategory> {
   log.debug({ name: input.name }, 'create changelog category')
   const name = validateName(input.name)
-  const color = validateColor(input.color || '#6b7280')
+  const color = validateColor(input.color || TAXONOMY_DEFAULT_COLOR)
 
   const existing = await db.query.changelogCategories.findFirst({
     where: sql`lower(${changelogCategories.name}) = lower(${name})`,
@@ -68,17 +68,13 @@ export async function createChangelogCategory(
     throw new ConflictError('DUPLICATE_NAME', `A category named "${name}" already exists`)
   }
 
-  const [{ maxPosition }] = await db
-    .select({ maxPosition: sql<number>`coalesce(max(${changelogCategories.position}), -1)::int` })
-    .from(changelogCategories)
-
   const [category] = await db
     .insert(changelogCategories)
     .values({
       name,
       color,
       segmentIds: input.segmentIds ?? [],
-      position: maxPosition + 1,
+      position: await nextPosition(changelogCategories, changelogCategories.position),
     })
     .returning()
 
@@ -149,13 +145,9 @@ export async function reorderChangelogCategories(ids: ChangelogCategoryId[]): Pr
     throw new ValidationError('VALIDATION_ERROR', 'Category IDs are required')
   }
 
-  const cases = ids
-    .map((id, i) => sql`WHEN ${changelogCategories.id} = ${id} THEN ${sql.raw(String(i))}`)
-    .reduce((acc, curr) => sql`${acc} ${curr}`, sql``)
-
   await db
     .update(changelogCategories)
-    .set({ position: sql`CASE ${cases} END` })
+    .set({ position: positionCaseSql(changelogCategories.id, ids) })
     .where(inArray(changelogCategories.id, ids))
 }
 
@@ -241,4 +233,19 @@ export function categoryGateAllows(
   actor: Actor
 ): boolean {
   return categories.every((category) => segmentGateAllows(actor, category.segmentIds))
+}
+
+/**
+ * SQL twin of {@link categoryGateAllows} for the entry whose id is `entryId`:
+ * true when none of the entry's categories gates the actor out. Row-by-row
+ * truthiness must match categoryGateAllows exactly.
+ */
+export function categoryGateCondition(actor: Actor, entryId: SQL | AnyPgColumn): SQL {
+  const gate = segmentGateFilter(actor, sql.raw('"gated_category"."segment_ids"'))
+  return sql`NOT EXISTS (
+    SELECT 1 FROM ${changelogEntryCategories} "gated_link"
+    JOIN ${changelogCategories} "gated_category"
+      ON "gated_category"."id" = "gated_link"."category_id"
+    WHERE "gated_link"."changelog_entry_id" = ${entryId} AND NOT (${gate})
+  )`
 }

@@ -4,6 +4,7 @@
  * declared as `feature` + `scope` + `teamOnly` metadata on registerTool.
  */
 
+import { PERMISSIONS } from '@/lib/shared/permissions'
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import {
@@ -17,7 +18,8 @@ import {
   updateCategory,
   deleteCategory,
 } from '@/lib/server/domains/help-center/help-center.service'
-import { parseOptionalTypeId } from '@/lib/server/domains/api/validation'
+import { isCategoryIconName } from '@/lib/server/domains/help-center/category-icons'
+import { parseOptionalTypeId, parseTypeId } from '@/lib/server/domains/api/validation'
 import type { PrincipalId, KbArticleId, KbCategoryId } from '@quackback/ids'
 import type { McpAuthContext } from '../types'
 import {
@@ -89,7 +91,16 @@ const manageCategorySchema = {
   name: z.string().max(200).optional().describe('Category name (required for create)'),
   slug: z.string().max(200).optional().describe('URL slug'),
   description: z.string().max(2000).nullable().optional().describe('Category description'),
-  icon: z.string().max(50).nullable().optional().describe('Emoji icon (e.g. "🚀")'),
+  icon: z
+    .string()
+    .refine(isCategoryIconName, {
+      message: 'Not a category icon. Use a Heroicons name such as "RocketLaunchIcon".',
+    })
+    .nullable()
+    .optional()
+    .describe(
+      'Heroicons (20px solid) icon name, e.g. "RocketLaunchIcon", "BookOpenIcon" or "CreditCardIcon". Emoji are not supported. null clears it.'
+    ),
   parentId: z
     .string()
     .nullable()
@@ -144,6 +155,7 @@ type ManageCategoryArgs = {
 export function registerHelpCenterTools(server: McpServer, auth: McpAuthContext) {
   registerTool<CreateHelpCenterArticleArgs>(server, auth, {
     name: 'create_article',
+    permissions: [PERMISSIONS.HELP_CENTER_MANAGE],
     description: `Create a new help center article (draft). Use update_article to publish it.
 
 Examples:
@@ -178,18 +190,20 @@ Examples:
 
   registerTool<UpdateHelpCenterArticleArgs>(server, auth, {
     name: 'update_article',
+    permissions: [PERMISSIONS.HELP_CENTER_MANAGE],
     description: `Update a help center article. All fields optional — only provided fields change. Set publishedAt to any ISO datetime string to publish immediately, or null to unpublish.
 
 Examples:
-- Update title: update_article({ articleId: "kb_article_01abc...", title: "New Title" })
-- Publish: update_article({ articleId: "kb_article_01abc...", publishedAt: "2026-04-08T00:00:00Z" })
-- Unpublish: update_article({ articleId: "kb_article_01abc...", publishedAt: null })${CONTENT_FORMAT_BLOCK}`,
+- Update title: update_article({ articleId: "article_01abc...", title: "New Title" })
+- Publish: update_article({ articleId: "article_01abc...", publishedAt: "2026-04-08T00:00:00Z" })
+- Unpublish: update_article({ articleId: "article_01abc...", publishedAt: null })${CONTENT_FORMAT_BLOCK}`,
     schema: updateHelpCenterArticleSchema,
     annotations: WRITE,
     feature: 'helpCenter',
     scope: 'write:article',
     teamOnly: true,
     handler: async (args) => {
+      const articleId = parseTypeId<KbArticleId>(args.articleId, 'article', 'article ID')
       const authorPrincipalId = parseOptionalTypeId<PrincipalId>(
         args.authorId,
         'principal',
@@ -204,18 +218,18 @@ Examples:
       // never leaves the article in a partially-published state.
       let article = null
       if (hasUpdates) {
-        article = await updateArticle(args.articleId as KbArticleId, updateData, authorPrincipalId)
+        article = await updateArticle(articleId, updateData, authorPrincipalId)
       }
 
       if (args.publishedAt !== undefined) {
         article =
           args.publishedAt === null
-            ? await unpublishArticle(args.articleId as KbArticleId)
-            : await publishArticle(args.articleId as KbArticleId)
+            ? await unpublishArticle(articleId)
+            : await publishArticle(articleId)
       }
 
       if (!article) {
-        article = await getArticleById(args.articleId as KbArticleId)
+        article = await getArticleById(articleId)
       }
 
       return articleResult(article)
@@ -224,27 +238,30 @@ Examples:
 
   registerTool<DeleteHelpCenterArticleArgs>(server, auth, {
     name: 'delete_article',
+    permissions: [PERMISSIONS.HELP_CENTER_MANAGE],
     description: `Soft-delete a help center article.
 
 Example:
-- delete_article({ articleId: "kb_article_01abc..." })`,
+- delete_article({ articleId: "article_01abc..." })`,
     schema: deleteHelpCenterArticleSchema,
     annotations: DESTRUCTIVE,
     feature: 'helpCenter',
     scope: 'write:article',
     teamOnly: true,
     handler: async (args) => {
-      await deleteArticle(args.articleId as KbArticleId)
-      return jsonResult({ deleted: true, id: args.articleId })
+      const articleId = parseTypeId<KbArticleId>(args.articleId, 'article', 'article ID')
+      await deleteArticle(articleId)
+      return jsonResult({ deleted: true, id: articleId })
     },
   })
 
   registerTool<ManageCategoryArgs>(server, auth, {
     name: 'manage_category',
+    permissions: [PERMISSIONS.HELP_CENTER_MANAGE],
     description: `Create, update, or delete a help center category.
 
 Examples:
-- Create: manage_category({ action: "create", name: "Getting Started", icon: "🚀" })
+- Create: manage_category({ action: "create", name: "Getting Started", icon: "RocketLaunchIcon" })
 - Update: manage_category({ action: "update", categoryId: "kb_category_01abc...", name: "New Name" })
 - Delete: manage_category({ action: "delete", categoryId: "kb_category_01abc..." })`,
     schema: manageCategorySchema,

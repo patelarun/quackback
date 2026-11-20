@@ -48,6 +48,7 @@ export const LOCALE_TO_REGCONFIG: Record<string, string> = {
   sv: 'swedish',
   ar: 'arabic',
   ru: 'russian',
+  nl: 'dutch',
   'pt-br': 'portuguese',
   'zh-cn': 'simple',
   'zh-tw': 'simple',
@@ -119,7 +120,7 @@ export const helpCenterCategories = pgTable(
 export const helpCenterArticles = pgTable(
   'kb_articles',
   {
-    id: typeIdWithDefault('kb_article')('id').primaryKey(),
+    id: typeIdWithDefault('article')('id').primaryKey(),
     categoryId: typeIdColumn('kb_category')('category_id')
       .notNull()
       .references(() => helpCenterCategories.id, { onDelete: 'cascade' }),
@@ -167,6 +168,8 @@ export const helpCenterArticles = pgTable(
     index('kb_articles_category_published_idx').on(table.categoryId, table.publishedAt),
     index('kb_articles_category_position_idx').on(table.categoryId, table.position),
     index('kb_articles_search_vector_idx').using('gin', table.searchVector),
+    // Workspace search: a title containing the query anywhere inside (0309).
+    index('kb_articles_title_trgm_idx').using('gin', table.title.op('gin_trgm_ops')),
     index('kb_articles_embedding_hnsw_idx')
       .using('hnsw', sql`${table.embedding} vector_cosine_ops`)
       .where(sql`${table.embedding} IS NOT NULL`),
@@ -181,7 +184,7 @@ export const helpCenterArticleFeedback = pgTable(
   'kb_article_feedback',
   {
     id: typeIdWithDefault('kb_article_feedback')('id').primaryKey(),
-    articleId: typeIdColumn('kb_article')('article_id')
+    articleId: typeIdColumn('article')('article_id')
       .notNull()
       .references(() => helpCenterArticles.id, { onDelete: 'cascade' }),
     principalId: typeIdColumnNullable('principal')('principal_id').references(() => principal.id, {
@@ -273,7 +276,7 @@ export const helpCenterArticleTranslations = pgTable(
   'kb_article_translations',
   {
     id: typeIdWithDefault('kb_article_translation')('id').primaryKey(),
-    articleId: typeIdColumn('kb_article')('article_id')
+    articleId: typeIdColumn('article')('article_id')
       .notNull()
       .references(() => helpCenterArticles.id, { onDelete: 'cascade' }),
     locale: text('locale').notNull(),
@@ -312,7 +315,7 @@ export const helpCenterArticleChunks = pgTable(
   'kb_article_chunks',
   {
     id: typeIdWithDefault('kb_chunk')('id').primaryKey(),
-    articleId: typeIdColumn('kb_article')('article_id')
+    articleId: typeIdColumn('article')('article_id')
       .notNull()
       .references(() => helpCenterArticles.id, { onDelete: 'cascade' }),
     locale: text('locale').notNull(),

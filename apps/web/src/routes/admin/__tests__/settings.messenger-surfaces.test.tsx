@@ -1,14 +1,23 @@
 // @vitest-environment happy-dom
-import { render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { IntlProvider } from 'react-intl'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const updateWidget = vi.fn()
+let prevent = false
+let assistant: Record<string, unknown> | undefined
+
+vi.mock('@/lib/client/hooks/use-permission', () => ({ usePermission: () => true }))
 vi.mock('@tanstack/react-router', async () => {
   const actual =
     await vi.importActual<typeof import('@tanstack/react-router')>('@tanstack/react-router')
   return {
     ...actual,
     useRouter: () => ({ invalidate: vi.fn() }),
-    Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
+    Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
+      <a href={to}>{children}</a>
+    ),
   }
 })
 
@@ -17,25 +26,31 @@ const portalNav: {
   value: { items?: Array<{ id: string; type: string; enabled?: boolean }> } | undefined
 } = { value: undefined }
 
-vi.mock('@tanstack/react-query', () => ({
-  useSuspenseQuery: (opts: { queryKey: string[] }) => {
-    if (opts.queryKey.includes('widgetConfig')) {
-      return {
-        data: {
-          tabs: { messenger: true },
-          messenger: {
-            welcomeMessage: 'Hi',
-            offlineMessage: 'Away',
-            teamName: 'Support',
-            preventRepliesWhenClosed: false,
+vi.mock('@tanstack/react-query', async () => {
+  const actual =
+    await vi.importActual<typeof import('@tanstack/react-query')>('@tanstack/react-query')
+  return {
+    ...actual,
+    useSuspenseQuery: (opts: { queryKey: string[] }) => {
+      if (opts.queryKey.includes('widgetConfig')) {
+        return {
+          data: {
+            tabs: { messenger: true },
+            messenger: {
+              welcomeMessage: 'Hi',
+              offlineMessage: 'Away',
+              teamName: 'Support',
+              preventRepliesWhenClosed: prevent,
+              assistant,
+            },
+            translations: {},
           },
-          translations: {},
-        },
+        }
       }
-    }
-    return { data: { support: portalSupport.value, nav: portalNav.value } }
-  },
-}))
+      return { data: { support: portalSupport.value, nav: portalNav.value } }
+    },
+  }
+})
 
 vi.mock('@/lib/client/queries/settings', () => ({
   settingsQueries: {
@@ -45,11 +60,29 @@ vi.mock('@/lib/client/queries/settings', () => ({
 }))
 
 vi.mock('@/lib/client/mutations/settings', () => ({
-  useUpdateWidgetConfig: () => ({ mutateAsync: vi.fn() }),
+  useUpdateWidgetConfig: () => ({ mutateAsync: updateWidget }),
   useUpdatePortalConfig: () => ({ mutateAsync: vi.fn() }),
 }))
 
-const { MessengerChannelPage } = await import('../settings.channels_.messenger')
+const { MessengerChannelPage } = await import('@/components/admin/settings/messenger-channel-page')
+
+function renderPage() {
+  return render(
+    <IntlProvider locale="en" defaultLocale="en">
+      <QueryClientProvider client={new QueryClient()}>
+        <MessengerChannelPage />
+      </QueryClientProvider>
+    </IntlProvider>
+  )
+}
+
+beforeEach(() => {
+  updateWidget.mockReset()
+  updateWidget.mockResolvedValue({})
+  prevent = false
+  assistant = undefined
+})
+afterEach(cleanup)
 
 describe('Messenger Surfaces', () => {
   beforeEach(() => {
@@ -58,7 +91,7 @@ describe('Messenger Surfaces', () => {
   })
 
   it('owns Widget and Portal chats switches', () => {
-    render(<MessengerChannelPage />)
+    renderPage()
 
     expect(screen.getByRole('heading', { name: 'Surfaces' })).toBeInTheDocument()
     expect(screen.getByRole('switch', { name: 'Widget' })).toBeInTheDocument()
@@ -72,6 +105,87 @@ describe('Messenger Surfaces', () => {
     expect(screen.queryByText('Widget settings')).not.toBeInTheDocument()
     expect(screen.queryByText('Portal Support')).not.toBeInTheDocument()
     expect(screen.getByText('Translations')).toBeInTheDocument()
+  })
+
+  it('shows the Support / Channels / Messenger breadcrumb', () => {
+    renderPage()
+    const crumbs = screen.getByRole('navigation', { name: 'Breadcrumb' })
+    expect(crumbs.textContent).toMatch(/Support\s*\/\s*Channels\s*\/\s*Messenger/)
+    expect(crumbs.querySelector('a[href="/admin/settings/channels"]')).toBeTruthy()
+    expect(crumbs.querySelector('a[href="/admin/settings/support"]')).toBeTruthy()
+  })
+})
+
+describe('Closed conversations reopen switch', () => {
+  it('is on when the stored prevent-replies flag is false', () => {
+    prevent = false
+    renderPage()
+    expect(screen.getByRole('heading', { name: 'Closed conversations' })).toBeInTheDocument()
+    const toggle = screen.getByRole('switch', { name: 'Reopen when a visitor replies' })
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    expect(screen.queryByText('Prevent replies to closed conversations')).toBeNull()
+  })
+
+  it('is off when the stored prevent-replies flag is true', () => {
+    prevent = true
+    renderPage()
+    const toggle = screen.getByRole('switch', { name: 'Reopen when a visitor replies' })
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('turning it off stores preventRepliesWhenClosed true', async () => {
+    prevent = false
+    renderPage()
+    fireEvent.click(screen.getByRole('switch', { name: 'Reopen when a visitor replies' }))
+    await waitFor(() =>
+      expect(updateWidget).toHaveBeenCalledWith({ messenger: { preventRepliesWhenClosed: true } })
+    )
+  })
+
+  it('turning it on stores preventRepliesWhenClosed false', async () => {
+    prevent = true
+    renderPage()
+    fireEvent.click(screen.getByRole('switch', { name: 'Reopen when a visitor replies' }))
+    await waitFor(() =>
+      expect(updateWidget).toHaveBeenCalledWith({ messenger: { preventRepliesWhenClosed: false } })
+    )
+  })
+
+  it('says email replies always reopen', () => {
+    renderPage()
+    expect(screen.getByText(/Email replies always reopen/)).toBeInTheDocument()
+  })
+})
+
+describe('AI agent row', () => {
+  it('reads "The AI agent answers first" with a Configure link', () => {
+    assistant = { enabled: true, respond: true }
+    renderPage()
+    expect(screen.getByText('The AI agent answers first')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Configure' }).getAttribute('href')).toBe(
+      '/admin/settings/agent'
+    )
+    expect(screen.queryByText(/Fronting conversations/)).toBeNull()
+  })
+
+  it('reads "The AI agent is off" when answering is off or unset', () => {
+    for (const value of [{ enabled: true, respond: false }, { enabled: true }]) {
+      assistant = value
+      const { unmount } = renderPage()
+      expect(screen.getByText('The AI agent is off')).toBeInTheDocument()
+      expect(screen.queryByText('The AI agent answers first')).toBeNull()
+      expect(screen.queryByText('Answering is off.')).toBeNull()
+      unmount()
+    }
+  })
+})
+
+describe('Translation chips', () => {
+  it('mark the selected locale with the primary style, not green', () => {
+    renderPage()
+    const selected = screen.getByRole('button', { name: 'English' })
+    expect(selected.className.split(' ')).toContain('border-primary')
+    expect(selected.className).not.toMatch(/green|emerald/)
   })
 })
 
@@ -89,25 +203,25 @@ describe('Portal chats reflects the portal, not an optimistic default', () => {
 
   it('reads off for a workspace that never set it', () => {
     portalSupport.value = undefined
-    render(<MessengerChannelPage />)
+    renderPage()
     expect(portalSwitch()).toHaveAttribute('aria-checked', 'false')
   })
 
   it('reads off when the section exists but the flag was never set', () => {
     portalSupport.value = {}
-    render(<MessengerChannelPage />)
+    renderPage()
     expect(portalSwitch()).toHaveAttribute('aria-checked', 'false')
   })
 
   it('reads off when explicitly disabled', () => {
     portalSupport.value = { enabled: false }
-    render(<MessengerChannelPage />)
+    renderPage()
     expect(portalSwitch()).toHaveAttribute('aria-checked', 'false')
   })
 
   it('reads on only when explicitly enabled — the same test the portal applies', () => {
     portalSupport.value = { enabled: true }
-    render(<MessengerChannelPage />)
+    renderPage()
     expect(portalSwitch()).toHaveAttribute('aria-checked', 'true')
   })
 })
@@ -127,25 +241,25 @@ describe('Portal chats warns when the portal nav hides the Messages tab', () => 
 
   it('warns when nav config explicitly hides the tab', () => {
     portalNav.value = { items: [{ id: 'support', type: 'support', enabled: false }] }
-    render(<MessengerChannelPage />)
+    renderPage()
     expect(warning()).toBeInTheDocument()
   })
 
   it('stays quiet when the nav item is visible', () => {
     portalNav.value = { items: [{ id: 'support', type: 'support' }] }
-    render(<MessengerChannelPage />)
+    renderPage()
     expect(warning()).not.toBeInTheDocument()
   })
 
   it('stays quiet with no nav config at all', () => {
-    render(<MessengerChannelPage />)
+    renderPage()
     expect(warning()).not.toBeInTheDocument()
   })
 
   it('stays quiet when Portal chats is off — the switch is not claiming otherwise', () => {
     portalSupport.value = { enabled: false }
     portalNav.value = { items: [{ id: 'support', type: 'support', enabled: false }] }
-    render(<MessengerChannelPage />)
+    renderPage()
     expect(warning()).not.toBeInTheDocument()
   })
 })

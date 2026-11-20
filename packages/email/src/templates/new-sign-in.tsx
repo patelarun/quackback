@@ -1,4 +1,4 @@
-import { Heading, Hr, Section, Text } from '@react-email/components'
+import { Heading, Hr, Link, Section, Text } from '@react-email/components'
 import { EmailLayout, TransactionalFooter } from './email-layout'
 import { typography, utils } from './shared-styles'
 import { emailText } from '../messages'
@@ -8,20 +8,28 @@ interface NewSignInEmailProps {
   occurredAt: string
   ipAddress?: string | null
   userAgent?: string | null
+  location?: string | null
+  settingsUrl?: string | null
+  /** When true, skip the password CTA — the profile page hides PasswordForm. */
+  ssoEnforced?: boolean
   logoUrl?: string
 }
 
 /**
- * "New device" sign-in notification — sent only on first-sight of a
- * (UA, /24 IP) combination for the recipient's account. The user is
- * already signed in by the time this lands; the alert is purely
- * informational with a recovery path if it wasn't them.
+ * "New device" sign-in notification — sent when an additional signed
+ * device cookie is seen for the recipient's account. Browser/OS, IP
+ * and location are shown as context; they are not the device identity.
+ * The user is already signed in by the time this lands; the alert is
+ * purely informational with a recovery path if it wasn't them.
  */
 export function NewSignInEmail({
   workspaceName,
   occurredAt,
   ipAddress,
   userAgent,
+  location,
+  settingsUrl,
+  ssoEnforced,
   logoUrl,
 }: NewSignInEmailProps) {
   return (
@@ -42,6 +50,11 @@ export function NewSignInEmail({
             <strong>{emailText('newSignIn.label.ip')}</strong> {ipAddress}
           </Text>
         ) : null}
+        {location ? (
+          <Text style={typography.text}>
+            <strong>{emailText('newSignIn.label.location')}</strong> {location}
+          </Text>
+        ) : null}
         {userAgent ? (
           <Text style={typography.text}>
             <strong>{emailText('common.label.device')}</strong> {userAgent}
@@ -51,7 +64,21 @@ export function NewSignInEmail({
 
       <Hr style={{ margin: '24px 0', borderColor: '#e5e7eb' }} />
 
-      <Text style={typography.text}>{emailText('newSignIn.advice')}</Text>
+      <Text style={typography.text}>
+        {ssoEnforced ? (
+          emailText('newSignIn.adviceSso')
+        ) : settingsUrl ? (
+          <>
+            {emailText('newSignIn.adviceLinkLead')}{' '}
+            <Link href={settingsUrl} style={utils.link}>
+              {emailText('newSignIn.adviceLinkText')}
+            </Link>{' '}
+            {emailText('newSignIn.adviceLinkTail')}
+          </>
+        ) : (
+          emailText('newSignIn.advice')
+        )}
+      </Text>
 
       <TransactionalFooter>{emailText('newSignIn.footer')}</TransactionalFooter>
     </EmailLayout>

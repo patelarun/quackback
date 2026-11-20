@@ -15,6 +15,7 @@
  */
 
 import { db, eq, ne, and, or, inArray, sql, principal, user } from '@/lib/server/db'
+import { notTestPrincipal } from '@/lib/server/test-data'
 import type { PrincipalId, UserId } from '@quackback/ids'
 
 export type ContactEmailMatchType = 'verified_user' | 'unverified_user' | 'lead'
@@ -67,7 +68,12 @@ export async function findContactsByEmail(rawEmail: string): Promise<ContactEmai
     })
     .from(principal)
     .where(
-      and(eq(principal.type, 'anonymous'), sql`LOWER(${principal.contactEmail}) = ${normalized}`)
+      and(
+        eq(principal.type, 'anonymous'),
+        sql`LOWER(${principal.contactEmail}) = ${normalized}`,
+        // A test customer carries its owner's address but is not a contact.
+        notTestPrincipal(principal.id)
+      )
     )
 
   return [
@@ -193,7 +199,11 @@ export async function findDuplicatesForPrincipal(
     avatarUrl: principal.avatarUrl,
   }
   // Portal people only — the directory surface this warning renders on.
-  const scope = and(ne(principal.id, principalId), eq(principal.role, 'user'))
+  const scope = and(
+    ne(principal.id, principalId),
+    eq(principal.role, 'user'),
+    notTestPrincipal(principal.id)
+  )
 
   if (emails.length > 0) {
     const emailRows = await db

@@ -18,11 +18,14 @@
  */
 import { logger } from '@/lib/server/logger'
 import { getCurrentWorkspace } from '@/lib/server/workspaces/workspace-context'
+import { runWithAuditAttribution, SYSTEM_ATTRIBUTION } from '@/lib/server/audit/attribution'
 import {
+  claimById,
   claimJobs,
   completeJob,
   failJob,
   heartbeatJob,
+  peekRunnableJob,
   pruneTerminalJobs,
   reapExpiredLeases,
   type ClaimedJob,
@@ -31,6 +34,7 @@ import {
 } from './job-queue'
 import {
   concurrencyFor,
+  fleetConcurrencyFor,
   findJobDefinition,
   isTerminalJobError,
   jobDefinitions,
@@ -38,12 +42,21 @@ import {
   maxAttemptsFor,
   retentionOverrides,
   retryBackoffMs,
+  RetryAfterError,
   type DynamicSchedule,
   type JobDefinition,
   type JobHandler,
 } from './definitions'
 import { enqueueJob } from './job-queue'
-import { latestSlotAtOrBefore, nextSlotAfter, parseCron, slotKey, type ParsedCron } from './cron'
+import {
+  latestSlotAtOrBefore,
+  nextSlotAfter,
+  parseCron,
+  slotKey,
+  slotSpreadMs,
+  stableFraction,
+  type ParsedCron,
+} from './cron'
 
 const log = logger.child({ component: 'job-runner' })
 
@@ -65,6 +78,14 @@ export interface RunnerConfig {
   batchSize: number
   /** How often expired leases are reclaimed. */
   reapIntervalMs: number
+  /**
+   * How often terminal rows past retention are pruned. Deliberately much slower
+   * than `reapIntervalMs`: a lost lease has to be noticed quickly, an aged row
+   * does not, and the prune is a table scan on every workspace in a pooled
+   * fleet. Slack payload privacy does not ride on this clock — `completeJob`
+   * scrubs a `slack-hook` payload the moment the job succeeds.
+   */
+  pruneIntervalMs: number
   /** How long terminal rows are kept. Must exceed any live cron slot key. */
   retentionMs: number
   /**
@@ -89,6 +110,7 @@ export function runnerConfig(): RunnerConfig {
     pollIntervalMs: envInt('JOB_POLL_INTERVAL_MS', 1_000, 50, 600_000),
     batchSize: envInt('JOB_BATCH_SIZE', 5, 1, 100),
     reapIntervalMs: envInt('JOB_REAP_INTERVAL_MS', 15_000, 500, 3_600_000),
+    pruneIntervalMs: envInt('JOB_PRUNE_INTERVAL_MS', 3_600_000, 1_000, 86_400_000),
     retentionMs: envInt('JOB_RETENTION_MS', 7 * 24 * 60 * 60 * 1000, 60_000, 365 * 86_400_000),
     maxConcurrency: envInt('JOB_MAX_CONCURRENCY', totalDeclaredConcurrency(), 1, 512),
   }
@@ -229,10 +251,18 @@ export async function runJob(job: ClaimedJob): Promise<'succeeded' | 'failed' | 
   heartbeat.unref?.()
 
   const startedAt = Date.now()
-  log.info(jobFields(job, { event: 'job.started' }), 'job started')
+  log.info(
+    jobFields(job, {
+      event: 'job.started',
+      queued_ms: Math.max(0, startedAt - job.runAt.getTime()),
+    }),
+    'job started'
+  )
   try {
     const handler = await resolveHandler(def)
-    await handler(job)
+    // A job is background work: whatever it changes is attributed to the
+    // system, never to the request or tier that happened to arm the runner.
+    await runWithAuditAttribution(SYSTEM_ATTRIBUTION, () => handler(job))
   } catch (err) {
     clearInterval(heartbeat)
     const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
@@ -241,7 +271,12 @@ export async function runJob(job: ClaimedJob): Promise<'succeeded' | 'failed' | 
     // answer. It only ever makes the outcome final sooner — see failJob.
     const terminal = isTerminalJobError(err)
     const outcome = await failJob(job, message, {
-      backoffMs: retryBackoffMs(def, job.attempts),
+      backoffMs: Math.max(
+        retryBackoffMs(def, job.attempts),
+        err instanceof RetryAfterError && Number.isFinite(err.retryAfterMs)
+          ? Math.max(0, err.retryAfterMs)
+          : 0
+      ),
       terminal,
     })
     const fields = jobFields(job, {
@@ -323,21 +358,84 @@ export interface DrainResult {
  *
  * **Why per-queue caps rather than one pool size.** The reference gave each
  * queue its own `Worker` with its own `concurrency`, and one of those numbers
- * is load-bearing: `workflow-dispatch` is `concurrency: 1` because it is a
- * global FIFO, not because it is slow. A single undifferentiated pool would run
- * two dispatch jobs at once and reorder a reply and a close on one
- * conversation. So the cap is per queue, the claim asks for exactly the free
- * slots each queue has, and the FIFO queue can never have two in flight.
+ * is load-bearing: `workflow-dispatch` is `concurrency: 1` because it
+ * dispatches in enqueue order, not because it is slow. A single
+ * undifferentiated pool would run two dispatch jobs at once and reorder a reply
+ * and a close on one conversation. So the cap is per queue, the claim asks for
+ * exactly the free slots each queue has, and a concurrency-1 queue never has
+ * two in flight in this pool. That order holds within one process while jobs
+ * succeed first time; it is not global. A failed job is retried behind later
+ * ones, two worker processes each run one job at once, and a crashed job runs
+ * again only once its lease lapses.
  */
 export interface JobPool {
   /** Jobs currently running, per queue. */
   readonly inFlight: Map<string, number>
   /** Every running job's promise, so a caller can wait the pool out. */
   readonly active: Set<Promise<void>>
+  /**
+   * Serialises `dispatchPass` and `startJobsById` so they cannot claim at once.
+   * The poller does not reserve before `claimJobs`; without this lock a wake
+   * can start a second job on a concurrency-1 queue while that claim is in flight.
+   */
+  claimChain: Promise<void>
 }
 
 export function createJobPool(): JobPool {
-  return { inFlight: new Map(), active: new Set() }
+  return { inFlight: new Map(), active: new Set(), claimChain: Promise.resolve() }
+}
+
+async function withClaimLock<T>(pool: JobPool, work: () => Promise<T>): Promise<T> {
+  let release!: () => void
+  const next = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const prev = pool.claimChain
+  pool.claimChain = next
+  await prev
+  try {
+    return await work()
+  } finally {
+    release()
+  }
+}
+
+function releaseReservation(pool: JobPool, queue: string): void {
+  const held = pool.inFlight.get(queue) ?? 1
+  if (held <= 1) pool.inFlight.delete(queue)
+  else pool.inFlight.set(queue, held - 1)
+}
+
+/**
+ * Slots held per queue across every pool in this process — what
+ * `fleetConcurrency` caps.
+ *
+ * **Reserved before the claim, held while the job runs.** A claim takes the
+ * slots it asks for before it goes to the database, gives back the ones it did
+ * not fill when it returns, and each job it started gives its own back when it
+ * settles. Counting only once a claim returned made this a cap and not a
+ * semaphore: loops claiming together each saw the last slot free and each took
+ * it. They claim together exactly when the cap matters, on a worker start or
+ * after a database restart, when every loop finds the same backlog at once.
+ *
+ * The cost is that a claim in flight holds its slots until it returns, so a slow
+ * database defers capped work. That is the backpressure a heavy queue wants,
+ * and it is short: an idle loop claims about once a slot, so the polls of a
+ * whole fleet only hold a small cap between them when each claim takes seconds.
+ *
+ * Counted for every queue, enforced only where a definition sets a cap, so a
+ * definition swapped while a job runs cannot strand its slot.
+ */
+const fleetInFlight = new Map<string, number>()
+
+function adjustFleet(queue: string, delta: number): void {
+  const next = (fleetInFlight.get(queue) ?? 0) + delta
+  if (next <= 0) fleetInFlight.delete(queue)
+  else fleetInFlight.set(queue, next)
+}
+
+function fleetFree(def: JobDefinition): number {
+  return fleetConcurrencyFor(def) - (fleetInFlight.get(def.name) ?? 0)
 }
 
 export function poolSize(pool: JobPool): number {
@@ -355,7 +453,8 @@ export function claimSpecsFor(pool: JobPool, config: RunnerConfig): QueueClaimSp
     const free = Math.min(
       concurrencyFor(def) - (pool.inFlight.get(def.name) ?? 0),
       config.batchSize,
-      budget
+      budget,
+      fleetFree(def)
     )
     if (free < 1) continue
     specs.push({ queue: def.name, limit: free, leaseMs: leaseMsFor(def) })
@@ -386,34 +485,113 @@ export async function dispatchPass(opts: {
   onSettled?: (queue: string, outcome: 'succeeded' | 'failed' | 'retrying') => void
 }): Promise<DispatchResult> {
   const { pool } = opts
-  const specs = claimSpecsFor(pool, opts.config)
-  if (specs.length === 0) return { claimed: 0, saturated: true }
+  return withClaimLock(pool, async () => {
+    const specs = claimSpecsFor(pool, opts.config)
+    if (specs.length === 0) return { claimed: 0, saturated: true }
 
-  const jobs = await claimJobs({ specs })
-  for (const job of jobs) {
-    pool.inFlight.set(job.queue, (pool.inFlight.get(job.queue) ?? 0) + 1)
-    const promise = opts
-      .run(job)
-      .catch((err): 'failed' => {
-        // runJob already records every handler failure on the row; reaching
-        // here means the queue machinery itself threw, which must still free
-        // the slot rather than wedge the pool at its cap forever.
-        log.error(
-          jobFields(job, { event: 'job.runner_threw', err }),
-          'job runner threw outside runJob'
-        )
-        return 'failed'
+    for (const spec of specs) adjustFleet(spec.queue, spec.limit)
+    let jobs: ClaimedJob[] = []
+    try {
+      jobs = await claimJobs({ specs })
+    } finally {
+      // The slots this claim asked for and did not fill, all of them if it threw.
+      for (const spec of specs) {
+        const filled = jobs.filter((job) => job.queue === spec.queue).length
+        adjustFleet(spec.queue, filled - spec.limit)
+      }
+    }
+    for (const job of jobs) {
+      startClaimedJob({ pool, job, run: opts.run, onSettled: opts.onSettled, fleetHeld: true })
+    }
+    return { claimed: jobs.length, saturated: false }
+  })
+}
+
+/**
+ * Put an already-claimed row on the pool. `counted` means the caller already
+ * reserved the inFlight slot (start-by-id does this before `claimById` so a
+ * failed claim does not leave a running row with no runner). `fleetHeld` means
+ * the caller reserved the job's process-wide slot (`fleetInFlight`) before its
+ * claim, as `dispatchPass` and `startJobsById` do; otherwise it is taken here.
+ * Either way the job gives it back when it settles.
+ */
+export function startClaimedJob(opts: {
+  pool: JobPool
+  job: ClaimedJob
+  run: (job: ClaimedJob) => Promise<'succeeded' | 'failed' | 'retrying'>
+  onSettled?: (queue: string, outcome: 'succeeded' | 'failed' | 'retrying') => void
+  counted?: boolean
+  fleetHeld?: boolean
+}): void {
+  const { pool, job } = opts
+  if (!opts.counted) pool.inFlight.set(job.queue, (pool.inFlight.get(job.queue) ?? 0) + 1)
+  if (!opts.fleetHeld) adjustFleet(job.queue, 1)
+  const promise = opts
+    .run(job)
+    .catch((err): 'failed' => {
+      log.error(
+        jobFields(job, { event: 'job.runner_threw', err }),
+        'job runner threw outside runJob'
+      )
+      return 'failed'
+    })
+    .then((outcome) => {
+      releaseReservation(pool, job.queue)
+      adjustFleet(job.queue, -1)
+      pool.active.delete(promise)
+      opts.onSettled?.(job.queue, outcome)
+    })
+  pool.active.add(promise)
+}
+
+/**
+ * Try to claim `jobIds` now, honouring the same pool caps as `dispatchPass`.
+ * Returns how many jobs were claimed. A miss is success — the sweeper still runs.
+ */
+export async function startJobsById(opts: {
+  pool: JobPool
+  config: RunnerConfig
+  jobIds: readonly string[]
+  run: (job: ClaimedJob) => Promise<'succeeded' | 'failed' | 'retrying'>
+  onSettled?: (queue: string, outcome: 'succeeded' | 'failed' | 'retrying') => void
+}): Promise<number> {
+  return withClaimLock(opts.pool, async () => {
+    let claimed = 0
+    for (const jobId of opts.jobIds) {
+      const peek = await peekRunnableJob(jobId)
+      if (!peek) continue
+      const def = findJobDefinition(peek.queue)
+      if (!def) continue
+      const free = Math.min(
+        concurrencyFor(def) - (opts.pool.inFlight.get(peek.queue) ?? 0),
+        opts.config.maxConcurrency - poolSize(opts.pool),
+        fleetFree(def)
+      )
+      if (free < 1) continue
+      opts.pool.inFlight.set(peek.queue, (opts.pool.inFlight.get(peek.queue) ?? 0) + 1)
+      adjustFleet(peek.queue, 1)
+      let job: ClaimedJob | null = null
+      try {
+        job = await claimById(jobId, leaseMsFor(def))
+      } finally {
+        if (!job) {
+          releaseReservation(opts.pool, peek.queue)
+          adjustFleet(peek.queue, -1)
+        }
+      }
+      if (!job) continue
+      startClaimedJob({
+        pool: opts.pool,
+        job,
+        run: opts.run,
+        onSettled: opts.onSettled,
+        counted: true,
+        fleetHeld: true,
       })
-      .then((outcome) => {
-        const held = pool.inFlight.get(job.queue) ?? 1
-        if (held <= 1) pool.inFlight.delete(job.queue)
-        else pool.inFlight.set(job.queue, held - 1)
-        pool.active.delete(promise)
-        opts.onSettled?.(job.queue, outcome)
-      })
-    pool.active.add(promise)
-  }
-  return { claimed: jobs.length, saturated: false }
+      claimed += 1
+    }
+    return claimed
+  })
 }
 
 /** Wait for every job the pool is running. */
@@ -461,25 +639,66 @@ export interface ScheduleTickResult {
    */
   attempted: number
   enqueued: number
-  /** Earliest next slot across all schedules, including gated-off ones. */
+  /**
+   * Earliest instant a slot falls due across all schedules, including gated-off
+   * ones: the slot plus this scheduler's offset for it.
+   */
   nextSlotAt: Date | null
   /**
-   * Earliest next slot of schedules that actually ran this tick.
-   * Gated-off `* * * * *` must not appear here — the process scheduler
+   * Earliest instant a slot falls due among schedules that actually ran this
+   * tick. Gated-off `* * * * *` must not appear here — the process scheduler
    * heaps this, and a snooze/SLA gate that is off must not wake every minute.
    */
   nextEnabledSlotAt: Date | null
 }
 
-const cronCache = new Map<string, ParsedCron>()
+interface CachedCron {
+  cron: ParsedCron
+  /** How widely a fleet spreads its starts for one slot (`slotSpreadMs`). */
+  spreadMs: number
+}
 
-function cronFor(pattern: string): ParsedCron {
-  let parsed = cronCache.get(pattern)
-  if (!parsed) {
-    parsed = parseCron(pattern)
-    cronCache.set(pattern, parsed)
+const cronCache = new Map<string, CachedCron>()
+
+function cachedCron(pattern: string): CachedCron {
+  let cached = cronCache.get(pattern)
+  if (!cached) {
+    const cron = parseCron(pattern)
+    cached = { cron, spreadMs: slotSpreadMs(cron) }
+    cronCache.set(pattern, cached)
   }
-  return parsed
+  return cached
+}
+
+/**
+ * How long after each slot this scheduler starts it.
+ *
+ * Every pooled workspace loop evaluates the same crons, so without this an
+ * hourly sweep starts in every workspace in the same second and the shared
+ * database takes the whole fleet's work at once. Measured on a fleet of about
+ * two hundred workspaces: every hourly analytics refresh started inside one
+ * minute, and the database ran out of memory.
+ *
+ * The offset is a stable hash of the scheduler's spread key, scaled into the
+ * schedule's spread window, so:
+ *
+ * - a workspace starts a schedule at the same point in every slot, and every
+ *   replica agrees on that point without coordinating;
+ * - a workspace's schedules on one cadence share a point, so its loop still
+ *   wakes once a minute for its per-minute sweeps. Each tick asks every gate,
+ *   and some gates query the database, so a point per schedule would multiply
+ *   those queries across the fleet;
+ * - the slot itself does not move. The dedupe key and `scheduledFor` are still
+ *   the slot's instant, so a replica that computes no offset dedupes against
+ *   one that does.
+ *
+ * A scheduler with no spread key (a single-workspace install) gets zero and
+ * runs on the cron's own minute, as it always has.
+ */
+export function scheduleOffsetMs(spreadKey: string | null, pattern: string): number {
+  if (spreadKey === null) return 0
+  const { spreadMs } = cachedCron(pattern)
+  return Math.floor(stableFraction(spreadKey) * spreadMs)
 }
 
 /**
@@ -515,11 +734,39 @@ function cronFor(pattern: string): ParsedCron {
  */
 export interface ScheduleState {
   readonly seen: Map<string, number>
+  /** What this scheduler's slot offsets are derived from (`scheduleOffsetMs`). Null runs on the minute. */
+  readonly spreadKey: string | null
 }
 
-/** A scheduler's own state. One per workspace loop — never shared between them. */
-export function createScheduleState(): ScheduleState {
-  return { seen: new Map<string, number>() }
+/**
+ * A scheduler's own state. One per workspace loop — never shared between them.
+ *
+ * A pooled loop passes its workspace key as `spreadKey`, so its slots start at
+ * that workspace's own offset rather than on the same second as the rest of the
+ * fleet.
+ */
+export function createScheduleState(opts: { spreadKey?: string | null } = {}): ScheduleState {
+  return { seen: new Map<string, number>(), spreadKey: opts.spreadKey ?? null }
+}
+
+/**
+ * One schedule as this scheduler sees it at `now`: the cron is evaluated the
+ * scheduler's offset behind real time, so a slot is due once its instant plus
+ * the offset has passed.
+ */
+function scheduleView(
+  state: ScheduleState,
+  pattern: string,
+  now: Date
+): { slot: Date | null; nextDueAt: Date | null } {
+  const { cron } = cachedCron(pattern)
+  const offset = scheduleOffsetMs(state.spreadKey, pattern)
+  const shifted = new Date(now.getTime() - offset)
+  const next = nextSlotAfter(cron, shifted)
+  return {
+    slot: latestSlotAtOrBefore(cron, shifted),
+    nextDueAt: next ? new Date(next.getTime() + offset) : null,
+  }
 }
 
 /**
@@ -528,6 +775,10 @@ export function createScheduleState(): ScheduleState {
  * Only the slot bracketing `now` is emitted — never a backlog. A tier that was
  * down for three hours runs an hourly sweep once on restart rather than three
  * times, which is what the BullMQ repeatable jobs did.
+ *
+ * "Now" is this scheduler's own: `now` less its offset for the schedule
+ * (`scheduleOffsetMs`), so each pooled workspace starts a slot at its own point
+ * inside the slot's spread window.
  *
  * Two replicas racing the same tick both attempt the insert and the unique index
  * on `(queue, dedupe_key)` settles it, so the cross-instance exclusion is a
@@ -555,10 +806,8 @@ export async function runScheduleTick(
     pattern: string,
     payload: Record<string, unknown>
   ): Promise<void> => {
-    const cron = cronFor(pattern)
     live.add(stateKey)
-
-    const slot = latestSlotAtOrBefore(cron, now)
+    const { slot, nextDueAt: next } = scheduleView(state, pattern, now)
     const seen = state.seen.get(stateKey)
     if (seen === undefined) {
       // First pass for THIS scheduler: adopt the current slot, do not run it.
@@ -578,7 +827,6 @@ export async function runScheduleTick(
       }
     }
 
-    const next = nextSlotAfter(cron, now)
     if (next && (!nextSlotAt || next < nextSlotAt)) nextSlotAt = next
     if (next && (!nextEnabledSlotAt || next < nextEnabledSlotAt)) nextEnabledSlotAt = next
   }
@@ -605,11 +853,9 @@ export async function runScheduleTick(
    * this — the process scheduler must not heap a gated-off per-minute cron.
    */
   const adopt = (stateKey: string, pattern: string): void => {
-    const cron = cronFor(pattern)
     live.add(stateKey)
-    const slot = latestSlotAtOrBefore(cron, now)
+    const { slot, nextDueAt: next } = scheduleView(state, pattern, now)
     if (slot) state.seen.set(stateKey, slot.getTime())
-    const next = nextSlotAfter(cron, now)
     if (next && (!nextSlotAt || next < nextSlotAt)) nextSlotAt = next
   }
 
@@ -665,9 +911,20 @@ export interface MaintenanceResult extends ReapResult {
   pruned: number
 }
 
-/** Reclaim expired leases, then drop terminal rows past retention. */
-export async function runMaintenanceTick(config: RunnerConfig): Promise<MaintenanceResult> {
+/**
+ * Reclaim expired leases and, when the caller says the prune is due, drop
+ * terminal rows past retention.
+ *
+ * The two run on different clocks (`reapIntervalMs` vs `pruneIntervalMs`); the
+ * loop owns both and tells this function which fired. `prune` defaults to on so
+ * a caller with a single clock keeps the historical "both, every tick" shape.
+ */
+export async function runMaintenanceTick(
+  config: RunnerConfig,
+  opts: { prune?: boolean } = {}
+): Promise<MaintenanceResult> {
   const reaped = await reapExpiredLeases()
-  const pruned = await pruneTerminalJobs(config.retentionMs, retentionOverrides())
+  const pruned =
+    opts.prune === false ? 0 : await pruneTerminalJobs(config.retentionMs, retentionOverrides())
   return { ...reaped, pruned }
 }

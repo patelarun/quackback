@@ -8,27 +8,50 @@ import { HelpCenterCategoryGrid } from '@/components/help-center/help-center-cat
 import { HelpCenterPopularArticles } from '@/components/help-center/help-center-popular-articles'
 import { getTopLevelCategories } from '@/components/help-center/help-center-utils'
 import {
+  helpCenterAbsoluteUrl,
+  helpCenterHeadMessages,
+  helpCenterHeadPortal,
+} from '@/components/help-center/help-center-head'
+import {
   listPublicCategoriesFn,
   listPopularPublicArticlesFn,
 } from '@/lib/server/functions/help-center'
-import { resolveHcLandingLocale } from '@/lib/shared/help-center-url'
+import { HC_LOCALE_COOKIE, resolveHcLandingLocale } from '@/lib/shared/help-center-url'
+import { DEFAULT_HELP_CENTER_CONFIG, type HelpCenterConfig } from '@/lib/shared/types/settings'
 import { DEFAULT_LOCALE, readVisitorLocaleCookie } from '@/lib/shared/i18n'
-import { HC_LOCALE_COOKIE } from '@/components/help-center/help-center-locale-switcher'
-import { portalHeadMessage } from '@/lib/shared/portal-head-message'
-import type { HelpCenterConfig } from '@/lib/shared/types/settings'
 import { resolvePortalOgImageUrl } from '@/lib/shared/portal-og-image'
+import { useWorkspaceSettings } from '@/lib/client/hooks/use-root-context'
 
-/** Shown only when the workspace has cleared its own homepage copy; both are
- *  translated at render time, so these are the English fallbacks react-intl
- *  uses when a catalog is missing the key. */
-const DEFAULT_TITLE_MESSAGE = {
-  id: 'portal.hc.home.defaultTitle',
-  defaultMessage: 'How can we help?',
-}
-const DEFAULT_DESCRIPTION_MESSAGE = {
-  id: 'portal.hc.home.defaultDescription',
-  defaultMessage:
-    'Search our guides or ask AI for an instant answer. Real answers, fast, no ticket required.',
+type Copy = { id: string; defaultMessage: string }
+
+/**
+ * The landing title and description: an admin's own wording, or the defaults
+ * in the page's language. Settings store the English defaults until an admin
+ * edits them, so a stored default is worded like a missing one. `word` turns a
+ * message into the page's language (react-intl in the page, the help center's
+ * loaded strings in `head`).
+ */
+function landingCopy(config: HelpCenterConfig | null | undefined, word: (copy: Copy) => string) {
+  const storedTitle = config?.homepageTitle
+  const title =
+    storedTitle == null || storedTitle === DEFAULT_HELP_CENTER_CONFIG.homepageTitle
+      ? word({ id: 'portal.hc.home.title', defaultMessage: 'How can we help?' })
+      : storedTitle
+  const storedDescription = config?.homepageDescription
+  const description =
+    storedDescription == null
+      ? word({
+          id: 'portal.hc.home.description',
+          defaultMessage:
+            'Search our guides or ask AI for an instant answer. Real answers, fast, no ticket required.',
+        })
+      : storedDescription === DEFAULT_HELP_CENTER_CONFIG.homepageDescription
+        ? word({
+            id: 'portal.hc.home.localeDescription',
+            defaultMessage: 'Search our knowledge base or browse by category',
+          })
+        : storedDescription
+  return { title, description }
 }
 
 /**
@@ -120,13 +143,15 @@ export const Route = createFileRoute('/_portal/hc/')({
     if (!loaderData) return {}
 
     const { helpCenterConfig, workspaceName, logoUrl } = loaderData
-    const title =
-      helpCenterConfig?.homepageTitle || portalHeadMessage(matches, DEFAULT_TITLE_MESSAGE)
-    const description =
-      helpCenterConfig?.homepageDescription ||
-      portalHeadMessage(matches, DEFAULT_DESCRIPTION_MESSAGE)
+    const messages = helpCenterHeadMessages(matches)
+    const { title, description } = landingCopy(
+      helpCenterConfig,
+      (copy) => messages[copy.id] ?? copy.defaultMessage
+    )
 
     const pageTitle = `${title} - ${workspaceName}`
+    const { baseUrl } = helpCenterHeadPortal(matches)
+    const canonicalUrl = helpCenterAbsoluteUrl(baseUrl, '/hc')
 
     return {
       meta: [
@@ -138,6 +163,7 @@ export const Route = createFileRoute('/_portal/hc/')({
         { name: 'twitter:title', content: pageTitle },
         { name: 'twitter:description', content: description },
       ],
+      links: canonicalUrl ? [{ rel: 'canonical', href: canonicalUrl }] : [],
     }
   },
   component: HelpCenterLandingPage,
@@ -146,7 +172,7 @@ export const Route = createFileRoute('/_portal/hc/')({
 function HelpCenterLandingPage() {
   const intl = useIntl()
   const { categories, popularArticles, helpCenterConfig } = Route.useLoaderData()
-  const { settings } = Route.useRouteContext()
+  const settings = useWorkspaceSettings()
   const askAiEnabled = !!settings?.featureFlags?.helpCenter
 
   // Every link off this page carries a locale, and the unprefixed homepage is the BASE content
@@ -155,9 +181,7 @@ function HelpCenterLandingPage() {
   // never touched the language switcher was in English one click after landing.
   const baseContentLocale = helpCenterConfig?.locales?.default ?? DEFAULT_LOCALE
 
-  const title = helpCenterConfig?.homepageTitle || intl.formatMessage(DEFAULT_TITLE_MESSAGE)
-  const description =
-    helpCenterConfig?.homepageDescription || intl.formatMessage(DEFAULT_DESCRIPTION_MESSAGE)
+  const { title, description } = landingCopy(helpCenterConfig, (copy) => intl.formatMessage(copy))
   const collectionCount = getTopLevelCategories(categories).length
 
   return (

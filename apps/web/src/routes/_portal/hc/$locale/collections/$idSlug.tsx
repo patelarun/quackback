@@ -12,6 +12,11 @@ import { buildCollectionPageJsonLd, buildBreadcrumbJsonLd } from '@/lib/shared/j
 import { CategoryIcon } from '@/components/help-center/category-icon'
 import { Avatar } from '@/components/ui/avatar'
 import { hcArticlePath, hcCollectionPath } from '@/lib/shared/help-center-url'
+import {
+  helpCenterAbsoluteUrl,
+  helpCenterHeadPortal,
+} from '@/components/help-center/help-center-head'
+import { useBaseUrl, useWorkspaceSettings } from '@/lib/client/hooks/use-root-context'
 
 const MAX_ARTICLES_SHOWN = 8
 const AUTHOR_COLORS = [
@@ -46,11 +51,34 @@ export const Route = createFileRoute('/_portal/hc/$locale/collections/$idSlug')(
     }
     return data
   },
-  head: ({ loaderData }) => {
+  head: ({ loaderData, params, matches }) => {
     if (!loaderData) return {}
     const { category } = loaderData
+    const { workspaceName, baseUrl } = helpCenterHeadPortal(matches)
+    const pageTitle = `${category.name} - ${workspaceName}`
+    const description = category.description || undefined
+    const canonicalUrl = helpCenterAbsoluteUrl(
+      baseUrl,
+      hcCollectionPath({
+        locale: params.locale,
+        urlId: category.urlId,
+        slug: category.slug,
+      })
+    )
+
     return {
-      meta: [{ title: `${category.name} - Help Center` }],
+      meta: [
+        { title: pageTitle },
+        ...(description ? [{ name: 'description', content: description }] : []),
+        { property: 'og:title', content: pageTitle },
+        ...(description ? [{ property: 'og:description', content: description }] : []),
+        ...(canonicalUrl ? [{ property: 'og:url', content: canonicalUrl }] : []),
+        { property: 'og:site_name', content: workspaceName },
+        { name: 'twitter:card', content: 'summary' },
+        { name: 'twitter:title', content: pageTitle },
+        ...(description ? [{ name: 'twitter:description', content: description }] : []),
+      ],
+      links: canonicalUrl ? [{ rel: 'canonical', href: canonicalUrl }] : [],
     }
   },
   component: CollectionPage,
@@ -105,7 +133,7 @@ function ArticleRow({
       {readingTimeMinutes != null && (
         <span className="text-xs text-muted-foreground/50 shrink-0 tabular-nums mt-0.5">
           <FormattedMessage
-            id="portal.hc.category.readingTime"
+            id="portal.hc.collection.readingTime"
             defaultMessage="{minutes} min read"
             values={{ minutes: readingTimeMinutes }}
           />
@@ -121,11 +149,12 @@ function CollectionPage() {
   const { locale } = Route.useParams()
   const { category, articles, allCategories, subcategories } = Route.useLoaderData()
   const { helpCenterConfig } = helpCenterApi.useLoaderData()
-  const { baseUrl, settings } = Route.useRouteContext()
+  const baseUrl = useBaseUrl()
+  const settings = useWorkspaceSettings()
   const askAiEnabled = !!settings?.featureFlags?.helpCenter
 
   const helpCenterLabel = intl.formatMessage({
-    id: 'portal.hc.breadcrumbs.helpCenter',
+    id: 'portal.hc.breadcrumbs.root',
     defaultMessage: 'Help Center',
   })
 
@@ -210,21 +239,21 @@ function CollectionPage() {
                 <span>
                   {editors.length > 1 ? (
                     <FormattedMessage
-                      id="portal.hc.category.editorsWithOthers"
-                      defaultMessage="By {author} and {otherCount, plural, one {# other} other {# others}}"
+                      id="portal.hc.collection.byAuthors"
+                      defaultMessage="By {name} and {count, plural, one {# other} other {# others}}"
                       values={{
-                        author: (
+                        name: (
                           <span className="font-semibold text-foreground">{editors[0].name}</span>
                         ),
-                        otherCount: editors.length - 1,
+                        count: editors.length - 1,
                       }}
                     />
                   ) : (
                     <FormattedMessage
-                      id="portal.hc.category.editors"
-                      defaultMessage="By {author}"
+                      id="portal.hc.collection.byAuthor"
+                      defaultMessage="By {name}"
                       values={{
-                        author: (
+                        name: (
                           <span className="font-semibold text-foreground">{editors[0].name}</span>
                         ),
                       }}
@@ -250,7 +279,7 @@ function CollectionPage() {
                 const remaining = sub.articles.length - shown.length
                 return (
                   <section key={sub.id}>
-                    <div className="rounded-xl border border-border/50 overflow-hidden divide-y divide-border/50 bg-card">
+                    <div className="border-y border-t-transparent border-border/50 overflow-hidden divide-y divide-border/50">
                       <div className="flex items-center gap-2.5 px-5 py-3 bg-muted/40">
                         <CategoryIcon icon={sub.icon} className="w-5 h-5 shrink-0" />
                         <h2 className="text-sm font-semibold text-foreground">{sub.name}</h2>
@@ -282,8 +311,8 @@ function CollectionPage() {
                               className="flex items-center justify-center px-5 py-3 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
                             >
                               <FormattedMessage
-                                id="portal.hc.category.viewAllArticles"
-                                defaultMessage="View all {count} articles"
+                                id="portal.hc.collection.viewAll"
+                                defaultMessage="View all {count, plural, one {# article} other {# articles}}"
                                 values={{ count: sub.articles.length }}
                               />
                             </Link>
@@ -292,7 +321,7 @@ function CollectionPage() {
                       ) : (
                         <p className="px-5 py-3.5 text-sm text-muted-foreground">
                           <FormattedMessage
-                            id="portal.hc.category.noArticles"
+                            id="portal.hc.collection.sectionEmpty"
                             defaultMessage="No articles yet."
                           />
                         </p>
@@ -307,12 +336,12 @@ function CollectionPage() {
           {articles.length === 0 && (!subcategories || subcategories.length === 0) ? (
             <p className="text-muted-foreground">
               <FormattedMessage
-                id="portal.hc.category.noArticlesInCategory"
+                id="portal.hc.collection.empty"
                 defaultMessage="No articles in this category yet."
               />
             </p>
           ) : articles.length > 0 ? (
-            <div className="rounded-xl border border-border/50 overflow-hidden divide-y divide-border/50 bg-card">
+            <div className="border-y border-t-transparent border-border/50 overflow-hidden divide-y divide-border/50">
               {articles.map((article) => (
                 <ArticleRow
                   key={article.id}

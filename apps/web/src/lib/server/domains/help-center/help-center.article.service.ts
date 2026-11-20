@@ -14,9 +14,10 @@ import { NotFoundError, ValidationError } from '@/lib/shared/errors'
 import { isTeamMember } from '@/lib/shared/roles'
 import { markdownToTiptapJson, projectContentJsonToMarkdown } from '@/lib/server/markdown-tiptap'
 import { rehostExternalImages } from '@/lib/server/content/rehost-images'
-import { slugify } from '@/lib/shared/utils'
+import { slugify } from '@/lib/shared/utils/slugify'
 import { uniqueHelpCenterSlug } from './help-center.slug'
 import { deleteRedirectRulesForTarget } from './help-center-redirect-rules.service'
+import { cancelPendingAutoTranslations } from './help-center-translate-jobs'
 import type {
   HelpCenterArticleWithCategory,
   CreateArticleInput,
@@ -25,6 +26,7 @@ import type {
 import { generateArticleEmbedding } from './help-center-embedding.service'
 import { queueReindexArticleLocale } from './help-center-chunk-index.service'
 import { getHelpCenterConfig } from '@/lib/server/domains/settings/settings.service'
+import { ensureDefaultHelpCategory } from './help-center.default-category'
 import { helpCenterVisibilityConditions } from './help-center-search.service'
 import { resolveUserAvatarUrl } from '@/lib/server/domains/principals/principal-display'
 import { logger } from '@/lib/server/logger'
@@ -220,11 +222,22 @@ export async function createArticle(
     contentType: 'help-center',
     principalId,
   })
+  // No category picked (a first article in an empty help center): file it
+  // under General rather than refusing the save.
+  const categoryId =
+    (input.categoryId?.trim() as KbCategoryId) || (await ensureDefaultHelpCategory())
+
+  const baseContentLocale = await getHelpCenterConfig()
+    .then((config) => config.locales.default)
+    .catch((error: unknown) => {
+      log.warn({ err: error }, 'help center config unreadable; article keeps the default locale')
+      return undefined
+    })
 
   const [article] = await db
     .insert(helpCenterArticles)
     .values({
-      categoryId: input.categoryId as KbCategoryId,
+      categoryId,
       title,
       // Store the markdown projection of the canonical contentJson so the
       // article list endpoint (which omits contentJson) still serves images.
@@ -238,8 +251,9 @@ export async function createArticle(
       // Stamp the language the article is authored in. The column's 'en' default
       // exists for pre-0273 rows; left to it, every article created on a help
       // center authored in another language is stemmed -- and chunk-indexed --
-      // as English.
-      locale: (await getHelpCenterConfig()).locales.default,
+      // as English. An unreadable config must not block creating the article,
+      // so it falls back to that column default (and says so).
+      ...(baseContentLocale ? { locale: baseContentLocale } : {}),
     })
     .returning()
 
@@ -369,6 +383,8 @@ export async function deleteArticle(id: KbArticleId): Promise<void> {
   // No DB-level FK on redirect rules (polymorphic target) -- remove any rule
   // pointing at this article explicitly (domains/languages §2).
   await deleteRedirectRulesForTarget('article', id)
+  // Nothing left to translate.
+  await cancelPendingAutoTranslations(id)
 }
 
 export async function restoreArticle(id: KbArticleId): Promise<HelpCenterArticleWithCategory> {

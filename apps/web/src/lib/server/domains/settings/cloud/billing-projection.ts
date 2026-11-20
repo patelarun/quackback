@@ -3,6 +3,7 @@ import {
   BILLING_STATUSES,
   ENTITLEMENT_KEYS,
   PLAN_IDS,
+  canonicalPlanId,
   type BillingStatus,
   type PlanId,
 } from './cloud.types'
@@ -19,7 +20,21 @@ export const PROJECTED_LIMIT_KEYS = [
   'emailsPerMonth',
   'apiRequestsPerMonth',
   'apiRequestsPerMinute',
+  'maxInboundEmailAddresses',
+  'maxHelpCenterLocales',
+  'maxStatusSubscribers',
 ] as const satisfies readonly (keyof TierLimits)[]
+
+/**
+ * Limit keys a projection may omit. Absent means unlimited, the same as an
+ * explicit null, so a projection written before a key existed still parses.
+ */
+const UNLIMITED_WHEN_ABSENT = new Set<string>([
+  'emailsPerMonth',
+  'maxInboundEmailAddresses',
+  'maxHelpCenterLocales',
+  'maxStatusSubscribers',
+])
 
 export type ProjectedLimits = Pick<TierLimits, (typeof PROJECTED_LIMIT_KEYS)[number]>
 
@@ -61,9 +76,9 @@ function parseLimits(value: unknown): ProjectedLimits | null {
   const parsed = {} as ProjectedLimits
   for (const key of PROJECTED_LIMIT_KEYS) {
     if (!(key in limits)) {
-      // Older control planes omit emailsPerMonth. Absent means unlimited,
-      // same as every other numeric limit; do not drop the whole projection.
-      if (key === 'emailsPerMonth') {
+      // A projection written before a key existed omits it. Absent means
+      // unlimited; the rest of the projection still applies.
+      if (UNLIMITED_WHEN_ABSENT.has(key)) {
         parsed[key] = null
         continue
       }
@@ -112,9 +127,9 @@ export function parseBillingProjection(value: unknown): BillingProjection | null
     return null
   }
   if (!Number.isSafeInteger(projection.version) || Number(projection.version) < 1) return null
-  if (typeof projection.effectivePlan !== 'string' || !PLAN_IDS_SET.has(projection.effectivePlan)) {
-    return null
-  }
+  if (typeof projection.effectivePlan !== 'string') return null
+  const effectivePlan = canonicalPlanId(projection.effectivePlan)
+  if (!PLAN_IDS_SET.has(effectivePlan)) return null
   if (
     !isNullableIsoDate(projection.trialStartedAt) ||
     !isNullableIsoDate(projection.trialExpiresAt) ||
@@ -141,7 +156,7 @@ export function parseBillingProjection(value: unknown): BillingProjection | null
   ) {
     return null
   }
-  return { ...projection, entitlements, freeLimits, planLimits } as BillingProjection
+  return { ...projection, effectivePlan, entitlements, freeLimits, planLimits } as BillingProjection
 }
 
 /** Preserve unlimited or higher operator limits while raising lower plan limits. */

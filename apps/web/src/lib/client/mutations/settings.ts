@@ -6,6 +6,8 @@
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { AUTOSAVE } from '@/lib/client/autosave'
+import { isPlanRefusal } from '@/lib/shared/describe-upgrade'
 import {
   deleteLogoFn,
   deleteHeaderLogoFn,
@@ -20,6 +22,7 @@ import {
   updateModerationDefaultFn,
   updateWidgetConfigFn,
   regenerateWidgetSecretFn,
+  mintWidgetInstallCodeFn,
   updateThemeFn,
   updateCustomCssFn,
   updateWorkflowAbandonedAutoCloseFn,
@@ -262,10 +265,17 @@ export function useUpdateHeaderDisplayName() {
 // in-flight refetch would re-read the still-stale cache via `ensureQueryData`.
 // ============================================================================
 
-export function useUpdatePortalConfig() {
+/**
+ * `meta` overrides let a page that reports some failures itself (an upgrade
+ * prompt) keep the shared toast for the rest.
+ */
+export function useUpdatePortalConfig(
+  meta: { showServerMessage?: boolean; ownsError?: (error: unknown) => boolean } = {}
+) {
   const queryClient = useQueryClient()
 
   return useMutation({
+    meta: { ...AUTOSAVE, ...meta },
     mutationFn: (data: Parameters<typeof updatePortalConfigFn>[0]['data']) =>
       updatePortalConfigFn({ data }),
     onSuccess: () =>
@@ -277,6 +287,7 @@ export function useUpdateModerationDefault() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    meta: AUTOSAVE,
     mutationFn: (data: NonNullable<Parameters<typeof updateModerationDefaultFn>[0]>['data']) =>
       updateModerationDefaultFn({ data }),
     onSuccess: () =>
@@ -288,6 +299,7 @@ export function useUpdateWidgetConfig() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    meta: AUTOSAVE,
     mutationFn: (data: Parameters<typeof updateWidgetConfigFn>[0]['data']) =>
       updateWidgetConfigFn({ data }),
     onSuccess: () =>
@@ -303,8 +315,16 @@ export function useRegenerateWidgetSecret() {
 
   return useMutation({
     mutationFn: () => regenerateWidgetSecretFn(),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: settingsQueries.widgetSecret().queryKey }),
+    onSuccess: (secret) => {
+      queryClient.setQueryData(settingsQueries.widgetSecret().queryKey, secret)
+      return queryClient.invalidateQueries({ queryKey: settingsQueries.widgetSecret().queryKey })
+    },
+  })
+}
+
+export function useMintWidgetInstallCode() {
+  return useMutation({
+    mutationFn: () => mintWidgetInstallCodeFn(),
   })
 }
 
@@ -319,10 +339,30 @@ export function useUpdateSpamFilterConfig() {
   })
 }
 
+/** The AI spam filter switch: autosaves like the other settings toggles. */
+export function useUpdateSpamAiClassifier() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (aiClassifier: boolean) => updateSpamFilterConfigFn({ data: { aiClassifier } }),
+    meta: AUTOSAVE,
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: settingsQueries.spamFilterConfig().queryKey }),
+  })
+}
+
+/**
+ * Help Center config writes are read-merge-write on the server, so every
+ * mutation that changes it shares one scope and runs after the previous one settles.
+ */
+const HELP_CENTER_CONFIG_SCOPE = { id: 'help-center-config' } as const
+
 export function useUpdateHelpCenterConfig() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    scope: HELP_CENTER_CONFIG_SCOPE,
+    meta: AUTOSAVE,
     mutationFn: (data: Parameters<typeof updateHelpCenterConfigFn>[0]['data']) =>
       updateHelpCenterConfigFn({ data }),
     onSuccess: () =>
@@ -334,6 +374,8 @@ export function useUpdateHelpCenterSeo() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    scope: HELP_CENTER_CONFIG_SCOPE,
+    meta: AUTOSAVE,
     mutationFn: (data: Parameters<typeof updateHelpCenterSeoFn>[0]['data']) =>
       updateHelpCenterSeoFn({ data }),
     onSuccess: () =>
@@ -357,6 +399,7 @@ export function useEnableHelpCenterLocale() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    scope: HELP_CENTER_CONFIG_SCOPE,
     mutationFn: (data: Parameters<typeof enableHelpCenterLocaleFn>[0]['data']) =>
       enableHelpCenterLocaleFn({ data }),
     onSuccess: () =>
@@ -368,6 +411,7 @@ export function useDisableHelpCenterLocale() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    scope: HELP_CENTER_CONFIG_SCOPE,
     mutationFn: (locale: Parameters<typeof disableHelpCenterLocaleFn>[0]['data']['locale']) =>
       disableHelpCenterLocaleFn({ data: { locale } }),
     onSuccess: () =>
@@ -379,6 +423,8 @@ export function useUpdateHelpCenterLocaleChrome() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    scope: HELP_CENTER_CONFIG_SCOPE,
+    meta: AUTOSAVE,
     mutationFn: (data: Parameters<typeof updateHelpCenterLocaleChromeFn>[0]['data']) =>
       updateHelpCenterLocaleChromeFn({ data }),
     onSuccess: () =>
@@ -390,6 +436,8 @@ export function useUpdateHelpCenterAutoTranslate() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    scope: HELP_CENTER_CONFIG_SCOPE,
+    meta: AUTOSAVE,
     mutationFn: (data: Parameters<typeof updateHelpCenterAutoTranslateFn>[0]['data']) =>
       updateHelpCenterAutoTranslateFn({ data }),
     onSuccess: () =>
@@ -401,6 +449,9 @@ export function useUpdateHelpCenterDomain() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    scope: HELP_CENTER_CONFIG_SCOPE,
+    // The server's reasons (a host already in use, say) are written for the person saving.
+    meta: { ...AUTOSAVE, showServerMessage: true },
     mutationFn: (domain: string | null) => updateHelpCenterDomainFn({ data: { domain } }),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: settingsQueries.helpCenterConfig().queryKey }),
@@ -411,6 +462,7 @@ export function useVerifyHelpCenterDomain() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    scope: HELP_CENTER_CONFIG_SCOPE,
     mutationFn: () => verifyHelpCenterDomainFn({ data: {} }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: settingsQueries.helpCenterConfig().queryKey })
@@ -450,6 +502,7 @@ export function useUpdateWorkflowAbandonedAutoClose() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    meta: AUTOSAVE,
     mutationFn: (data: Parameters<typeof updateWorkflowAbandonedAutoCloseFn>[0]['data']) =>
       updateWorkflowAbandonedAutoCloseFn({ data }),
     onSuccess: (saved) =>
@@ -461,6 +514,7 @@ export function useUpdateWorkflowCloseSpam() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    meta: AUTOSAVE,
     mutationFn: (data: Parameters<typeof updateWorkflowCloseSpamFn>[0]['data']) =>
       updateWorkflowCloseSpamFn({ data }),
     onSuccess: (saved) =>
@@ -472,6 +526,7 @@ export function useUpdateDefaultSlaPolicy() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    meta: AUTOSAVE,
     mutationFn: (data: Parameters<typeof updateDefaultSlaPolicyFn>[0]['data']) =>
       updateDefaultSlaPolicyFn({ data }),
     onSuccess: (saved) =>
@@ -483,6 +538,9 @@ export function useSaveBrandingTheme() {
   const queryClient = useQueryClient()
 
   return useMutation({
+    // A plan refusal opens the page's upgrade dialog; other refusals (a rejected
+    // stylesheet) are written for the admin, so the toast names them.
+    meta: { ...AUTOSAVE, showServerMessage: true, ownsError: isPlanRefusal },
     mutationFn: async (input: {
       brandingConfig: Record<string, unknown>
       customCss: string

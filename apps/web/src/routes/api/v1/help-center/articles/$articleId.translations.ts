@@ -53,7 +53,7 @@ export const Route = createFileRoute('/api/v1/help-center/articles/$articleId/tr
         try {
           await withApiKeyAuth(request, { permission: PERMISSIONS.HELP_CENTER_MANAGE })
 
-          const articleId = parseTypeId<KbArticleId>(params.articleId, 'kb_article', 'article ID')
+          const articleId = parseTypeId<KbArticleId>(params.articleId, 'article', 'article ID')
 
           // An unknown article and one with no translations both list as empty,
           // so resolve the article to tell those two apart with a 404.

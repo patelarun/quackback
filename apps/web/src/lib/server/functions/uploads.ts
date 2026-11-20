@@ -218,6 +218,16 @@ export const getHeaderLogoUploadUrlFn = createServerFn({ method: 'POST' })
   })
 
 /**
+ * Get a presigned URL for uploading a custom OIDC identity provider's logo.
+ */
+export const getIdentityProviderLogoUploadUrlFn = createServerFn({ method: 'POST' })
+  .validator(imageUploadSchema)
+  .handler(async ({ data }) => {
+    await requireAuth({ permission: PERMISSIONS.AUTH_MANAGE })
+    return presignedImageUpload(data, { label: 'idp logo', prefix: 'idp-logos' })
+  })
+
+/**
  * Get a presigned URL for uploading the widget Home hero image.
  */
 export const getWidgetHeroUploadUrlFn = createServerFn({ method: 'POST' })
@@ -239,11 +249,11 @@ export const getAvatarUploadUrlFn = createServerFn({ method: 'POST' })
 
 /**
  * Get a presigned URL for uploading the AI agent's avatar. Gated on
- * assistant.manage; the returned publicUrl is stored in identity.avatarUrl.
+ * ai.customer.manage; the returned publicUrl is stored in identity.avatarUrl.
  */
 export const getAssistantAvatarUploadUrlFn = createServerFn({ method: 'POST' })
   .validator(imageUploadSchema)
   .handler(async ({ data }) => {
-    await requireAuth({ permission: PERMISSIONS.ASSISTANT_MANAGE })
+    await requireAuth({ permission: PERMISSIONS.AI_CUSTOMER_MANAGE })
     return presignedImageUpload(data, { label: 'assistant avatar', prefix: 'assistant-avatars' })
   })

@@ -2,6 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import {
   loadPortalMessages,
+  loadUnsubscribeMessages,
   readVisitorLocaleCookie,
   resolveCustomerFacingLocale,
   type SupportedLocale,
@@ -89,3 +90,16 @@ export const getWidgetLocaleFn = createServerFn({ method: 'GET' })
       acceptLanguage: headers.get('accept-language'),
     })
   })
+
+/**
+ * {@link loadPortalIntl} for the standalone /unsubscribe page, which renders
+ * only its own `unsubscribe.` strings and so seeds only those.
+ */
+export async function loadUnsubscribeIntl(): Promise<{
+  locale: SupportedLocale
+  messages: Record<string, string>
+}> {
+  const locale = await getPortalLocaleFn()
+  const messages = await loadUnsubscribeMessages(locale)
+  return { locale, messages }
+}

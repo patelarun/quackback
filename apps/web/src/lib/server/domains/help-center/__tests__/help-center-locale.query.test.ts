@@ -191,7 +191,7 @@ describe('getPublicCategoryBySlugForLocale', () => {
 
 describe('listPublicArticlesForCategoryLocale', () => {
   it('returns the default-locale list unchanged for the default locale', async () => {
-    const articles = [{ id: 'kb_article_1', title: 'Invoices' }]
+    const articles = [{ id: 'article_1', title: 'Invoices' }]
     mockListPublicArticlesForCategory.mockResolvedValue(articles)
 
     const result = await listPublicArticlesForCategoryLocale('kb_category_1', 'en')
@@ -200,27 +200,27 @@ describe('listPublicArticlesForCategoryLocale', () => {
 
   it('drops articles with no published translation and overlays the rest', async () => {
     mockListPublicArticlesForCategory.mockResolvedValue([
-      { id: 'kb_article_1', title: 'Invoices', description: 'EN' },
-      { id: 'kb_article_2', title: 'Refunds', description: 'EN' },
+      { id: 'article_1', title: 'Invoices', description: 'EN' },
+      { id: 'article_2', title: 'Refunds', description: 'EN' },
     ])
     mockArticleTranslationFindMany.mockResolvedValue([
-      { articleId: 'kb_article_1', title: 'Rechnungen', description: 'DE' },
+      { articleId: 'article_1', title: 'Rechnungen', description: 'DE' },
     ])
 
     const result = await listPublicArticlesForCategoryLocale('kb_category_1', 'de')
-    expect(result).toEqual([{ id: 'kb_article_1', title: 'Rechnungen', description: 'DE' }])
+    expect(result).toEqual([{ id: 'article_1', title: 'Rechnungen', description: 'DE' }])
   })
 })
 
 describe('getPublicArticleBySlugForLocale', () => {
   it('returns the base article for the default locale', async () => {
-    mockGetPublicArticleBySlug.mockResolvedValue({ id: 'kb_article_1', title: 'Invoices' })
+    mockGetPublicArticleBySlug.mockResolvedValue({ id: 'article_1', title: 'Invoices' })
     const result = await getPublicArticleBySlugForLocale('invoices', 'en')
-    expect(result).toEqual({ id: 'kb_article_1', title: 'Invoices' })
+    expect(result).toEqual({ id: 'article_1', title: 'Invoices' })
   })
 
   it('throws when the article has no published translation in that locale', async () => {
-    mockGetPublicArticleBySlug.mockResolvedValue({ id: 'kb_article_1', title: 'Invoices' })
+    mockGetPublicArticleBySlug.mockResolvedValue({ id: 'article_1', title: 'Invoices' })
     mockGetPublishedArticleTranslation.mockResolvedValue(null)
 
     await expect(getPublicArticleBySlugForLocale('invoices', 'de')).rejects.toThrow(/translation/i)
@@ -228,7 +228,7 @@ describe('getPublicArticleBySlugForLocale', () => {
 
   it('overlays translated content, falling back to base contentJson when the translation has none', async () => {
     mockGetPublicArticleBySlug.mockResolvedValue({
-      id: 'kb_article_1' as KbArticleId,
+      id: 'article_1' as KbArticleId,
       title: 'Invoices',
       description: 'EN',
       content: 'en content',

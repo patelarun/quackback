@@ -1,5 +1,11 @@
-import { useQuery } from '@tanstack/react-query'
-import { billingQueries } from '@/lib/client/queries/billing'
+import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import {
+  beginPlanDowngradeFn,
+  billingQueries,
+  cancelPlanDowngradeFn,
+} from '@/lib/client/queries/billing'
+import { checkoutPath, isPaidPlanId, type BillingPeriod } from '@/lib/shared/billing/checkout-path'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -10,37 +16,103 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import type { PlanDowngradeIssue } from '@/lib/shared/billing/plan-downgrade'
 
-export function FreeDowngradeDialog(props: {
+export type PlanDowngradeCheckout = {
+  period: BillingPeriod
+  branding?: boolean
+}
+
+export function PlanDowngradeDialog(props: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  planId: string
+  planName: string
+  checkout?: PlanDowngradeCheckout
+  /** The way out. An ended trial has no current plan to keep, so it goes back to the plans. */
+  cancelLabel?: string
 }) {
-  const preview = useQuery({
-    ...billingQueries.freeDowngradePreview(),
-    enabled: props.open,
-  })
-  const issues = preview.data?.issues ?? []
-  const features = preview.data?.featuresDisabled ?? []
+  const queryClient = useQueryClient()
+  const [issues, setIssues] = useState<PlanDowngradeIssue[]>([])
+  const [features, setFeatures] = useState<string[]>([])
+  const [resolvedName, setResolvedName] = useState(props.planName)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const blocked = issues.length > 0
 
+  useEffect(() => {
+    if (!props.open) return
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    void beginPlanDowngradeFn({ data: { planId: props.planId } })
+      .then((preview) => {
+        if (cancelled) return
+        setIssues(preview.issues)
+        setFeatures(preview.featuresDisabled)
+        setResolvedName(preview.planName)
+        void queryClient.invalidateQueries({ queryKey: billingQueries.all })
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : 'Could not check this plan')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [props.open, props.planId, queryClient])
+
+  async function keepCurrentPlan() {
+    await cancelPlanDowngradeFn()
+    await queryClient.invalidateQueries({ queryKey: billingQueries.all })
+    props.onOpenChange(false)
+  }
+
+  // Closing the dialog is not choosing the plan. Opening it records the
+  // downgrade as pending so its issue links keep their pages open; leaving it
+  // by Esc, the close button or the overlay must not leave that lock behind.
+  function handleOpenChange(open: boolean) {
+    if (!open && blocked) {
+      void keepCurrentPlan()
+      return
+    }
+    props.onOpenChange(open)
+  }
+
+  const planName = resolvedName || props.planName
+  const confirmLabel = props.planId === 'free' ? 'Switch to Free' : `Continue to ${planName}`
+
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+    <Dialog open={props.open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Action required before downgrading</DialogTitle>
+          <DialogTitle>Switch to {planName}</DialogTitle>
           <DialogDescription>
-            Please resolve the following issues before downgrading to the Free plan.
+            {blocked
+              ? `Resolve these first: ${planName} applies its own limits.`
+              : `Check what changes on ${planName}, then confirm.`}
           </DialogDescription>
         </DialogHeader>
 
-        <Alert>
-          <AlertDescription>
-            Downgrading to the Free plan will remove access to paid features.
-          </AlertDescription>
-        </Alert>
+        {blocked ? (
+          <Alert>
+            <AlertDescription>
+              Switching to {planName} will apply that plan's quotas. Delete extra resources first.
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
-        {preview.isLoading ? (
-          <p className="text-sm text-muted-foreground">Checking this workspace against Free…</p>
+        {loading ? (
+          <p className="text-sm text-muted-foreground">
+            Checking this workspace against {planName}…
+          </p>
+        ) : error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
         ) : blocked ? (
           <div className="space-y-2">
             <p className="text-sm font-medium">Issues to resolve ({issues.length}):</p>
@@ -56,7 +128,7 @@ export function FreeDowngradeDialog(props: {
             </ul>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">This workspace fits the Free plan.</p>
+          <p className="text-sm text-muted-foreground">This workspace fits the {planName} plan.</p>
         )}
 
         {features.length > 0 ? (
@@ -65,7 +137,7 @@ export function FreeDowngradeDialog(props: {
             <ul className="space-y-2 rounded-xl border border-border px-4 py-3">
               {features.map((line) => (
                 <li key={line} className="flex gap-2 text-sm text-muted-foreground">
-                  <span className="mt-1 size-1.5 shrink-0 rounded-full bg-amber-400" />
+                  <span className="mt-1 size-1.5 shrink-0 rounded-full bg-warning" />
                   {line}
                 </li>
               ))}
@@ -74,24 +146,51 @@ export function FreeDowngradeDialog(props: {
         ) : null}
 
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-            Keep features
+          <Button type="button" variant="outline" onClick={() => void keepCurrentPlan()}>
+            {props.cancelLabel ?? 'Keep current plan'}
           </Button>
-          {blocked ? (
+          {blocked || loading || error ? (
             <Button type="button" disabled>
-              Resolve issues first
+              {loading ? 'Checking…' : error ? `Switch to ${planName}` : 'Resolve issues first'}
             </Button>
-          ) : (
+          ) : props.planId === 'free' ? (
             <form method="post" action="/api/billing/session">
               <input type="hidden" name="action" value="downgrade" />
               <input type="hidden" name="planId" value="free" />
               <Button type="submit" variant="destructive">
-                Switch to Free
+                {confirmLabel}
               </Button>
             </form>
+          ) : props.checkout && isPaidPlanId(props.planId) ? (
+            <form method="post" action="/api/billing/session">
+              <input type="hidden" name="action" value="checkout" />
+              <input type="hidden" name="planId" value={props.planId} />
+              <input type="hidden" name="billingPeriod" value={props.checkout.period} />
+              <input type="hidden" name="quantity" value="1" />
+              {props.checkout.branding ? (
+                <input type="hidden" name="brandingRemoval" value="true" />
+              ) : null}
+              <Button type="submit">{confirmLabel}</Button>
+            </form>
+          ) : isPaidPlanId(props.planId) ? (
+            <Button type="button" asChild>
+              <a href={checkoutPath({ plan: props.planId })}>{confirmLabel}</a>
+            </Button>
+          ) : (
+            <Button type="button" disabled>
+              {confirmLabel}
+            </Button>
           )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
+}
+
+export function FreeDowngradeDialog(props: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  cancelLabel?: string
+}) {
+  return <PlanDowngradeDialog {...props} planId="free" planName="Free" />
 }

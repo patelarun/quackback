@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { withApiKeyAuth } from '@/lib/server/domains/api/auth'
+import { serviceActorFromApiAuth } from '@/lib/server/domains/api/service-actor'
 import { successResponse, handleDomainError } from '@/lib/server/domains/api/responses'
 import { parseTypeId } from '@/lib/server/domains/api/validation'
 import { PERMISSIONS } from '@/lib/shared/permissions'
@@ -19,20 +20,26 @@ export const Route = createFileRoute('/api/v1/tickets/$ticketId/messages')({
        *  Keyset scrollback via ?before=<message id>; the page size is fixed. */
       GET: async ({ request, params }) => {
         try {
-          await withApiKeyAuth(request, { permission: PERMISSIONS.TICKET_VIEW })
+          const auth = await withApiKeyAuth(request, { permission: PERMISSIONS.TICKET_VIEW })
           const ticketId = parseTypeId<TicketId>(params.ticketId, 'ticket', 'ticket ID')
 
           const url = new URL(request.url)
           const before = url.searchParams.get('before') ?? undefined
           const includeInternal = url.searchParams.get('includeInternal') === 'true'
 
-          const { loadTicketOr404 } = await import('@/lib/server/domains/tickets/ticket.service')
+          const { assertTicketVisible } =
+            await import('@/lib/server/domains/tickets/ticket.service')
           const { listTicketMessages } =
             await import('@/lib/server/domains/tickets/ticket-message.service')
 
-          // 404 if the ticket doesn't exist (or is soft-deleted) before listing.
-          await loadTicketOr404(ticketId)
-          const result = await listTicketMessages(ticketId, { before, includeInternal })
+          // 404 if the ticket doesn't exist, is soft-deleted, or is outside what
+          // the key's creator can see, before listing.
+          await assertTicketVisible(ticketId, serviceActorFromApiAuth(auth))
+          const result = await listTicketMessages(ticketId, {
+            before,
+            includeInternal,
+            preferAccountName: true,
+          })
 
           // The page is oldest-first; the cursor for the next (older) page is the
           // oldest message loaded. No more pages -> null cursor.

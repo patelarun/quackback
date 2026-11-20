@@ -1,4 +1,5 @@
 import { db, settings } from '@/lib/server/db'
+import { logger } from '@/lib/server/logger'
 import { WorkspaceKeyedCache } from '@/lib/server/workspaces/workspace-keyed'
 import { OSS_TIER_LIMITS, type TierLimits } from './tier-limits.types'
 import {
@@ -7,10 +8,45 @@ import {
   type BillingProjection,
   type ProjectedLimits,
 } from './cloud/billing-projection'
-import type { PlanId } from './cloud/cloud.types'
+import { canonicalPlanId, isPlanId, type PlanId } from './cloud/cloud.types'
+
+const log = logger.child({ component: 'tier-limits-service' })
 
 type StoredTierLimits = Partial<Omit<TierLimits, 'features'>> & {
   features?: Partial<TierLimits['features']>
+}
+
+/**
+ * Parse stored `tier_limits` JSON, tolerating corruption. Absent is the
+ * documented "no row" state (self-hosters get {@link OSS_TIER_LIMITS};
+ * cloud workspaces get the signed projection's floor — see
+ * {@link resolveEffectiveTierLimits}). Unparseable or non-object JSON is
+ * corrupt data: logged once so it can be found and repaired, and treated
+ * the same as "no row" rather than throwing on every tier-limit check.
+ */
+function parseStoredTierLimits(raw: string | null | undefined): StoredTierLimits | null {
+  if (!raw) return null
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    log.error(
+      { err, column: 'tier_limits' },
+      'unreadable tier_limits JSON, treating as no stored row'
+    )
+    return null
+  }
+
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    log.error(
+      { column: 'tier_limits', valueType: Array.isArray(parsed) ? 'array' : typeof parsed },
+      'tier_limits JSON was not an object, treating as no stored row'
+    )
+    return null
+  }
+
+  return parsed as StoredTierLimits
 }
 
 export function mergeTierLimits(stored: StoredTierLimits | null): TierLimits {
@@ -35,40 +71,53 @@ const CLOSED_CLOUD_FEATURES: TierLimits['features'] = {
   customColors: false,
   customCss: false,
   integrations: false,
+  visitorAnalytics: false,
 }
 
 /**
  * Feature flags that are not entitlements. Must match CP `definitions.ts`
  * for the same plan. Copied from `effectivePlan` because the projection
  * entitlements map does not carry these keys.
+ *
+ * `visitorAnalytics` is the exception to the CP-match rule: the control plane
+ * does not define it. Every plan includes it, so a cloud workspace keeps
+ * counting unless an operator tier-limits row switches it off. Changing a
+ * plan's grant here is the one place that controls it.
  */
 const PLAN_ONLY_FEATURES: Record<
   PlanId,
-  Pick<TierLimits['features'], 'analyticsExports' | 'customColors' | 'customCss' | 'integrations'>
+  Pick<
+    TierLimits['features'],
+    'analyticsExports' | 'customColors' | 'customCss' | 'integrations' | 'visitorAnalytics'
+  >
 > = {
   free: {
     analyticsExports: false,
     customColors: true,
     customCss: false,
     integrations: false,
+    visitorAnalytics: true,
   },
-  growth: {
+  pro: {
     analyticsExports: false,
     customColors: true,
     customCss: false,
     integrations: false,
+    visitorAnalytics: true,
   },
-  pro: {
+  business: {
     analyticsExports: true,
     customColors: true,
     customCss: true,
     integrations: true,
+    visitorAnalytics: true,
   },
-  scale: {
+  enterprise: {
     analyticsExports: true,
     customColors: true,
     customCss: true,
     integrations: true,
+    visitorAnalytics: true,
   },
 }
 
@@ -83,6 +132,9 @@ export function cloudProjectionFloor(limits: ProjectedLimits): TierLimits {
     maxSendingDomains: limits.maxSendingDomains,
     aiTokensPerMonth: limits.aiTokensPerMonth,
     emailsPerMonth: limits.emailsPerMonth,
+    maxInboundEmailAddresses: limits.maxInboundEmailAddresses,
+    maxHelpCenterLocales: limits.maxHelpCenterLocales,
+    maxStatusSubscribers: limits.maxStatusSubscribers,
     apiRequestsPerMonth: limits.apiRequestsPerMonth,
     apiRequestsPerMinute: limits.apiRequestsPerMinute,
     features: { ...CLOSED_CLOUD_FEATURES },
@@ -94,7 +146,8 @@ function featuresFromProjection(projection: BillingProjection, now: Date): TierL
     projection.planLimitsExpireAt !== null &&
     now.getTime() >= Date.parse(projection.planLimitsExpireAt)
   const entitlements = expired ? {} : projection.entitlements
-  const planId: PlanId = expired ? 'free' : projection.effectivePlan
+  const resolved = expired ? 'free' : canonicalPlanId(projection.effectivePlan)
+  const planId: PlanId = isPlanId(resolved) ? resolved : 'free'
   return {
     ...CLOSED_CLOUD_FEATURES,
     ...PLAN_ONLY_FEATURES[planId],
@@ -110,7 +163,7 @@ function featuresFromProjection(projection: BillingProjection, now: Date): TierL
  *
  * No row + cloud off (no projection) stays OSS unlimited. No row + a
  * projection must not inherit that unlimited default — otherwise every
- * cloud Free/Growth workspace is uncapped.
+ * cloud Free/Pro workspace is uncapped.
  */
 export function resolveEffectiveTierLimits(
   stored: StoredTierLimits | null,
@@ -156,7 +209,7 @@ export async function getTierLimits(now = new Date()): Promise<TierLimits> {
       .from(settings)
       .limit(1)
     const raw = rows[0]?.tierLimits
-    const stored: StoredTierLimits | null = raw ? (JSON.parse(raw) as StoredTierLimits) : null
+    const stored = parseStoredTierLimits(raw)
     const rawProjection = rows[0]?.cloud?.projection
     cached = {
       stored,

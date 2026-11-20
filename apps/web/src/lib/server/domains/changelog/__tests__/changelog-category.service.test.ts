@@ -63,7 +63,7 @@ vi.mock('@/lib/server/db', async (importOriginal) => ({
 beforeEach(() => {
   vi.clearAllMocks()
   mockCategoryFindFirst.mockResolvedValue(undefined)
-  mockSelectFrom.mockResolvedValue([{ maxPosition: -1 }])
+  mockSelectFrom.mockResolvedValue([{ max: -1 }])
   mockDeleteWhere.mockReturnValue({
     returning: () => Promise.resolve([{ id: 'changelog_category_01x' }]),
   })
@@ -72,7 +72,7 @@ beforeEach(() => {
 describe('createChangelogCategory', () => {
   it('creates a category with the next position and defaults', async () => {
     const { createChangelogCategory } = await import('../changelog-category.service')
-    mockSelectFrom.mockResolvedValueOnce([{ maxPosition: 2 }])
+    mockSelectFrom.mockResolvedValueOnce([{ max: 2 }])
 
     const category = await createChangelogCategory({ name: 'Beta', color: '#123456' })
 
