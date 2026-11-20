@@ -88,7 +88,8 @@ describe('listFlaggedMessages', () => {
         conversationId: 'conversation_1',
         content: 'Help please',
         senderType: 'visitor',
-        authorName: null,
+        authorAccountName: null,
+        authorPublicName: null,
         visitorPrincipalId: 'principal_visitor',
         flaggedAt: new Date('2026-07-01T00:00:00.000Z'),
       },
@@ -111,7 +112,8 @@ describe('listFlaggedMessages', () => {
         ticketId: 'ticket_1',
         content: 'Cannot log in',
         senderType: 'agent',
-        authorName: 'Agent Smith',
+        authorAccountName: 'Agent Smith',
+        authorPublicName: 'Quiet Otter',
         ticketTitle: 'Cannot log in',
         ticketNumber: 1,
         flaggedAt: new Date('2026-07-02T00:00:00.000Z'),
@@ -137,7 +139,8 @@ describe('listFlaggedMessages', () => {
         conversationId: 'conversation_1',
         content: 'older',
         senderType: 'visitor',
-        authorName: null,
+        authorAccountName: null,
+        authorPublicName: null,
         visitorPrincipalId: 'principal_visitor',
         flaggedAt: new Date('2026-07-01T00:00:00.000Z'),
       },
@@ -148,7 +151,8 @@ describe('listFlaggedMessages', () => {
         ticketId: 'ticket_1',
         content: 'newer',
         senderType: 'agent',
-        authorName: 'Agent Smith',
+        authorAccountName: 'Agent Smith',
+        authorPublicName: 'Quiet Otter',
         ticketTitle: 'Ticket',
         ticketNumber: 1,
         flaggedAt: new Date('2026-07-03T00:00:00.000Z'),
@@ -159,5 +163,32 @@ describe('listFlaggedMessages', () => {
       'conversation_msg_newer',
       'conversation_msg_older',
     ])
+  })
+})
+
+describe('listFlaggedMessages — assistant display name', () => {
+  const flaggedRow = (over: Record<string, unknown>) => ({
+    messageId: 'conversation_msg_2',
+    conversationId: 'conversation_1',
+    content: 'Here is how',
+    senderType: 'agent',
+    authorAccountName: null,
+    authorPublicName: 'Quinn',
+    authorIsAssistant: false,
+    visitorPrincipalId: 'principal_visitor',
+    flaggedAt: new Date('2026-07-01T00:00:00.000Z'),
+    ...over,
+  })
+
+  it('shows the product name for an assistant-authored flag stored under the former default name', async () => {
+    conversationRows = [flaggedRow({ authorIsAssistant: true })]
+    const [flag] = await listFlaggedMessages(agent)
+    expect(flag.authorName).toBe('Quackback AI')
+  })
+
+  it('keeps the public name of a teammate who has the same name', async () => {
+    conversationRows = [flaggedRow({ authorIsAssistant: false })]
+    const [flag] = await listFlaggedMessages(agent)
+    expect(flag.authorName).toBe('Quinn')
   })
 })

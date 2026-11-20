@@ -1,7 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type DragEvent,
+} from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useIntl } from 'react-intl'
 import { toast } from 'sonner'
-import { XMarkIcon } from '@heroicons/react/24/solid'
+import { PaperClipIcon, XMarkIcon } from '@heroicons/react/24/solid'
 import type { JSONContent } from '@tiptap/react'
 import type { ConversationId, PrincipalId, TicketId, TicketTypeId } from '@quackback/ids'
 import type { TicketType, TiptapContent } from '@/lib/shared/db-types'
@@ -20,8 +30,10 @@ import { RichTextEditor } from '@/components/ui/rich-text-editor'
 import { TicketFormFields } from '@/components/shared/ticket-form-fields'
 import { useTicketIntakeForm } from '@/components/shared/use-ticket-intake-form'
 import { CONVERSATION_EDITOR_FEATURES } from '@/components/conversation/conversation-editor-features'
+import { ComposerAttachmentTray } from '@/components/shared/composer-attachment-tray'
 import { isEmptyTiptapDoc } from '@/lib/shared/utils/is-empty-tiptap-doc'
-import { useImageUpload } from '@/lib/client/hooks/use-image-upload'
+import { useAgentFileUpload } from '@/lib/client/hooks/use-file-upload'
+import { useConversationComposerAttachments } from '@/lib/client/hooks/use-conversation-composer-attachments'
 import {
   Dialog,
   DialogContent,
@@ -121,7 +133,7 @@ function preselectedType(candidates: TicketTypeDTO[]): TicketTypeDTO | null {
  * failed/flaky completion → the quiet fallback: the plain Phase-4 form
  * unchanged, never half-filled.
  */
-export function CreateTicketDialog({
+export const CreateTicketDialog = memo(function CreateTicketDialog({
   open,
   onOpenChange,
   onCreated,
@@ -130,6 +142,7 @@ export function CreateTicketDialog({
   defaultRequester,
   onChanged,
 }: CreateTicketDialogProps) {
+  const intl = useIntl()
   const fromConversation = !!conversationId
   const [type, setType] = useState<TicketType>('customer')
   const [title, setTitle] = useState('')
@@ -206,6 +219,7 @@ export function CreateTicketDialog({
       setTitle(fromConversation ? (defaultTitle ?? '') : '')
       setDescriptionJson(undefined)
       setDescriptionMarkdown('')
+      clearAttachments()
       setRequester(fromConversation ? (defaultRequester ?? null) : null)
       setFieldValues({})
       setFieldErrors({})
@@ -226,9 +240,40 @@ export function CreateTicketDialog({
   }, [open, candidates, selectedTypeId])
 
   const create = useCreateTicket()
-  const { upload: uploadImage } = useImageUpload({ prefix: 'chat-images' })
+  const { upload } = useAgentFileUpload()
+  const {
+    items,
+    attachments,
+    addFiles,
+    remove: removeAttachment,
+    retry: retryAttachment,
+    clear: clearAttachments,
+    uploading,
+  } = useConversationComposerAttachments(upload)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Paste still works for an image from the clipboard; drop/paste now accept
+  // any file, same as the paperclip picker.
+  const handleComposerPaste = useCallback(
+    (e: ClipboardEvent<HTMLDivElement>) => {
+      const files = Array.from(e.clipboardData?.files ?? [])
+      if (files.length === 0) return
+      e.preventDefault()
+      void addFiles(files)
+    },
+    [addFiles]
+  )
+  const handleComposerDrop = useCallback(
+    (e: DragEvent<HTMLDivElement>) => {
+      const files = Array.from(e.dataTransfer?.files ?? [])
+      if (files.length === 0) return
+      e.preventDefault()
+      void addFiles(files)
+    },
+    [addFiles]
+  )
   const [linking, setLinking] = useState(false)
-  const canCreate = title.trim().length > 0 && !create.isPending && !linking
+  const canCreate = title.trim().length > 0 && !create.isPending && !linking && !uploading
 
   /** Type swap: change the field set and drop the old type's answers (the
    *  retype rule protects STORED answers, not a draft's stale keys). Any
@@ -260,7 +305,7 @@ export function CreateTicketDialog({
         // The quiet fallback: retire the affordance for this session and
         // leave the plain Phase-4 form unchanged.
         setAutoFillHidden(true)
-        toast.info('AI suggestions are unavailable — the form is unchanged.')
+        toast.info('AI suggestions are unavailable. The form is unchanged.')
         return
       }
       // Snapshot the pre-suggestion form for "Undo suggestions", then apply.
@@ -279,7 +324,7 @@ export function CreateTicketDialog({
     } catch {
       // An unexpected failure (network, auth): the form stays unchanged and
       // the button stays (a transient error may succeed on retry).
-      toast.info('AI suggestions are unavailable — the form is unchanged.')
+      toast.info('AI suggestions are unavailable. The form is unchanged.')
     } finally {
       setAutoFillLoading(false)
     }
@@ -325,6 +370,7 @@ export function CreateTicketDialog({
         descriptionJson: isEmptyTiptapDoc(descriptionJson as TiptapContent | undefined)
           ? null
           : (descriptionJson as TiptapContent),
+        attachments: attachments.length > 0 ? attachments : undefined,
         requesterPrincipalId: requester?.principalId as PrincipalId | undefined,
         customAttributes,
         // Lets the create inherit this conversation's assignee (born owned by
@@ -343,10 +389,19 @@ export function CreateTicketDialog({
               // The ticket itself was created successfully — a link failure
               // (e.g. this conversation already has one) is a secondary,
               // recoverable problem, not a reason to hide the new ticket.
+              const testLinkConflict =
+                (error as { code?: string } | null)?.code === 'TEST_DATA_LINK_CONFLICT' ||
+                (error instanceof Error &&
+                  error.message === 'Test and real conversations need separate tickets.')
               toast.warning(
-                error instanceof Error
-                  ? `Ticket created, but couldn't link it: ${error.message}`
-                  : "Ticket created, but couldn't link it to this conversation"
+                testLinkConflict
+                  ? intl.formatMessage({
+                      id: 'support.ticket.createDialog.testDataLinkConflict',
+                      defaultMessage: 'Test and real conversations need separate tickets.',
+                    })
+                  : error instanceof Error
+                    ? `Ticket created, but couldn't link it: ${error.message}`
+                    : "Ticket created, but couldn't link it to this conversation"
               )
             } finally {
               setLinking(false)
@@ -366,7 +421,7 @@ export function CreateTicketDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
             {fromConversation ? 'Create ticket' : 'New ticket'}
@@ -461,17 +516,42 @@ export function CreateTicketDialog({
 
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Description</label>
-            <RichTextEditor
-              value={descriptionJson ?? ''}
-              onChange={(json, _html, markdown) => {
-                setDescriptionJson(json)
-                setDescriptionMarkdown(markdown)
-              }}
-              features={CONVERSATION_EDITOR_FEATURES}
-              onImageUpload={uploadImage}
-              minHeight="120px"
-              placeholder="Add details (optional). This opens the ticket thread."
-            />
+            <div onPaste={handleComposerPaste} onDrop={handleComposerDrop}>
+              <RichTextEditor
+                value={descriptionJson ?? ''}
+                onDocumentChange={(document) => {
+                  setDescriptionJson(document.json())
+                  setDescriptionMarkdown(document.markdown())
+                }}
+                features={CONVERSATION_EDITOR_FEATURES}
+                minHeight="120px"
+                placeholder="Add details (optional). This opens the ticket thread."
+              />
+              <ComposerAttachmentTray
+                items={items}
+                onRemove={removeAttachment}
+                onRetry={retryAttachment}
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = e.target.files
+                  if (files && files.length > 0) void addFiles(files)
+                  e.target.value = ''
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="mt-1 flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted disabled:opacity-40 transition-colors"
+                aria-label="Attach files"
+              >
+                <PaperClipIcon className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
           {/* The chosen type's field set — agents fill the full set (customer-
@@ -520,7 +600,7 @@ export function CreateTicketDialog({
               </div>
             ) : fromConversation ? (
               <p className="rounded-md border border-dashed border-border/60 px-3 py-2 text-xs text-muted-foreground">
-                Anonymous visitor — no portal account on file.
+                Anonymous visitor, no portal account on file.
               </p>
             ) : (
               <PortalUserPicker
@@ -554,4 +634,4 @@ export function CreateTicketDialog({
       </DialogContent>
     </Dialog>
   )
-}
+})

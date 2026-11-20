@@ -13,11 +13,10 @@ interface HelpCenterBreadcrumbsProps {
 
 export function HelpCenterBreadcrumbs({ items }: HelpCenterBreadcrumbsProps) {
   const intl = useIntl()
-
   return (
     <nav
       aria-label={intl.formatMessage({
-        id: 'portal.hc.breadcrumbs.label',
+        id: 'portal.hc.breadcrumbs.ariaLabel',
         defaultMessage: 'Breadcrumb',
       })}
       className="flex items-center gap-1.5 text-sm text-muted-foreground"

@@ -79,30 +79,32 @@ describe('macro library — no cloud config', () => {
 })
 
 describe('macro library — plan gate', () => {
-  it('refuses the read on a plan without the entitlement and names the plan that has it', async () => {
-    withCloud(storedCloud('free'))
+  // Every catalogue plan grants AI drafts, so a refusal comes from an explicit
+  // override, and the copy points to support instead of naming a plan.
+  it('refuses the read when the entitlement is withheld', async () => {
+    withCloud(storedCloud('free', { aiDrafts: false }))
 
     const refusal = await listMacros('support').catch((error: unknown) => error)
 
     expect(refusal).toBeInstanceOf(EntitlementRequiredError)
     const error = refusal as EntitlementRequiredError
     expect(error.entitlement).toBe('aiDrafts')
-    expect(error.requiredPlanName).toBe('Growth')
+    expect(error.requiredPlanName).toBeNull()
     expect(error.statusCode).toBe(402)
     expect(error.message).toBe(
-      'AI drafts are a Growth feature. Your workspace is on Free. Upgrade to Growth to enable it.'
+      'AI drafts are not included in your plan. Your workspace is on Free. Contact us to enable it.'
     )
     expect(hoisted.mockSelect).not.toHaveBeenCalled()
   })
 
-  it('refuses the write on a plan without the entitlement', async () => {
-    withCloud(storedCloud('free'))
+  it('refuses the write when the entitlement is withheld', async () => {
+    withCloud(storedCloud('free', { aiDrafts: false }))
     await expect(createMacro(CREATE_INPUT)).rejects.toBeInstanceOf(EntitlementRequiredError)
     expect(hoisted.mockInsert).not.toHaveBeenCalled()
   })
 
   it('lists and creates macros on a plan that includes it', async () => {
-    withCloud(storedCloud('growth'))
+    withCloud(storedCloud('pro'))
     await expect(listMacros('support')).resolves.toEqual([ROW])
     await expect(createMacro(CREATE_INPUT)).resolves.toEqual(ROW)
     expect(hoisted.mockSelect).toHaveBeenCalledOnce()
@@ -113,7 +115,7 @@ describe('macro library — plan gate', () => {
     withCloud(storedCloud('free', { aiDrafts: true }))
     await expect(listMacros()).resolves.toEqual([ROW])
 
-    withCloud(storedCloud('scale', { aiDrafts: false }))
+    withCloud(storedCloud('enterprise', { aiDrafts: false }))
     await expect(listMacros()).rejects.toBeInstanceOf(EntitlementRequiredError)
   })
 })

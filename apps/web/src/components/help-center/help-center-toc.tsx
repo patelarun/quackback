@@ -36,9 +36,10 @@ export function HelpCenterToc({ headings }: HelpCenterTocProps) {
   if (headings.length === 0) return null
 
   return (
-    <aside className="sticky top-14 hidden flex-col py-8 pl-6 pr-6 xl:flex">
-      <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        <FormattedMessage id="portal.hc.toc.onThisPage" defaultMessage="On this page" />
+    // Fork: no fixed height / inner scroll area, so no scrollbar beside the headings.
+    <aside className="sticky top-[var(--portal-header-height,3.5rem)] hidden flex-col py-8 pl-6 pr-6 xl:flex">
+      <p className="mb-3 shrink-0 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        <FormattedMessage id="portal.hc.toc.title" defaultMessage="On this page" />
       </p>
       <nav>
         <ul className="border-l border-border space-y-0.5">

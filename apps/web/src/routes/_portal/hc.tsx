@@ -5,7 +5,8 @@ import { resolveHelpCenterDomainRedirect } from '@/lib/shared/help-center-domain
 import { HelpCenterLocaleSwitcher } from '@/components/help-center/help-center-locale-switcher'
 import { HelpCenterLoginGate } from '@/components/help-center/help-center-login-gate'
 import { parseHcLocalePath } from '@/lib/shared/help-center-url'
-import { isRtlLocale } from '@/lib/shared/i18n'
+import { AreaMessages } from '@/components/shared/area-messages'
+import { FALLBACK_UI_LOCALE, isRtlLocale, seedAreaMessages } from '@/lib/shared/i18n'
 import type { FeatureFlags, HelpCenterConfig } from '@/lib/shared/types/settings'
 import { setPublicDocumentCacheHeaders } from '@/lib/server/functions/public-cache'
 import { evaluateMyHelpCenterAccessFn } from '@/lib/server/functions/help-center-access'
@@ -83,14 +84,24 @@ export const Route = createFileRoute('/_portal/hc')({
     const helpCenterAccess = await evaluateMyHelpCenterAccessFn()
     const loginRequired = !helpCenterAccess.granted
 
+    // Help center strings stay out of the catalog every other page seeds;
+    // these pages read them with the page. Seeded in the customer-facing locale
+    // (fork: visitor choice > workspace default > browser), the same one the
+    // portal's IntlProvider uses — upstream's Accept-Language would mix an
+    // English help center into a Swedish portal.
+    //
     // Never hand a shared cache the login wall, and never let a gated help
     // center be served from an entry cached while it was still public.
-    if (typeof window === 'undefined' && !loginRequired) await setPublicDocumentCacheHeaders()
+    const [messages] = await Promise.all([
+      seedAreaMessages(context.visitorLocale ?? FALLBACK_UI_LOCALE, 'helpCenter'),
+      typeof window === 'undefined' && !loginRequired ? setPublicDocumentCacheHeaders() : undefined,
+    ])
 
     return {
       helpCenterConfig,
       loginRequired,
       workspaceName: settings?.name ?? '',
+      messages,
     }
   },
   head: ({ loaderData }) => {
@@ -111,7 +122,7 @@ function normalizeHelpCenterPath(pathname: string): string {
 }
 
 function HelpCenterLayoutRoute() {
-  const { helpCenterConfig, loginRequired, workspaceName } = Route.useLoaderData()
+  const { helpCenterConfig, loginRequired, workspaceName, messages } = Route.useLoaderData()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const additionalLocales = helpCenterConfig?.locales?.additional ?? []
   const defaultLocale = helpCenterConfig?.locales?.default ?? 'en'
@@ -125,24 +136,32 @@ function HelpCenterLayoutRoute() {
   // switcher goes with it — which locale the articles are in is not a
   // question worth answering to someone who cannot read them.
   if (loginRequired) {
-    return <HelpCenterLoginGate workspaceName={workspaceName} />
+    // Inside AreaMessages too: the gate's `portal.hc.gate.*` strings are part of
+    // the helpCenter area, which the portal-wide catalog no longer carries.
+    return (
+      <AreaMessages area="helpCenter" messages={messages}>
+        <HelpCenterLoginGate workspaceName={workspaceName} />
+      </AreaMessages>
+    )
   }
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col" dir={isRtlLocale(locale) ? 'rtl' : 'ltr'}>
-      {additionalLocales.length > 0 && (
-        <div className="flex justify-end px-4 py-2 sm:px-6">
-          <HelpCenterLocaleSwitcher
-            currentLocale={locale}
-            defaultLocale={defaultLocale}
-            additionalLocales={additionalLocales}
-            canonicalPath={canonicalPath}
-          />
+    <AreaMessages area="helpCenter" messages={messages}>
+      <div className="flex flex-1 min-h-0 flex-col" dir={isRtlLocale(locale) ? 'rtl' : 'ltr'}>
+        {additionalLocales.length > 0 && (
+          <div className="flex justify-end px-4 py-2 sm:px-6">
+            <HelpCenterLocaleSwitcher
+              currentLocale={locale}
+              defaultLocale={defaultLocale}
+              additionalLocales={additionalLocales}
+              canonicalPath={canonicalPath}
+            />
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <Outlet />
         </div>
-      )}
-      <div className="flex-1 min-w-0">
-        <Outlet />
       </div>
-    </div>
+    </AreaMessages>
   )
 }

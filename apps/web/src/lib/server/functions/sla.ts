@@ -296,7 +296,7 @@ export const removeConversationSlaFn = createServerFn({ method: 'POST' })
         await import('@/lib/server/domains/conversation/conversation.query')
       const { publishConversationUpdate } =
         await import('@/lib/server/realtime/conversation-channels')
-      publishConversationUpdate(row.id, await conversationToDTO(row, 'agent'))
+      await publishConversationUpdate(row.id, await conversationToDTO(row, 'agent'))
     }
     return { ok: true, removed: !!row }
   })

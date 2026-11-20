@@ -1,3 +1,4 @@
+import { DEFAULT_WORKSPACE_ASSISTANT } from '@/lib/shared/assistant/config'
 import { describe, expect, it } from 'vitest'
 import type { StoredAssistantConfig } from '@/lib/shared/db-types'
 import {
@@ -16,6 +17,7 @@ import {
   DEFAULT_ASSISTANT_CONFIG,
   assistantConfigSchema,
   assistantRoleSchema,
+  displayAssistantName,
   normalizeAssistantConfig,
   normalizeAssistantText,
   roleToAgent,
@@ -58,12 +60,13 @@ const _assistantConfigTwinsAgree: _AssistantConfigTwinsAgree = true
 describe('assistantConfigSchema', () => {
   it('accepts and preserves the V3 default', () => {
     expect(assistantConfigSchema.parse(DEFAULT_ASSISTANT_CONFIG)).toEqual({
-      version: 3,
+      version: 4,
       identity: {
-        name: 'Quinn',
+        name: 'Quackback AI',
         avatarUrl: null,
       },
       agents: {
+        workspace: structuredClone(DEFAULT_WORKSPACE_ASSISTANT),
         agent: {
           voice: {
             tone: 'balanced',
@@ -238,6 +241,7 @@ describe('assistant configuration normalization', () => {
     expect(normalizeAssistantConfig(input)).toMatchObject({
       identity: { name: 'Quinn وكيل' },
       agents: {
+        workspace: structuredClone(DEFAULT_WORKSPACE_ASSISTANT),
         agent: {
           voice: {
             additionalInstructions: 'Use café ☕.\nاكتب بالعربية.\nכתוב בעברית.',
@@ -377,6 +381,13 @@ describe('assistant role catalogue', () => {
 })
 
 describe('roleToAgent', () => {
+  it('uses the existing Copilot configuration for workspace chat while preserving Slack', () => {
+    expect(roleToAgent('workspace_assistant', 'workspace')).toBe('copilot')
+    expect(roleToAgent('workspace_assistant', 'slack')).toBe('workspace')
+    expect(roleToAgent('workspace_assistant')).toBe('workspace')
+    expect(roleToAgent('copilot_qa', 'copilot')).toBe('copilot')
+    expect(roleToAgent('customer_support', 'widget')).toBe('agent')
+  })
   it('maps customer-facing roles to the Agent and copilot_qa to the Copilot (D9)', () => {
     expect(roleToAgent('customer_support')).toBe('agent')
     expect(roleToAgent('copilot_qa')).toBe('copilot')
@@ -421,5 +432,20 @@ describe('v3 per-agent sub-config', () => {
     const missingCapability = structuredClone(DEFAULT_ASSISTANT_CONFIG)
     delete (missingCapability.agents.copilot.capabilities as { qa?: boolean }).qa
     expect(assistantConfigSchema.safeParse(missingCapability).success).toBe(false)
+  })
+})
+
+describe('assistant display name fallback', () => {
+  it('maps the former default name to the product name and keeps any other name', () => {
+    expect(displayAssistantName('Quinn')).toBe('Quackback AI')
+    expect(displayAssistantName(' Quinn ')).toBe('Quackback AI')
+    expect(displayAssistantName('Quackback AI')).toBe('Quackback AI')
+    expect(displayAssistantName('Quinn Two')).toBe('Quinn Two')
+  })
+
+  it('applies to a stored config when it is parsed and when it is normalized', () => {
+    const stored = { ...DEFAULT_ASSISTANT_CONFIG, identity: { name: 'Quinn', avatarUrl: null } }
+    expect(assistantConfigSchema.parse(stored).identity.name).toBe('Quackback AI')
+    expect(normalizeAssistantConfig(stored).identity.name).toBe('Quackback AI')
   })
 })

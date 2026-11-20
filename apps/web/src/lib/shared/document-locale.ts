@@ -8,7 +8,21 @@ const PORTAL_LAYOUT_ROUTE_ID = '/_portal'
 // from their first paint. Everything NOT in this set and NOT under the portal
 // layout renders hard-coded English: the admin app, onboarding, and the auth
 // utility pages like /auth/two-factor and /admin/login.
-const LOCALIZED_ROUTE_IDS = new Set(['/auth/recovery', '/auth/reset-password', '/widget'])
+const LOCALIZED_ROUTE_IDS = new Set([
+  '/auth/recovery',
+  '/auth/reset-password',
+  '/widget',
+  '/unsubscribe',
+  // The AI & Automation pages under settings. The settings layout and the other
+  // settings pages stay English.
+  '/admin/settings/agent',
+  '/admin/settings/copilot',
+  '/admin/settings/skills',
+  '/admin/settings/connectors',
+  '/admin/settings/connectors_/$connectorId',
+  '/admin/settings/workflows',
+  '/admin/settings_/workflows/$workflowId',
+])
 
 // The one localized area of the admin app. It follows the teammate's browser
 // language, NOT the workspace's customer-facing default: a workspace serving
@@ -33,11 +47,18 @@ export function documentLocale(
   routeIds: readonly string[],
   locales: { customerFacing: SupportedLocale; internal: SupportedLocale }
 ): SupportedLocale {
+  const localizedIds = routeIds.filter((id) => LOCALIZED_ROUTE_IDS.has(id))
+
+  // Upstream localizes a few admin settings pages too. Those are staff tooling,
+  // so they follow the teammate's browser language like /admin/automation, not
+  // the workspace's customer-facing default.
   const isCustomerFacing =
-    routeIds.includes(PORTAL_LAYOUT_ROUTE_ID) || routeIds.some((id) => LOCALIZED_ROUTE_IDS.has(id))
+    routeIds.includes(PORTAL_LAYOUT_ROUTE_ID) || localizedIds.some((id) => !id.startsWith('/admin'))
   if (isCustomerFacing) return locales.customerFacing
 
-  const isInternalLocalized = routeIds.some((id) => id.startsWith(INTERNAL_LOCALIZED_ROUTE_PREFIX))
+  const isInternalLocalized =
+    routeIds.some((id) => id.startsWith(INTERNAL_LOCALIZED_ROUTE_PREFIX)) ||
+    localizedIds.some((id) => id.startsWith('/admin'))
   if (isInternalLocalized) return locales.internal
 
   return FALLBACK_UI_LOCALE

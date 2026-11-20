@@ -10,10 +10,11 @@ import type { PrincipalId } from '@quackback/ids'
 const mockInsertValues = vi.fn()
 const mockFindFirst = vi.fn()
 
-vi.mock('@/lib/server/db', async (importOriginal) => ({
-  // Spread the real db module so tables/operators stay current; override only what this suite drives.
-  ...(await importOriginal<typeof import('@/lib/server/db')>()),
-  db: {
+vi.mock('@/lib/server/db', async (importOriginal) => {
+  // createApiKey writes the principal, key and grant in one transaction; the
+  // fake transaction hands the same fake db to the callback.
+  const fakeDb: Record<string, unknown> = {
+    transaction: (fn: (tx: unknown) => unknown) => fn(fakeDb),
     insert: () => ({
       values: (v: unknown) => {
         mockInsertValues(v)
@@ -39,11 +40,16 @@ vi.mock('@/lib/server/db', async (importOriginal) => ({
       },
     }),
     query: { principal: { findFirst: (...a: unknown[]) => mockFindFirst(...a) } },
-  },
-  eq: vi.fn(),
-  and: vi.fn(),
-  isNull: vi.fn(),
-}))
+  }
+  return {
+    // Spread the real db module so tables/operators stay current; override only what this suite drives.
+    ...(await importOriginal<typeof import('@/lib/server/db')>()),
+    db: fakeDb,
+    eq: vi.fn(),
+    and: vi.fn(),
+    isNull: vi.fn(),
+  }
+})
 
 vi.mock('@/lib/server/domains/principals/principal.service', () => ({
   createServicePrincipal: vi.fn().mockResolvedValue({ id: 'principal_svc' }),
@@ -82,6 +88,20 @@ describe('createApiKey scopes', () => {
       'read:article',
     ])
     expect(result.apiKey.scopes).toEqual(['read:feedback', 'read:article'])
+  })
+
+  it('stores the sibling read when only a write is requested', async () => {
+    const result = await createApiKey({ name: 'k', scopes: ['write:feedback'] }, CREATOR)
+    expect(JSON.parse(mockInsertValues.mock.calls[0][0].scopes)).toEqual([
+      'read:feedback',
+      'write:feedback',
+    ])
+    expect(result.apiKey.scopes).toEqual(['read:feedback', 'write:feedback'])
+  })
+
+  it('does not invent a read:changelog scope', async () => {
+    await createApiKey({ name: 'k', scopes: ['write:changelog'] }, CREATOR)
+    expect(JSON.parse(mockInsertValues.mock.calls[0][0].scopes)).toEqual(['write:changelog'])
   })
 
   it('dedupes repeated scopes', async () => {

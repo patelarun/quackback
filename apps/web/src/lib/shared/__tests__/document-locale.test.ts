@@ -34,6 +34,44 @@ describe('documentLocale', () => {
     expect(documentLocale(['__root__', '/widget'], { customerFacing: 'ar', internal: 'de' })).toBe(
       'ar'
     )
+    expect(
+      documentLocale(['__root__', '/unsubscribe'], { customerFacing: 'ar', internal: 'de' })
+    ).toBe('ar')
+  })
+  it('gives the localized AI & Automation settings pages the teammate locale', () => {
+    // Upstream localizes these; they are staff tooling, so they follow the
+    // teammate's browser language, never the workspace's customer-facing one.
+    for (const id of [
+      '/admin/settings/agent',
+      '/admin/settings/copilot',
+      '/admin/settings/skills',
+      '/admin/settings/connectors',
+      '/admin/settings/connectors_/$connectorId',
+      '/admin/settings/workflows',
+      '/admin/settings_/workflows/$workflowId',
+    ]) {
+      expect(
+        documentLocale(['__root__', '/admin', id], { customerFacing: 'sv', internal: 'de' }),
+        id
+      ).toBe('de')
+    }
+  })
+  it('keeps the other settings pages on the fallback', () => {
+    for (const id of [
+      '/admin/settings',
+      '/admin/settings/general',
+      '/admin/settings/agents',
+      '/admin/settings/integrations',
+      '/admin/settings/widget',
+    ]) {
+      expect(
+        documentLocale(['__root__', '/admin', '/admin/settings', id], {
+          customerFacing: 'sv',
+          internal: 'de',
+        }),
+        id
+      ).toBe('en')
+    }
   })
   it('keeps untranslated auth utility pages on the fallback locale', () => {
     // These render hard-coded English with no IntlProvider — labeling them
@@ -85,9 +123,6 @@ describe('documentLocale', () => {
     expect(documentLocale(['__root__', '/apps'], { customerFacing: 'zh-cn', internal: 'de' })).toBe(
       'en'
     )
-    expect(
-      documentLocale(['__root__', '/unsubscribe'], { customerFacing: 'zh-cn', internal: 'de' })
-    ).toBe('en')
     expect(
       documentLocale(['__root__', '/verify-magic-link'], {
         customerFacing: 'zh-cn',

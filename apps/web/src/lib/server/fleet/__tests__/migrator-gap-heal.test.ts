@@ -59,7 +59,13 @@ import { assessReplaySafety } from '@/lib/server/policy/migration-contract/repla
 // assembly, both gates, the truncation, the executor, the post-run check — is
 // the real code.
 vi.mock('@/lib/server/workspaces/pool-cache', () => ({
-  resolveWorkspacePassword: async () => 'password',
+  resolveWorkspacePassword: async () =>
+    decodeURIComponent(
+      new URL(
+        process.env.DRIFT_CHECK_DATABASE_URL ??
+          'postgresql://postgres:password@localhost:5432/postgres'
+      ).password
+    ),
 }))
 
 /**

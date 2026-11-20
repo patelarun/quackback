@@ -62,7 +62,7 @@ export function HelpCenterLoginGate({ workspaceName }: HelpCenterLoginGateProps)
         <p className="mt-2 text-sm text-muted-foreground">
           <FormattedMessage
             id="portal.hc.gate.description"
-            defaultMessage="{workspaceName} keeps its documentation for signed-in customers. Log in to read it, or create an account — it only takes a moment."
+            defaultMessage="{workspaceName} keeps its documentation for signed-in customers. Log in to read it, or create an account. It only takes a moment."
             values={{ workspaceName }}
           />
         </p>

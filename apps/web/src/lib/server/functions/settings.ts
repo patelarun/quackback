@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { createServerFn } from '@tanstack/react-start'
 import { tiptapContentSchema } from '@/lib/shared/schemas/posts'
 import { SUPPORTED_LOCALES } from '@/lib/shared/i18n'
+import { updateThemeSchema } from '@/lib/shared/schemas/settings'
 // Import types from barrel export (client-safe)
 import {
   DEFAULT_PORTAL_CONFIG,
@@ -117,7 +118,7 @@ function buildAvatarUrl(p: { avatarKey: string | null; avatarUrl: string | null 
 export const fetchTeamMembersAndInvitations = createServerFn({ method: 'GET' }).handler(
   async () => {
     log.debug('fetch team members and invitations')
-    const auth = await requireAuth({ permission: PERMISSIONS.MEMBER_VIEW })
+    await requireAuth({ permission: PERMISSIONS.MEMBER_VIEW })
 
     // Subquery: latest session timestamp per user. Left-joined so
     // a team member with no sessions still appears (lastSignInAt
@@ -243,26 +244,12 @@ export const fetchTeamMembersAndInvitations = createServerFn({ method: 'GET' }).
 
     const { getTierLimits } = await import('@/lib/server/domains/settings/tier-limits.service')
     const { countSeatUsage } = await import('@/lib/server/domains/principals/seat-usage')
-    const { getCloudConfig } = await import('@/lib/server/domains/settings/cloud/cloud.service')
-    const [limits, seats, cloud] = await Promise.all([
-      getTierLimits(),
-      countSeatUsage(),
-      getCloudConfig(),
-    ])
-    const addSeatAvailable =
-      cloud.enabled &&
-      cloud.canManageBilling &&
-      auth.permissions.includes(PERMISSIONS.BILLING_MANAGE) &&
-      cloud.plan != null &&
-      cloud.plan !== 'free' &&
-      !cloud.trialActive &&
-      limits.maxTeamSeats != null
+    const [limits, seats] = await Promise.all([getTierLimits(), countSeatUsage()])
     const seatUsage = {
       used: seats.used,
       members: seats.members,
       pendingInvites: seats.pendingInvites,
       limit: limits.maxTeamSeats,
-      addSeatAvailable,
     }
 
     return { members, avatarMap, formattedInvitations, seatUsage }
@@ -338,10 +325,6 @@ export const fetchUserProfile = createServerFn({ method: 'GET' })
 // ============================================
 // Write Operations
 // ============================================
-
-const updateThemeSchema = z.object({
-  brandingConfig: z.record(z.string(), z.unknown()),
-})
 
 export const updatePortalConfigSchema = z.object({
   features: z
@@ -518,7 +501,7 @@ export const updateAuthConfigFn = createServerFn({ method: 'POST' })
       data.oauth && AUDIT_TRACKED_OAUTH_KEYS.some(({ key }) => key in (data.oauth ?? {}))
     )
     const tracksSso = Boolean(data.ssoOidc)
-    const before = tracksAnyToggle || tracksSso ? await getAuthConfig() : null
+    const before = tracksAnyToggle || tracksSso ? await getAuthConfig('fresh') : null
 
     try {
       // Backstop the unified "keep ≥1 working sign-in method" invariant — a
@@ -526,7 +509,7 @@ export const updateAuthConfigFn = createServerFn({ method: 'POST' })
       // in (the client `isLastMethod` guard covers only the UI). A blocked
       // attempt falls through to the failure audit + re-throw below.
       if (data.oauth) {
-        const current = before ?? (await getAuthConfig())
+        const current = before ?? (await getAuthConfig('fresh'))
         const proposedOauth = {
           ...((current?.oauth ?? {}) as Record<string, boolean | undefined>),
           ...data.oauth,
@@ -759,8 +742,8 @@ export const fetchWidgetConfig = createServerFn({ method: 'GET' }).handler(async
 export const fetchWidgetSecret = createServerFn({ method: 'GET' }).handler(async () => {
   log.debug('fetch widget secret')
   await requireAuth({ permission: PERMISSIONS.SETTINGS_MANAGE })
-  const { getWidgetSecret } = await import('@/lib/server/domains/settings/settings.widget')
-  return await getWidgetSecret()
+  const { ensureWidgetSecret } = await import('@/lib/server/domains/settings/settings.widget')
+  return await ensureWidgetSecret()
 })
 
 const messengerConfigInputSchema = z.object({
@@ -847,6 +830,8 @@ const updateWidgetConfigSchema = z.object({
   position: z.enum(['bottom-right', 'bottom-left']).optional(),
   launcherGreeting: z.string().max(120).optional(),
   launcherLabel: z.string().max(60).optional(),
+  visitorAnalytics: z.boolean().optional(),
+  visitorDeviceTracking: z.boolean().optional(),
   tabs: z
     .object({
       feedback: z.boolean().optional(),
@@ -917,6 +902,14 @@ export const regenerateWidgetSecretFn = createServerFn({ method: 'POST' }).handl
   await requireAuth({ permission: PERMISSIONS.SETTINGS_MANAGE })
   const { regenerateWidgetSecret } = await import('@/lib/server/domains/settings/settings.widget')
   return await regenerateWidgetSecret()
+})
+
+export const mintWidgetInstallCodeFn = createServerFn({ method: 'POST' }).handler(async () => {
+  log.info('mint widget install pairing code')
+  await requireAuth({ permission: PERMISSIONS.SETTINGS_MANAGE })
+  const { mintWidgetInstallCode } =
+    await import('@/lib/server/domains/settings/widget-install-pairing')
+  return await mintWidgetInstallCode()
 })
 
 // ============================================
@@ -1078,7 +1071,8 @@ export const updateDefaultSlaPolicyFn = createServerFn({ method: 'POST' })
 // ============================================
 
 const updateSpamFilterConfigSchema = z.object({
-  trustedSenders: z.array(z.string().max(320)).max(MAX_TRUSTED_SENDERS),
+  trustedSenders: z.array(z.string().max(320)).max(MAX_TRUSTED_SENDERS).optional(),
+  aiClassifier: z.boolean().optional(),
 })
 
 /** The spam filter's trusted-sender list (admin read, for the settings UI). */
@@ -1089,11 +1083,15 @@ export const getSpamFilterConfigFn = createServerFn({ method: 'GET' }).handler(a
   return await getSpamFilterConfig()
 })
 
-/** Replace the trusted-sender list wholesale (add/remove are list rewrites). */
+/** Replace the trusted-sender list wholesale (add/remove are list rewrites)
+ *  and/or switch the AI classifier. */
 export const updateSpamFilterConfigFn = createServerFn({ method: 'POST' })
   .validator(updateSpamFilterConfigSchema)
   .handler(async ({ data }) => {
-    log.info({ trusted_count: data.trustedSenders.length }, 'update spam filter config')
+    log.info(
+      { trusted_count: data.trustedSenders?.length, ai_classifier: data.aiClassifier },
+      'update spam filter config'
+    )
     await requireAuth({ permission: PERMISSIONS.SETTINGS_MANAGE })
     const { updateSpamFilterConfig } = await import('@/lib/server/domains/settings/settings.spam')
     return await updateSpamFilterConfig(data)
@@ -1120,6 +1118,8 @@ export const getEmailChannelStatusFn = createServerFn({ method: 'GET' }).handler
   const { getEmailProvider, getEmailFrom } = await import('@quackback/email')
   const { isEmailInboundConfigured, inboundMintDomain } =
     await import('@/lib/server/domains/conversation/conversation.email-channel')
+  const { customSendingDomainsAvailable } =
+    await import('@/lib/server/domains/channel-accounts/sending-identity')
   let fromAddress: string | null = null
   try {
     fromAddress = getEmailFrom()
@@ -1134,6 +1134,9 @@ export const getEmailChannelStatusFn = createServerFn({ method: 'GET' }).handler
     // naming no single domain resolves to none, so this surface reports the
     // channel unconfigured rather than echoing a string nothing can receive on.
     inboundDomain: inboundMintDomain(),
+    customDomains: customSendingDomainsAvailable()
+      ? ('available' as const)
+      : ('unavailable' as const),
   }
 })
 
@@ -1142,7 +1145,7 @@ export const updateModerationDefaultFn = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     log.info({ require_approval: data.requireApproval }, 'update moderation default')
     const auth = await requireAuth({ permission: PERMISSIONS.SETTINGS_MODERATION })
-    const before = await getPortalConfig()
+    const before = await getPortalConfig('fresh')
     const updated = await updatePortalConfig({ moderationDefault: data })
     await recordAuditEvent({
       event: 'moderation.default.changed',

@@ -54,6 +54,8 @@ import type { EventType } from '@/lib/server/events/types'
 export interface Channel {
   id: string
   name: string
+  /** False when the integration can't post here (e.g. its bot can't see the channel). */
+  canPost?: boolean
 }
 
 export interface NotificationChannel {
@@ -170,7 +172,7 @@ function getBoardSummary(channel: NotificationChannel, boards: Board[]): string 
  * and the grid would silently collapse.
  */
 function tableGridStyle(eventCount: number): CSSProperties {
-  return { gridTemplateColumns: `minmax(0,1fr) ${'5rem '.repeat(eventCount).trim()}` }
+  return { gridTemplateColumns: `minmax(12rem,1fr) ${'5rem '.repeat(eventCount).trim()}` }
 }
 
 // ============================================
@@ -241,6 +243,7 @@ function ChannelPicker<TChannel extends Channel>({
         <Button
           variant="outline"
           role="combobox"
+          aria-label="Channel"
           aria-expanded={open}
           className="w-full justify-between font-normal"
         >
@@ -260,14 +263,7 @@ function ChannelPicker<TChannel extends Channel>({
           <ChevronUpDownIcon className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent
-        className="w-(--radix-popover-trigger-width) p-0"
-        align="start"
-        onOpenAutoFocus={(e) => {
-          e.preventDefault()
-          inputRef.current?.focus()
-        }}
-      >
+      <PopoverContent className="w-(--anchor-width) p-0" align="start" initialFocus={inputRef}>
         <div className="flex items-center gap-2 border-b px-3 py-2">
           <MagnifyingGlassIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
           <input
@@ -295,23 +291,31 @@ function ChannelPicker<TChannel extends Channel>({
               {search ? 'No channels match your search.' : 'No channels available.'}
             </div>
           ) : (
-            filtered.map((channel) => (
-              <button
-                key={channel.id}
-                type="button"
-                className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors ${
-                  channel.id === value ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/50'
-                }`}
-                onClick={() => {
-                  onSelect(channel.id)
-                  setOpen(false)
-                  setSearch('')
-                }}
-              >
-                {renderChannelIcon(channel)}
-                <span className="truncate">{channel.name}</span>
-              </button>
-            ))
+            filtered.map((channel) => {
+              const blocked = channel.canPost === false
+              return (
+                <button
+                  key={channel.id}
+                  type="button"
+                  disabled={blocked}
+                  title={blocked ? 'Give the bot access to this channel, then refresh' : undefined}
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors',
+                    channel.id === value ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/50',
+                    blocked && 'cursor-not-allowed text-muted-foreground hover:bg-transparent'
+                  )}
+                  onClick={() => {
+                    onSelect(channel.id)
+                    setOpen(false)
+                    setSearch('')
+                  }}
+                >
+                  {renderChannelIcon(channel)}
+                  <span className="truncate">{channel.name}</span>
+                  {blocked && <span className="ml-auto shrink-0 text-xs">No access</span>}
+                </button>
+              )
+            })
           )}
         </div>
       </PopoverContent>
@@ -375,7 +379,7 @@ function BoardFilterCombobox({
           <ChevronUpDownIcon className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-(--radix-popover-trigger-width) p-0">
+      <PopoverContent align="start" className="w-(--anchor-width) p-0">
         {open && (
           <Command>
             <CommandInput placeholder="Search boards..." />
@@ -483,6 +487,12 @@ function ChannelRow<TChannel extends Channel>({
     })
   }
 
+  // Closing the confirmation drops a failed attempt so reopening starts clean.
+  const handleConfirmRemoveChange = (open: boolean) => {
+    setConfirmRemove(open)
+    if (!open) removeMutation.reset()
+  }
+
   const handleRemove = () => {
     removeMutation.mutate(
       { integrationId, channelId: channel.channelId },
@@ -505,10 +515,10 @@ function ChannelRow<TChannel extends Channel>({
               }`}
             />
             {renderChannelIcon(channelInfo)}
-            <div className="min-w-0 flex items-center gap-2">
-              <span className="text-sm font-medium truncate">{channelName}</span>
+            <div className="min-w-0 flex flex-col items-start gap-0.5">
+              <span className="max-w-full text-sm font-medium truncate">{channelName}</span>
               {hasFilter && (
-                <span className="text-[11px] text-muted-foreground shrink-0">
+                <span className="max-w-full text-[11px] text-muted-foreground truncate">
                   {getBoardSummary(channel, boards)}
                 </span>
               )}
@@ -524,6 +534,7 @@ function ChannelRow<TChannel extends Channel>({
                 onClick={(e) => e.stopPropagation()}
               >
                 <Checkbox
+                  aria-label={`${event.label} for #${channelName}`}
                   checked={enabled}
                   onCheckedChange={(checked) => handleEventToggle(event.id, checked === true)}
                   disabled={disabled || saving}
@@ -532,6 +543,12 @@ function ChannelRow<TChannel extends Channel>({
             )
           })}
         </div>
+
+        {updateMutation.isError && (
+          <p className="px-4 pb-3 pl-11 text-sm text-destructive">
+            {updateMutation.error.message || "Couldn't save the change. Try again."}
+          </p>
+        )}
 
         {expanded && (
           <div className="border-t border-border/30 bg-muted/5 px-4 pb-4">
@@ -562,7 +579,7 @@ function ChannelRow<TChannel extends Channel>({
         )}
       </div>
 
-      <Dialog open={confirmRemove} onOpenChange={setConfirmRemove}>
+      <Dialog open={confirmRemove} onOpenChange={handleConfirmRemoveChange}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Remove notification channel</DialogTitle>
@@ -571,8 +588,13 @@ function ChannelRow<TChannel extends Channel>({
               this channel.
             </DialogDescription>
           </DialogHeader>
+          {removeMutation.isError && (
+            <p className="text-sm text-destructive">
+              {removeMutation.error.message || "Couldn't remove the channel. Try again."}
+            </p>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmRemove(false)}>
+            <Button variant="outline" onClick={() => handleConfirmRemoveChange(false)}>
               Cancel
             </Button>
             <Button
@@ -606,54 +628,61 @@ function RoutingTable<TChannel extends Channel>({
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   return (
-    <div className="rounded-lg border border-border/50 overflow-hidden">
-      <div
-        className="grid items-end bg-muted/40 border-b border-border/50"
-        style={tableGridStyle(events.length)}
-      >
-        <div className="px-4 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
-          Channel
-        </div>
-        {events.map((event) => (
-          <div
-            key={event.id}
-            className="py-2 text-[11px] font-medium text-muted-foreground text-center leading-tight"
-            title={event.description}
-          >
-            {event.shortLabel}
-          </div>
-        ))}
-      </div>
-
-      {notificationChannels.map((nc, idx) => (
-        <ChannelRow<TChannel>
-          key={nc.channelId}
-          channel={nc}
-          channelInfo={channelInfoList.find((c) => c.id === nc.channelId)}
-          integrationId={integrationId}
-          disabled={disabled}
-          expanded={expandedId === nc.channelId}
-          onToggleExpand={() =>
-            setExpandedId((prev) => (prev === nc.channelId ? null : nc.channelId))
-          }
-          boards={boards}
-          hasBorder={idx < notificationChannels.length - 1 || expandedId === nc.channelId}
-          events={events}
-          renderChannelIcon={renderChannelIcon}
-        />
-      ))}
-
-      {onAddChannel && (
-        <button
-          type="button"
-          className="flex items-center gap-1.5 px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/10 transition-colors w-full border-t border-border/50"
-          onClick={onAddChannel}
-          disabled={disabled}
+    <div
+      className="rounded-lg border border-border/50 overflow-x-auto"
+      role="region"
+      aria-label="Notification channel routing"
+      tabIndex={0}
+    >
+      <div style={{ minWidth: `${12 + events.length * 5}rem` }}>
+        <div
+          className="grid items-end bg-muted/40 border-b border-border/50"
+          style={tableGridStyle(events.length)}
         >
-          <PlusIcon className="h-3.5 w-3.5" />
-          Add channel
-        </button>
-      )}
+          <div className="px-4 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+            Channel
+          </div>
+          {events.map((event) => (
+            <div
+              key={event.id}
+              className="py-2 text-[11px] font-medium text-muted-foreground text-center leading-tight"
+              title={event.description}
+            >
+              {event.shortLabel}
+            </div>
+          ))}
+        </div>
+
+        {notificationChannels.map((nc, idx) => (
+          <ChannelRow<TChannel>
+            key={nc.channelId}
+            channel={nc}
+            channelInfo={channelInfoList.find((c) => c.id === nc.channelId)}
+            integrationId={integrationId}
+            disabled={disabled}
+            expanded={expandedId === nc.channelId}
+            onToggleExpand={() =>
+              setExpandedId((prev) => (prev === nc.channelId ? null : nc.channelId))
+            }
+            boards={boards}
+            hasBorder={idx < notificationChannels.length - 1 || expandedId === nc.channelId}
+            events={events}
+            renderChannelIcon={renderChannelIcon}
+          />
+        ))}
+
+        {onAddChannel && (
+          <button
+            type="button"
+            className="flex items-center gap-1.5 px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/10 transition-colors w-full border-t border-border/50"
+            onClick={onAddChannel}
+            disabled={disabled}
+          >
+            <PlusIcon className="h-3.5 w-3.5" />
+            Add channel
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -680,6 +709,7 @@ function AddChannelDialog<TChannel extends Channel>({
     Object.fromEntries(events.map((e) => [e.id, true]))
   )
   const [boardIds, setBoardIds] = useState<string[] | null>(null)
+  const resetAdd = addMutation.reset
 
   // Reset form state whenever the dialog closes (cancel, X, or save).
   useEffect(() => {
@@ -687,15 +717,20 @@ function AddChannelDialog<TChannel extends Channel>({
       setSelectedChannelId('')
       setSelectedEvents(Object.fromEntries(events.map((e) => [e.id, true])))
       setBoardIds(null)
+      resetAdd()
     }
-  }, [open, events])
+  }, [open, events, resetAdd])
 
   const availableChannels = channels.filter((c) => !existingChannelIds.includes(c.id))
+  // A refresh can mark the picked channel unpostable; treat that as no selection.
+  const channelId = availableChannels.some((c) => c.id === selectedChannelId && c.canPost !== false)
+    ? selectedChannelId
+    : ''
   const allEventsSelected = events.every((e) => selectedEvents[e.id])
   const noEventsSelected = events.every((e) => !selectedEvents[e.id])
 
   const handleSave = () => {
-    if (!selectedChannelId) return
+    if (!channelId) return
     const eventsToSave = Object.entries(selectedEvents)
       .filter(([, enabled]) => enabled)
       .map(([eventType]) => eventType)
@@ -705,7 +740,7 @@ function AddChannelDialog<TChannel extends Channel>({
     addMutation.mutate(
       {
         integrationId,
-        channelId: selectedChannelId,
+        channelId,
         events: eventsToSave,
         boardIds: boardIds ?? undefined,
       },
@@ -728,8 +763,11 @@ function AddChannelDialog<TChannel extends Channel>({
             <Label>Channel</Label>
             <ChannelPicker<TChannel>
               channels={availableChannels}
-              value={selectedChannelId}
-              onSelect={setSelectedChannelId}
+              value={channelId}
+              onSelect={(channelId) => {
+                setSelectedChannelId(channelId)
+                resetAdd()
+              }}
               loading={loadingChannels}
               onRefresh={onRefreshChannels}
               renderChannelIcon={renderChannelIcon}
@@ -765,6 +803,7 @@ function AddChannelDialog<TChannel extends Channel>({
                         [event.id]: checked === true,
                       }))
                     }
+                    data-in-label
                   />
                   {event.label}
                 </label>
@@ -781,6 +820,12 @@ function AddChannelDialog<TChannel extends Channel>({
               disabled={addMutation.isPending}
             />
           </div>
+
+          {addMutation.isError && (
+            <p className="text-sm text-destructive">
+              {addMutation.error.message || "Couldn't add the channel. Try again."}
+            </p>
+          )}
         </div>
 
         <DialogFooter>
@@ -789,7 +834,7 @@ function AddChannelDialog<TChannel extends Channel>({
           </Button>
           <Button
             onClick={handleSave}
-            disabled={!selectedChannelId || noEventsSelected || addMutation.isPending}
+            disabled={!channelId || noEventsSelected || addMutation.isPending}
           >
             {addMutation.isPending ? 'Adding...' : 'Add channel'}
           </Button>

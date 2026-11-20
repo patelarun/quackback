@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   ArrowUturnLeftIcon,
   ChevronDownIcon,
@@ -12,8 +13,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { TimeAgo } from '@/components/ui/time-ago'
 import { REACTION_EMOJIS } from '@/lib/shared/db-types'
 import { ReactionChip } from '@/components/shared/reaction-chip'
-import { addReactionFn, removeReactionFn } from '@/lib/server/functions/comments'
+import { widgetAddReactionFn, widgetRemoveReactionFn } from '@/lib/server/functions/widget/comments'
 import { getWidgetAuthHeaders } from '@/lib/client/widget-auth'
+import { widgetQueryKeys } from '@/lib/client/hooks/use-widget-vote'
+import { useWidgetAuth } from './widget-auth-provider'
 import { cn } from '@/lib/shared/utils'
 import { CommentContent } from '@/components/public/comment-content'
 import { RichTextEditor } from '@/components/ui/rich-text-editor'
@@ -56,7 +59,7 @@ export function WidgetCommentList({
       <p className="text-xs text-muted-foreground/60 text-center py-4">
         <FormattedMessage
           id="widget.commentList.empty"
-          defaultMessage="No comments yet. Be the first to share your thoughts!"
+          defaultMessage="No comments yet. Be the first to share your thoughts."
         />
       </p>
     )
@@ -101,6 +104,8 @@ function WidgetCommentItem({
   onImageUpload,
 }: WidgetCommentItemProps) {
   const intl = useIntl()
+  const { ensureSessionThen, getSessionVersion } = useWidgetAuth()
+  const queryClient = useQueryClient()
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [showReplyForm, setShowReplyForm] = useState(false)
   const [replyText, setReplyText] = useState('')
@@ -134,12 +139,25 @@ function WidgetCommentItem({
     setReactionPending(true)
     try {
       const hasReacted = reactions.some((r) => r.emoji === emoji && r.hasReacted)
-      const fn = hasReacted ? removeReactionFn : addReactionFn
-      const result = await fn({
-        data: { commentId: comment.id, emoji },
-        headers: getWidgetAuthHeaders(),
+      const fn = hasReacted ? widgetRemoveReactionFn : widgetAddReactionFn
+      // Reacting may be the visitor's first write, so there may be no session
+      // yet — mint one (anonymous is fine) or the request goes out with no
+      // Bearer and requireAuth() rejects it silently (GH #464).
+      const versionBefore = getSessionVersion()
+      await ensureSessionThen(async () => {
+        const result = await fn({
+          data: { commentId: comment.id, emoji },
+          headers: getWidgetAuthHeaders(),
+        })
+        setReactions(result.reactions)
       })
-      setReactions(result.reactions)
+      // Minting re-keyed the post-detail query, and that refetch raced this
+      // mutation: if it read before the reaction committed, the sync effect
+      // above would overwrite the result with stale server state. Refetch so
+      // the detail cache reflects the committed reaction.
+      if (getSessionVersion() !== versionBefore) {
+        void queryClient.invalidateQueries({ queryKey: widgetQueryKeys.postDetail.all })
+      }
     } catch (error) {
       console.error('Failed to update reaction:', error)
     } finally {
@@ -375,6 +393,7 @@ function WidgetCommentItem({
                   minHeight="44px"
                   features={COMMENT_EDITOR_FEATURES}
                   onImageUpload={onImageUpload}
+                  onVideoUpload={onImageUpload}
                   disabled={isSubmitting}
                   placeholder={intl.formatMessage(
                     {
@@ -383,9 +402,9 @@ function WidgetCommentItem({
                     },
                     { name: authorName }
                   )}
-                  onChange={(json, _html, markdown) => {
-                    replyJsonRef.current = json as TiptapContent
-                    setReplyText(markdown ?? '')
+                  onDocumentChange={(document) => {
+                    replyJsonRef.current = document.json() as TiptapContent
+                    setReplyText(document.markdown())
                   }}
                 />
               </div>

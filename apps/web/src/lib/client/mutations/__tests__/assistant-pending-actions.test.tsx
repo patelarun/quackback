@@ -62,11 +62,11 @@ describe('useApproveAssistantAction', () => {
     client.setQueryData(conversationKeys.agentThread(CONVERSATION_ID), { seeded: true })
 
     const { result } = renderHook(() => useApproveAssistantAction(), { wrapper: wrapper(client) })
-    result.current.mutate({ pendingActionId: PENDING_ACTION_ID })
+    result.current.mutate({ pendingActionId: PENDING_ACTION_ID, contentHash: 'digest-1' })
 
     await waitFor(() =>
       expect(approveAssistantActionFn).toHaveBeenCalledWith({
-        data: { pendingActionId: PENDING_ACTION_ID },
+        data: { pendingActionId: PENDING_ACTION_ID, contentHash: 'digest-1' },
       })
     )
     await waitFor(() =>
@@ -89,11 +89,11 @@ describe('useRejectAssistantAction', () => {
     const client = new QueryClient()
 
     const { result } = renderHook(() => useRejectAssistantAction(), { wrapper: wrapper(client) })
-    result.current.mutate({ pendingActionId: PENDING_ACTION_ID })
+    result.current.mutate({ pendingActionId: PENDING_ACTION_ID, contentHash: 'digest-1' })
 
     await waitFor(() =>
       expect(rejectAssistantActionFn).toHaveBeenCalledWith({
-        data: { pendingActionId: PENDING_ACTION_ID },
+        data: { pendingActionId: PENDING_ACTION_ID, contentHash: 'digest-1' },
       })
     )
     await waitFor(() =>

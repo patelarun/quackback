@@ -28,6 +28,10 @@ const LANGUAGE_ENDONYMS: Record<SupportedLocale, string> = {
   'pt-br': 'Português (Brasil)',
   'zh-cn': '简体中文',
   'zh-tw': '繁體中文',
+  nl: 'Nederlands',
+  pl: 'Polski',
+  th: 'ไทย',
+  uk: 'Українська',
 }
 
 interface PortalLanguageMenuProps {

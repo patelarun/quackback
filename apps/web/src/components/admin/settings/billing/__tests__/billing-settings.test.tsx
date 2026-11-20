@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { IntlProvider } from 'react-intl'
+import de from '@/locales/de.json'
 import type { BillingCatalogue } from '@/lib/server/control-plane/client'
 import type { BillingProjectionOverview } from '@/lib/server/domains/billing/projection-overview'
-import { BillingPlansView } from '../billing-settings'
+import { BillingPlansView, EmailsPausedNotice } from '../billing-settings'
 
 const catalogue: BillingCatalogue = {
   version: 1,
@@ -12,11 +14,8 @@ const catalogue: BillingCatalogue = {
   annualDiscountMonths: 2,
   recommendedPlanId: 'pro',
   brandingRemoval: { monthlyCents: 5900, annualCents: 59000 },
-  aiIncludedCentsPerMonth: { free: 0, growth: 1000, pro: 3000, scale: 10000 },
-  aiTopUpPackCents: 1000,
+  aiIncludedCentsPerMonth: { free: 0, pro: 1000, business: 3000, enterprise: 10000 },
   aiBlendedCentsPerMTok: 500,
-  emailTopUpPackCents: 1000,
-  emailTopUpPackUnits: 10_000,
   plans: [
     {
       id: 'free',
@@ -30,44 +29,44 @@ const catalogue: BillingCatalogue = {
       recommended: false,
     },
     {
-      id: 'growth',
-      name: 'Growth',
+      id: 'pro',
+      name: 'Pro',
       rank: 1,
-      priceMonthlyCents: 1500,
-      priceYearlyCents: 14400,
-      billedPer: 'seat',
+      priceMonthlyCents: 3700,
+      priceYearlyCents: 34800,
+      billedPer: 'workspace',
       bestFor: 'For small teams getting started',
-      highlights: ['Custom domain', 'All AI features · $10/mo included'],
+      highlights: ['Custom domain', 'Standard AI usage included'],
       recommended: false,
     },
     {
-      id: 'pro',
-      name: 'Pro',
+      id: 'business',
+      name: 'Business',
       rank: 2,
-      priceMonthlyCents: 3000,
-      priceYearlyCents: 28800,
-      billedPer: 'seat',
+      priceMonthlyCents: 7500,
+      priceYearlyCents: 70800,
+      billedPer: 'workspace',
       bestFor: 'For teams working the inbox daily',
-      highlights: ['Workflows & SLAs', '$30/mo AI usage included'],
+      highlights: ['Workflows & SLAs', 'Higher AI usage'],
       recommended: true,
     },
     {
-      id: 'scale',
-      name: 'Scale',
+      id: 'enterprise',
+      name: 'Enterprise',
       rank: 3,
-      priceMonthlyCents: 5900,
-      priceYearlyCents: 58800,
-      billedPer: 'seat',
+      priceMonthlyCents: 12900,
+      priceYearlyCents: 118800,
+      billedPer: 'workspace',
       bestFor: 'For orgs with compliance needs',
-      highlights: ['SSO (SAML & OIDC)', '$100/mo AI usage included'],
+      highlights: ['SSO (SAML & OIDC)', 'Maximum AI usage'],
       recommended: false,
     },
   ],
 }
 
 const paidOverview: BillingProjectionOverview = {
-  plan: 'pro',
-  planName: 'Pro',
+  plan: 'business',
+  planName: 'Business',
   status: 'active',
   trialActive: false,
   trialExpiresAt: null,
@@ -76,12 +75,12 @@ const paidOverview: BillingProjectionOverview = {
   canUpgrade: false,
   canManageBilling: true,
   purchasablePlans: [
-    { id: 'growth', name: 'Growth' },
     { id: 'pro', name: 'Pro' },
-    { id: 'scale', name: 'Scale' },
+    { id: 'business', name: 'Business' },
+    { id: 'enterprise', name: 'Enterprise' },
   ],
-  seats: { used: 7, pending: 1, members: 6, purchased: 10 },
-  ai: { includedCents: 3000, usedCents: 2520, extraCents: 1000 },
+  seats: { used: 7, pending: 1, members: 6, purchased: null, limit: 20 },
+  ai: { includedCents: 3000, usedCents: 2520, extraCents: 1000, resetsAt: null },
   hideBranding: false,
 }
 
@@ -90,67 +89,102 @@ function renderView(
     overview?: BillingProjectionOverview
     catalogue?: BillingCatalogue | null
     usage?: Array<{ key: string; label: string; used: number; limit: number | null }>
+    locale?: string
+    messages?: Record<string, string>
   } = {}
 ) {
   return render(
-    <BillingPlansView
-      overview={overrides.overview ?? paidOverview}
-      catalogue={overrides.catalogue === undefined ? catalogue : overrides.catalogue}
-      catalogueError={null}
-      invoices={[
-        {
-          id: 'in_1',
-          number: 'INV-1001',
-          createdAt: '2026-08-14T00:00:00.000Z',
-          amountCents: 288000,
-          currency: 'usd',
-          status: 'paid',
-          hostedUrl: 'https://billing.example.com/invoice/in_1',
-        },
-      ]}
-      invoicesError={null}
-      usage={overrides.usage}
-    />
+    <IntlProvider locale={overrides.locale ?? 'en'} messages={overrides.messages ?? {}}>
+      <BillingPlansView
+        overview={overrides.overview ?? paidOverview}
+        catalogue={overrides.catalogue === undefined ? catalogue : overrides.catalogue}
+        catalogueError={null}
+        invoices={[
+          {
+            id: 'in_1',
+            number: 'INV-1001',
+            createdAt: '2026-08-14T00:00:00.000Z',
+            amountCents: 288000,
+            currency: 'usd',
+            status: 'paid',
+            hostedUrl: 'https://billing.example.com/invoice/in_1',
+          },
+        ]}
+        invoicesError={null}
+        usage={overrides.usage}
+      />
+    </IntlProvider>
   )
 }
 
 describe('BillingPlansView', () => {
-  it('renders the active paid plan, seat meter, and invoices', () => {
+  it('shows the trial end as the AI reset during a trial crossing a month', () => {
+    renderView({
+      overview: {
+        ...paidOverview,
+        status: null,
+        trialActive: true,
+        trialExpiresAt: '2026-11-08T09:00:00.000Z',
+        ai: { ...paidOverview.ai!, resetsAt: '2026-11-08T09:00:00.000Z' },
+      },
+      usage: [{ key: 'emailsPerMonth', label: 'emails', used: 1840, limit: 10_000 }],
+    })
+    expect(screen.getByText(/Resets Nov 8/)).toBeInTheDocument()
+    // Other meters keep their calendar reset.
+    expect(screen.getByText(/Monthly meters reset/)).toBeInTheDocument()
+  })
+
+  it('localises the AI reset', () => {
+    renderView({
+      overview: {
+        ...paidOverview,
+        ai: { ...paidOverview.ai!, resetsAt: '2026-11-08T09:00:00.000Z' },
+      },
+      locale: 'de',
+      messages: de,
+    })
+    expect(screen.getByText(/Wird am .*zurückgesetzt/)).toBeInTheDocument()
+  })
+
+  it('keeps only the monthly reset copy outside a trial', () => {
+    renderView()
+    expect(screen.queryByText(/Resets /)).not.toBeInTheDocument()
+    expect(screen.getByText(/Monthly meters reset/)).toBeInTheDocument()
+  })
+
+  it('renders the active paid plan and invoices', () => {
     renderView()
 
-    expect(screen.getByRole('heading', { level: 2, name: 'Pro' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Business' })).toBeInTheDocument()
     expect(screen.getByText('Active')).toBeInTheDocument()
     expect(screen.getByText(/Renews/)).toBeInTheDocument()
-    expect(screen.getByText(/10 seats × \$30\/seat/)).toBeInTheDocument()
-    expect(screen.queryByText(/\$24\/seat/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/billed annually/)).not.toBeInTheDocument()
-    expect(screen.getByText(/7 of 10 used/)).toBeInTheDocument()
-    expect(screen.getByText(/6 members · 1 pending invite · 3 seats available/)).toBeInTheDocument()
-    expect(screen.getByText('Each member or pending invite uses a seat.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Add seats' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Remove seats' })).toBeEnabled()
+    expect(screen.queryByText(/\/seat/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add seats' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove seats' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Plans' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Current plan' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Switch to Free' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Switch to Pro' })).toBeInTheDocument()
     const switchLinks = screen.getAllByRole('link', { name: 'Switch to this plan' })
     expect(switchLinks.map((link) => link.getAttribute('href'))).toEqual([
-      '/admin/settings/billing/checkout?plan=growth&period=annual&seats=7',
-      '/admin/settings/billing/checkout?plan=scale&period=annual&seats=7',
+      '/admin/settings/billing/checkout?plan=enterprise&period=annual',
     ])
     expect(screen.getByText('INV-1001')).toBeInTheDocument()
   })
 
-  it('shows AI usage in dollars and an emails meter', () => {
+  it('shows AI usage as a period percent and an emails meter', () => {
     renderView({
       usage: [{ key: 'emailsPerMonth', label: 'emails', used: 1840, limit: 10_000 }],
     })
     expect(screen.getByText('AI usage')).toBeInTheDocument()
-    expect(screen.getByText('$25.20 of $30.00')).toBeInTheDocument()
-    expect(screen.getByText(/\$30\/mo included, used first/)).toBeInTheDocument()
-    expect(screen.getByText(/\$10\.00 extra credit/)).toBeInTheDocument()
+    expect(screen.getByText('84% used this period')).toBeInTheDocument()
+    expect(screen.getByText('Included usage is used first, then extra credit.')).toBeInTheDocument()
+    expect(screen.queryByText(/\$25\.20/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/\$30\/mo included/)).not.toBeInTheDocument()
     expect(screen.getByText('Emails')).toBeInTheDocument()
     expect(screen.getByText('Changelog and status-page mail this month.')).toBeInTheDocument()
     expect(screen.getByText('1,840 of 10,000')).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: 'Top up' })).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: 'Top up' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Add-ons' })).toBeInTheDocument()
     expect(screen.getByText('Remove Quackback branding')).toBeInTheDocument()
     const addBranding = screen.getByRole('button', { name: 'Add' })
@@ -171,23 +205,10 @@ describe('BillingPlansView', () => {
     expect(screen.queryByRole('button', { name: 'Add' })).not.toBeInTheDocument()
   })
 
-  it('hides the seat meter on a grandfathered flat plan', () => {
-    renderView({
-      overview: {
-        ...paidOverview,
-        seats: { used: 4, pending: 0, members: 4, purchased: null },
-        ai: null,
-      },
-      catalogue: {
-        ...catalogue,
-        plans: catalogue.plans.map((plan) =>
-          plan.id === 'pro' ? { ...plan, billedPer: 'workspace' as const } : plan
-        ),
-      },
-    })
-    expect(screen.queryByText(/of \d+ used/)).not.toBeInTheDocument()
+  it('does not offer a per-seat purchase path', () => {
+    renderView()
     expect(screen.queryByRole('button', { name: 'Add seats' })).not.toBeInTheDocument()
-    expect(screen.getByText(/Switching plans moves you onto per-seat pricing/)).toBeInTheDocument()
+    expect(screen.queryByText(/per-seat pricing/)).not.toBeInTheDocument()
   })
 
   it('shows leftover AI extra credit on Free', () => {
@@ -201,12 +222,13 @@ describe('BillingPlansView', () => {
         canManageBilling: true,
         renewalAt: null,
         seats: { used: 1, pending: 0, members: 1, purchased: null },
-        ai: { includedCents: 0, usedCents: 0, extraCents: 1000 },
+        ai: { includedCents: 0, usedCents: 0, extraCents: 1000, resetsAt: null },
       },
     })
     expect(screen.getByText('AI usage')).toBeInTheDocument()
-    expect(screen.getByText('$0.00 of $0.00')).toBeInTheDocument()
-    expect(screen.getByText(/\$10\.00 extra credit/)).toBeInTheDocument()
+    expect(screen.getByText('0% used this period')).toBeInTheDocument()
+    expect(screen.getByText('Included usage is used first, then extra credit.')).toBeInTheDocument()
+    expect(screen.queryByText(/\$0\.00 of \$0\.00/)).not.toBeInTheDocument()
   })
 
   it('hides the seat meter on Free and offers trials', () => {
@@ -220,7 +242,7 @@ describe('BillingPlansView', () => {
         canManageBilling: false,
         renewalAt: null,
         seats: { used: 1, pending: 0, members: 1, purchased: null },
-        ai: { includedCents: 0, usedCents: 0, extraCents: 0 },
+        ai: { includedCents: 0, usedCents: 0, extraCents: 0, resetsAt: null },
       },
     })
     expect(screen.queryByRole('button', { name: 'Add seats' })).not.toBeInTheDocument()
@@ -230,28 +252,26 @@ describe('BillingPlansView', () => {
     expect(screen.queryByRole('button', { name: 'Switch to Free' })).not.toBeInTheDocument()
   })
 
-  it('shows trial expiry, Continue with the plan, and uncapped seats', () => {
+  it('shows trial expiry, Continue with the plan, and included seats', () => {
     renderView({
       overview: {
         ...paidOverview,
-        plan: 'growth',
-        planName: 'Growth',
+        plan: 'pro',
+        planName: 'Pro',
         status: null,
         trialActive: true,
-        trialPlanId: 'growth',
-        trialPlanName: 'Growth',
+        trialPlanId: 'pro',
+        trialPlanName: 'Pro',
         trialExpiresAt: '2026-09-01T00:00:00.000Z',
         canUpgrade: true,
         canManageBilling: false,
-        seats: { used: 4, pending: 1, members: 3, purchased: null },
+        seats: { used: 3, pending: 0, members: 3, purchased: null, limit: 5 },
       },
     })
     expect(screen.getAllByText('Trial').length).toBeGreaterThan(0)
     expect(screen.getByText(/Trial ends/)).toBeInTheDocument()
-    expect(screen.getByText(/Uncapped during your trial/)).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: 'Continue with Growth' }).length).toBeGreaterThan(
-      0
-    )
+    expect(screen.getByText('3 of 5 seats included with Pro')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Continue with Pro' }).length).toBeGreaterThan(0)
     expect(screen.queryByRole('button', { name: 'Add seats' })).not.toBeInTheDocument()
   })
 
@@ -305,12 +325,12 @@ describe('BillingPlansView', () => {
       catalogue: null,
       overview: {
         ...paidOverview,
-        plan: 'growth',
-        planName: 'Growth',
+        plan: 'pro',
+        planName: 'Pro',
         status: null,
         trialActive: true,
-        trialPlanId: 'growth',
-        trialPlanName: 'Growth',
+        trialPlanId: 'pro',
+        trialPlanName: 'Pro',
         trialExpiresAt: '2026-09-01T00:00:00.000Z',
         canUpgrade: true,
         canManageBilling: false,
@@ -335,9 +355,37 @@ describe('BillingPlansView', () => {
   it('shows annual monthly equivalent from the catalogue', () => {
     renderView()
     expect(screen.getByText(/Moving up applies now/)).toBeInTheDocument()
-    expect(screen.getByText('$24')).toBeInTheDocument()
+    expect(screen.getByText('$59')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('radio', { name: 'Monthly' }))
-    expect(screen.getByText('$30')).toBeInTheDocument()
+    expect(screen.getByText('$75')).toBeInTheDocument()
+  })
+
+  it('shows annual savings for the selected expired-trial plan, not the recommended one', () => {
+    renderView({
+      overview: {
+        ...paidOverview,
+        plan: 'free',
+        planName: 'Free',
+        status: null,
+        trialActive: false,
+        trialEnded: true,
+        trialPlanId: 'business',
+        trialPlanName: 'Business',
+        trialExpiresAt: '2026-08-18T00:00:00.000Z',
+        canUpgrade: true,
+        canManageBilling: false,
+        renewalAt: null,
+        seats: { used: 3, pending: 0, members: 3, purchased: null },
+      },
+    })
+    expect(screen.getByRole('radio', { name: /Save \$192\/yr/ })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /For small teams getting started/ }))
+    expect(screen.getByRole('radio', { name: /Save \$96\/yr/ })).toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: /Save \$192\/yr/ })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /For trying Quackback out/ }))
+    expect(screen.queryByText(/Save \$/)).not.toBeInTheDocument()
   })
 
   it('opens the subscribe dialog on the selected billing period', () => {
@@ -364,21 +412,25 @@ describe('BillingPlansView', () => {
     expect(document.querySelector('form input[name="billingPeriod"]')).toHaveValue('monthly')
   })
 
-  it('hides Top up when pack prices are missing', () => {
-    const { aiTopUpPackCents: _ai, emailTopUpPackCents: _email, ...rest } = catalogue
+  it('offers no top-up on any usage meter, even when the emails meter is at its limit', () => {
     renderView({
-      catalogue: rest,
-      usage: [{ key: 'emailsPerMonth', label: 'emails', used: 1840, limit: 10_000 }],
+      usage: [{ key: 'emailsPerMonth', label: 'emails', used: 10_000, limit: 10_000 }],
     })
+    expect(screen.getByText('Emails')).toBeInTheDocument()
+    expect(screen.getByText('AI usage')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Top up' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('hides email Top up when emails are unlimited', () => {
+  it('still shows purchased AI extra credit on the AI usage meter', () => {
     renderView({
-      usage: [{ key: 'emailsPerMonth', label: 'emails', used: 1840, limit: null }],
+      overview: {
+        ...paidOverview,
+        ai: { includedCents: 3000, usedCents: 3000, extraCents: 1000, resetsAt: null },
+      },
     })
-    expect(screen.queryByText('Emails')).not.toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: 'Top up' })).toHaveLength(1)
+    expect(screen.getByText('Included usage is used first, then extra credit.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Top up' })).not.toBeInTheDocument()
   })
 
   it('shows API requests and finite plan limits for the current subscription', () => {
@@ -408,5 +460,64 @@ describe('BillingPlansView', () => {
     expect(within(usage as HTMLElement).queryByText('Seats')).not.toBeInTheDocument()
     expect(screen.queryByText('AI tokens this month')).not.toBeInTheDocument()
     expect(screen.queryByText('Boards')).not.toBeInTheDocument()
+  })
+})
+
+describe('the monthly reset date', () => {
+  const originalTz = process.env.TZ
+
+  afterEach(() => {
+    vi.useRealTimers()
+    if (originalTz === undefined) delete process.env.TZ
+    else process.env.TZ = originalTz
+  })
+
+  // The allowance resets at 00:00 UTC on the 1st. That instant is still the
+  // 31st in Los Angeles and already the 1st in Tokyo, so the label names the
+  // UTC day in every viewer's zone.
+  it.each([
+    ['America/Los_Angeles', '2026-10-19T02:00:00.000Z', 'Nov 1'],
+    ['Asia/Tokyo', '2026-10-31T23:30:00.000Z', 'Nov 1'],
+  ])('names the reset day in UTC for a viewer in %s', (zone, now, label) => {
+    process.env.TZ = zone
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(now))
+    renderView({ usage: [{ key: 'emailsPerMonth', label: 'emails', used: 1840, limit: 10_000 }] })
+    expect(screen.getByText(`Monthly meters reset ${label}`)).toBeInTheDocument()
+  })
+})
+
+describe('the emails allowance notice', () => {
+  it('says emails are paused until the reset once the month allowance is used up', () => {
+    renderView({
+      usage: [{ key: 'emailsPerMonth', label: 'emails', used: 10_000, limit: 10_000 }],
+    })
+    expect(screen.getByText('10,000 of 10,000')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /^Changelog and status page emails are paused until your allowance resets on [A-Z][a-z]{2} 1\. Sign-in and support emails still send\.$/
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('shows no pause notice while the month allowance has room left', () => {
+    renderView({
+      usage: [{ key: 'emailsPerMonth', label: 'emails', used: 1840, limit: 10_000 }],
+    })
+    expect(screen.getByText('1,840 of 10,000')).toBeInTheDocument()
+    expect(screen.queryByText(/paused until your allowance/)).not.toBeInTheDocument()
+  })
+
+  it('leaves the date out when the reset is not known', () => {
+    render(
+      <IntlProvider locale="en" messages={{}}>
+        <EmailsPausedNotice resetsOn={null} />
+      </IntlProvider>
+    )
+    expect(
+      screen.getByText(
+        'Changelog and status page emails are paused until your allowance resets. Sign-in and support emails still send.'
+      )
+    ).toBeInTheDocument()
   })
 })

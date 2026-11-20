@@ -148,7 +148,10 @@ describe('publicly cacheable responses vary on Host', () => {
     // The previous assertion passes trivially if the regex matches nothing.
     // Pin the count so a change that stops detecting them is loud.
     const total = files.reduce((n, f) => n + scanResponses(readFileSync(f, 'utf8')).length, 0)
-    expect(total).toBeGreaterThanOrEqual(10)
+    // Fork: 9, not upstream's 10. The API reference (`api/v1/docs`,
+    // `api/v1/openapi.json`) sits behind authentication here, so it is
+    // deliberately no longer publicly cacheable.
+    expect(total).toBeGreaterThanOrEqual(9)
   })
 })
 

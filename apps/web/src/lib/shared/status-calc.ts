@@ -67,3 +67,28 @@ export function deriveImpact(componentStatuses: StatusCalcComponentStatus[]): St
   }
   return IMPACT_BY_RANK[worstRank]
 }
+
+/**
+ * The impact a viewer is shown for an incident. A viewer who can see every
+ * affected service gets the incident's own impact. One who can't see some of
+ * them gets what the services they can see justify (`deriveImpact`), so a
+ * hidden service never shows through as a higher impact.
+ *
+ * An admin's override is a judgement about the whole incident, possibly made
+ * because of the hidden services, so for this viewer it can only lower the
+ * impact, never raise it: the result is the lower of the stored impact and
+ * the derived one. Without an override the stored impact was derived from
+ * every service, so it is never below the visible derivation and the same
+ * rule covers both. Maintenance keeps its literal impact.
+ */
+export function deriveViewerImpact(
+  impact: StatusCalcImpact,
+  visibleStatuses: StatusCalcComponentStatus[],
+  someHidden: boolean
+): StatusCalcImpact {
+  if (!someHidden || impact === 'maintenance') return impact
+  const visibleImpact = deriveImpact(visibleStatuses)
+  return IMPACT_BY_RANK.indexOf(visibleImpact) < IMPACT_BY_RANK.indexOf(impact)
+    ? visibleImpact
+    : impact
+}

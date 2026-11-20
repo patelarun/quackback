@@ -66,18 +66,21 @@ export function HelpCenterArticleFeedback({
     }
   }
 
-  const subtitleId =
+  const subtitle =
     feedback === null
-      ? 'portal.hc.articleFeedback.subtitlePrompt'
+      ? intl.formatMessage({
+          id: 'portal.hc.articleFeedback.subtitle',
+          defaultMessage: 'Your feedback shapes what we write next.',
+        })
       : feedback === 'helpful'
-        ? 'portal.hc.articleFeedback.subtitleHelpful'
-        : 'portal.hc.articleFeedback.subtitleNotHelpful'
-  const subtitleDefault =
-    feedback === null
-      ? 'Your feedback shapes what we write next.'
-      : feedback === 'helpful'
-        ? 'Thanks — glad it landed.'
-        : "Noted. We'll revisit this article."
+        ? intl.formatMessage({
+            id: 'portal.hc.articleFeedback.thanksHelpful',
+            defaultMessage: 'Thanks, glad it landed.',
+          })
+        : intl.formatMessage({
+            id: 'portal.hc.articleFeedback.thanksNotHelpful',
+            defaultMessage: "Noted. We'll revisit this article.",
+          })
 
   const showReasonBox = feedback === 'not-helpful' && feedbackId !== null && !reasonSent
 
@@ -90,9 +93,7 @@ export function HelpCenterArticleFeedback({
             defaultMessage="Was this helpful?"
           />
         </p>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          <FormattedMessage id={subtitleId} defaultMessage={subtitleDefault} />
-        </p>
+        <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <button
@@ -105,7 +106,8 @@ export function HelpCenterArticleFeedback({
               : 'bg-muted/60 border border-border/60 text-foreground hover:bg-muted'
           }`}
         >
-          👍 <FormattedMessage id="portal.hc.articleFeedback.yes" defaultMessage="Yes" />
+          <span aria-hidden>👍</span>{' '}
+          <FormattedMessage id="portal.hc.articleFeedback.yes" defaultMessage="Yes" />
         </button>
         <button
           type="button"
@@ -117,7 +119,8 @@ export function HelpCenterArticleFeedback({
               : 'bg-muted/60 border border-border/60 text-foreground hover:bg-muted'
           }`}
         >
-          👎 <FormattedMessage id="portal.hc.articleFeedback.no" defaultMessage="No" />
+          <span aria-hidden>👎</span>{' '}
+          <FormattedMessage id="portal.hc.articleFeedback.no" defaultMessage="No" />
         </button>
       </div>
       {showReasonBox && (
@@ -159,7 +162,7 @@ export function HelpCenterArticleFeedback({
         <div className="w-full border-t border-border/50 pt-3 text-sm text-muted-foreground">
           <FormattedMessage
             id="portal.hc.articleFeedback.reasonThanks"
-            defaultMessage="Thanks — that goes to whoever maintains this article."
+            defaultMessage="Thanks. That goes to whoever maintains this article."
           />
         </div>
       )}

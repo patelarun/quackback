@@ -15,6 +15,8 @@ import {
   type UserId,
 } from '@quackback/ids'
 import { tiptapContentSchema, type TiptapContent } from '@/lib/shared/schemas/posts'
+import { PageLimitSchema } from '@/lib/shared/schemas/taxonomy'
+import { INBOX_POST_SORTS } from '@/lib/shared/types/filters'
 import { PERMISSIONS } from '@/lib/shared/permissions'
 import { sanitizeTiptapContent } from '@/lib/server/sanitize-tiptap'
 import { requireAuth, policyActorFromAuth } from './auth-helpers'
@@ -23,7 +25,9 @@ import { db, eq, posts } from '@/lib/server/db'
 import { createActivity } from '@/lib/server/domains/activity/activity.service'
 import { getMemberById } from '@/lib/server/domains/principals/principal.service'
 import { createPost, updatePost } from '@/lib/server/domains/posts/post.service'
-import { listInboxPosts, countInboxFilterFacets } from '@/lib/server/domains/posts/post.inbox'
+import { countInboxFilterFacets } from '@/lib/server/domains/posts/post.inbox'
+import { withInboxSearchMode } from '@/lib/server/domains/posts/post.inbox.search'
+import { listAdminInboxPage } from '@/lib/server/domains/posts/post.admin-inbox'
 import {
   getPostWithDetails,
   getPaginatedCommentsWithReplies,
@@ -37,7 +41,12 @@ import {
 } from '@/lib/server/domains/posts/post.cascade-delete'
 import { hasUserVoted } from '@/lib/server/domains/posts/post.public.utils'
 import { getMergedPosts, getPostMergeInfo } from '@/lib/server/domains/posts/post.merge'
-import { getPostVoters, addVoteOnBehalf, removeVote } from '@/lib/server/domains/posts/post.voting'
+import { addVoteOnBehalf, removeVote } from '@/lib/server/domains/posts/post.voting'
+import {
+  ADMIN_POST_PANELS,
+  loadAdminPostPanels,
+  loadPostVotersPanel,
+} from '@/lib/server/domains/posts/post.admin-panels'
 import { toIsoString, toIsoStringOrNull } from '@/lib/shared/utils'
 import { logger } from '@/lib/server/logger'
 
@@ -90,8 +99,10 @@ const listInboxPostsSchema = z.object({
   minComments: z.number().int().min(0).optional(),
   responded: z.enum(['all', 'responded', 'unresponded']).optional(),
   updatedBefore: z.string().optional(),
-  sort: z.enum(['newest', 'oldest', 'votes', 'priority']).optional().default('newest'),
+  sort: z.enum(INBOX_POST_SORTS).optional().default('newest'),
   showDeleted: z.boolean().optional(),
+  /** The page shows only posts with pending duplicates; the search widens within them. */
+  hasDuplicates: z.boolean().optional(),
   cursor: z.string().optional(),
   limit: z.number().int().min(1).max(100).optional().default(20),
 })
@@ -171,6 +182,10 @@ const toggleCommentsLockSchema = z.object({
   locked: z.boolean(),
 })
 
+const retryPostIntegrationSyncSchema = z.object({
+  id: z.string(),
+})
+
 // ============================================
 // Type Exports
 // ============================================
@@ -197,25 +212,28 @@ export const fetchInboxPostsForAdmin = createServerFn({ method: 'GET' })
     log.debug('fetch inbox posts for admin')
     await requireAuth({ permission: PERMISSIONS.POST_VIEW_PRIVATE })
 
-    const result = await listInboxPosts({
-      boardIds: data.boardIds as BoardId[] | undefined,
-      statusIds: data.statusIds as PostStatusId[] | undefined,
-      statusSlugs: data.statusSlugs,
-      tagIds: data.tagIds as PostTagId[] | undefined,
-      segmentIds: data.segmentIds as SegmentId[] | undefined,
-      ownerId: data.ownerId as PrincipalId | null | undefined,
-      search: data.search,
-      dateFrom: data.dateFrom ? new Date(data.dateFrom) : undefined,
-      dateTo: data.dateTo ? new Date(data.dateTo) : undefined,
-      minVotes: data.minVotes,
-      minComments: data.minComments,
-      responded: data.responded,
-      updatedBefore: data.updatedBefore ? new Date(data.updatedBefore) : undefined,
-      sort: data.sort,
-      showDeleted: data.showDeleted,
-      cursor: data.cursor,
-      limit: data.limit,
-    })
+    const result = await listAdminInboxPage(
+      {
+        boardIds: data.boardIds as BoardId[] | undefined,
+        statusIds: data.statusIds as PostStatusId[] | undefined,
+        statusSlugs: data.statusSlugs,
+        tagIds: data.tagIds as PostTagId[] | undefined,
+        segmentIds: data.segmentIds as SegmentId[] | undefined,
+        ownerId: data.ownerId as PrincipalId | null | undefined,
+        search: data.search,
+        dateFrom: data.dateFrom ? new Date(data.dateFrom) : undefined,
+        dateTo: data.dateTo ? new Date(data.dateTo) : undefined,
+        minVotes: data.minVotes,
+        minComments: data.minComments,
+        responded: data.responded,
+        updatedBefore: data.updatedBefore ? new Date(data.updatedBefore) : undefined,
+        sort: data.sort,
+        showDeleted: data.showDeleted,
+        cursor: data.cursor,
+        limit: data.limit,
+      },
+      { pendingDuplicates: data.hasDuplicates }
+    )
     log.debug(
       { count: result.items.length, cursor: data.cursor ?? 'none' },
       'fetched inbox posts for admin'
@@ -239,22 +257,26 @@ export const fetchInboxFilterCounts = createServerFn({ method: 'GET' })
   .validator(inboxFilterCountsSchema)
   .handler(async ({ data }) => {
     await requireAuth({ permission: PERMISSIONS.POST_VIEW_PRIVATE })
-    return countInboxFilterFacets({
-      boardIds: data.boardIds as BoardId[] | undefined,
-      statusIds: data.statusIds as PostStatusId[] | undefined,
-      statusSlugs: data.statusSlugs,
-      tagIds: data.tagIds as PostTagId[] | undefined,
-      segmentIds: data.segmentIds as SegmentId[] | undefined,
-      ownerId: data.ownerId as PrincipalId | null | undefined,
-      search: data.search,
-      dateFrom: data.dateFrom ? new Date(data.dateFrom) : undefined,
-      dateTo: data.dateTo ? new Date(data.dateTo) : undefined,
-      minVotes: data.minVotes,
-      minComments: data.minComments,
-      responded: data.responded,
-      updatedBefore: data.updatedBefore ? new Date(data.updatedBefore) : undefined,
-      showDeleted: data.showDeleted,
-    })
+    const params = await withInboxSearchMode(
+      {
+        boardIds: data.boardIds as BoardId[] | undefined,
+        statusIds: data.statusIds as PostStatusId[] | undefined,
+        statusSlugs: data.statusSlugs,
+        tagIds: data.tagIds as PostTagId[] | undefined,
+        segmentIds: data.segmentIds as SegmentId[] | undefined,
+        ownerId: data.ownerId as PrincipalId | null | undefined,
+        search: data.search,
+        dateFrom: data.dateFrom ? new Date(data.dateFrom) : undefined,
+        dateTo: data.dateTo ? new Date(data.dateTo) : undefined,
+        minVotes: data.minVotes,
+        minComments: data.minComments,
+        responded: data.responded,
+        updatedBefore: data.updatedBefore ? new Date(data.updatedBefore) : undefined,
+        showDeleted: data.showDeleted,
+      },
+      { pendingDuplicates: data.hasDuplicates }
+    )
+    return countInboxFilterFacets(params)
   })
 
 /**
@@ -266,7 +288,9 @@ export const fetchPostWithDetails = createServerFn({ method: 'GET' })
       // Comment keyset-page controls. First-page callers omit them (default
       // page size); "show more" fetches pass the prior page's nextCursor.
       commentsCursor: z.string().nullish(),
-      commentsLimit: z.number().int().positive().max(100).optional(),
+      commentsLimit: PageLimitSchema,
+      // Admin modal panels to load with the post (see post.admin-panels).
+      panels: z.array(z.enum(ADMIN_POST_PANELS)).optional(),
     })
   )
   .handler(async ({ data }) => {
@@ -275,7 +299,7 @@ export const fetchPostWithDetails = createServerFn({ method: 'GET' })
 
     const postId = data.id as PostId
 
-    const [result, commentsPage, voted] = await Promise.all([
+    const [result, commentsPage, voted, panels, mergedPosts] = await Promise.all([
       getPostWithDetails(postId),
       getPaginatedCommentsWithReplies(postId, {
         principalId: auth.principal.id,
@@ -283,6 +307,17 @@ export const fetchPostWithDetails = createServerFn({ method: 'GET' })
         limit: data.commentsLimit,
       }),
       hasUserVoted(postId, auth.principal.id),
+      data.panels?.length && !data.commentsCursor
+        ? loadAdminPostPanels(postId, data.panels, auth.permissions)
+        : undefined,
+      // Posts merged into this one (the admin Unmerge list).
+      getMergedPosts(postId).then((posts) =>
+        posts.map((p) => ({
+          ...p,
+          createdAt: toIsoString(p.createdAt),
+          mergedAt: toIsoString(p.mergedAt),
+        }))
+      ),
     ])
     const comments = commentsPage.comments
     log.debug(
@@ -309,26 +344,16 @@ export const fetchPostWithDetails = createServerFn({ method: 'GET' })
         }
       : null
 
-    // Fetch merge info: merged posts (if canonical) or merge info (if duplicate)
-    // The admin handler is team-gated, so the resolved actor is admin
-    // or member — both pass canViewPost on any audience. Without the
-    // actor though, getPostMergeInfo defaulted to ANONYMOUS_ACTOR and
-    // hid the merge banner for canonicals on restricted-audience boards.
-    const adminMergeActor = await policyActorFromAuth(auth)
-    const [mergedPosts, mergeInfo] = await Promise.all([
-      getMergedPosts(postId).then((posts) =>
-        posts.map((p) => ({
-          ...p,
-          createdAt: toIsoString(p.createdAt),
-          mergedAt: toIsoString(p.mergedAt),
-        }))
-      ),
-      result.canonicalPostId
-        ? getPostMergeInfo(postId, adminMergeActor).then((info) =>
-            info ? { ...info, mergedAt: toIsoString(info.mergedAt) } : null
-          )
-        : null,
-    ])
+    // Merge info (the banner on a post merged into another). The admin
+    // handler is team-gated, so the resolved actor is admin or member, and
+    // both pass canViewPost on any audience. Without the actor though,
+    // getPostMergeInfo defaulted to ANONYMOUS_ACTOR and hid the merge
+    // banner for canonicals on restricted-audience boards.
+    const mergeInfo = result.canonicalPostId
+      ? await getPostMergeInfo(postId, await policyActorFromAuth(auth)).then((info) =>
+          info ? { ...info, mergedAt: toIsoString(info.mergedAt) } : null
+        )
+      : null
 
     return {
       ...serializePostDates(result),
@@ -343,6 +368,7 @@ export const fetchPostWithDetails = createServerFn({ method: 'GET' })
       mergedAt: toIsoStringOrNull(result.mergedAt),
       mergedPosts: mergedPosts.length > 0 ? mergedPosts : undefined,
       mergeInfo,
+      panels,
     }
   })
 
@@ -353,11 +379,7 @@ export const fetchPostVotersFn = createServerFn({ method: 'GET' })
   .validator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
     await requireAuth({ permission: PERMISSIONS.POST_VIEW_PRIVATE })
-    const voters = await getPostVoters(data.id as PostId)
-    return voters.map((v) => ({
-      ...v,
-      createdAt: toIsoString(v.createdAt as Date | string),
-    }))
+    return loadPostVotersPanel(data.id as PostId)
   })
 
 // ============================================
@@ -516,36 +538,23 @@ export const deletePostFn = createServerFn({ method: 'POST' })
     const auth = await requireAuth({ permission: PERMISSIONS.POST_DELETE })
     const postId = data.id as PostId
 
-    // Soft delete the post (always succeeds or throws; dispatches post.deleted event)
-    await softDeletePost(postId, {
-      principalId: auth.principal.id,
-      role: auth.principal.role,
-      userId: auth.user.id,
-    })
-    log.info({ post_id: data.id }, 'post deleted')
-
-    // Cascade archive/close linked issues (never blocks post delete)
-    let cascadeResults: Array<{
-      linkId: string
-      integrationType: string
-      externalId: string
-      success: boolean
-      error?: string
-    }> = []
-    if (data.cascadeChoices && data.cascadeChoices.length > 0) {
-      try {
-        cascadeResults = await executeCascadeDelete(postId, data.cascadeChoices)
-        const failed = cascadeResults.filter((r) => !r.success)
-        if (failed.length > 0) {
-          log.warn(
-            { post_id: data.id, failed_count: failed.length, failed },
-            'cascade archive(s) failed'
-          )
-        }
-      } catch (err) {
-        log.error({ err }, 'cascade archive error (non-blocking)')
+    let cascadeResults: Awaited<ReturnType<typeof executeCascadeDelete>> = []
+    await softDeletePost(
+      postId,
+      {
+        principalId: auth.principal.id,
+        role: auth.principal.role,
+        userId: auth.user.id,
+      },
+      async (tx) => {
+        if (data.cascadeChoices?.length)
+          cascadeResults = await executeCascadeDelete(postId, data.cascadeChoices, {
+            executor: tx,
+            requestedBy: auth.principal.id,
+          })
       }
-    }
+    )
+    log.info({ post_id: data.id }, 'post deleted')
 
     return { id: data.id, cascadeResults }
   })
@@ -561,6 +570,22 @@ export const fetchPostExternalLinksFn = createServerFn({ method: 'GET' })
     const links = await getPostExternalLinks(data.id as PostId)
     log.debug({ count: links.length }, 'fetch post external links result')
     return links
+  })
+
+/**
+ * Retry integration delivery per destination and refresh supported linked issues.
+ * Does not republish the domain event or replay notification/AI/webhook sinks.
+ */
+export const retryPostIntegrationSyncFn = createServerFn({ method: 'POST' })
+  .validator(retryPostIntegrationSyncSchema)
+  .handler(async ({ data }) => {
+    const ctx = await requireAuth({ permission: PERMISSIONS.INTEGRATION_MANAGE })
+    const { syncPostIntegrations } = await import('@/lib/server/integrations/post-sync')
+    const { syncSourceForActor } = await import('@/lib/server/integrations/sync/eligibility')
+    const actor = await policyActorFromAuth(ctx)
+    if (!(await syncSourceForActor({ sourceType: 'post', sourceId: data.id }, actor)))
+      throw new Error('Post not found')
+    return syncPostIntegrations(data.id as PostId, actor.principalId ?? undefined)
   })
 
 /**

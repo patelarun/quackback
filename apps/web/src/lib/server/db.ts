@@ -16,6 +16,7 @@ import {
   WorkspaceScopeMissingError,
 } from '@/lib/server/workspaces/workspace-context'
 import { wrapDbTransaction } from '@/lib/server/workspaces/after-commit'
+import { countingQueryLogger } from '@/lib/server/request-metrics'
 
 // Import drizzle-orm operators explicitly to work around Nitro bundler issues
 // with nested barrel exports. If we use `export { asc } from 'drizzle-orm'`,
@@ -115,6 +116,7 @@ function getDatabase(): Database {
     globalThis.__db = createDb(config.databaseUrl, {
       max: config.dbPoolMax,
       idleTimeout: config.dbIdleTimeout,
+      logger: countingQueryLogger,
     })
   }
   return globalThis.__db
@@ -161,6 +163,7 @@ export {
   // Schema tables - auth
   account,
   accountRelations,
+  accountProfileSync,
   invitation,
   invitationRelations,
   jwks,
@@ -168,10 +171,16 @@ export {
   oauthAccessTokenRelations,
   oauthClient,
   oauthClientRelations,
+  oauthClientAssertion,
+  deviceCode,
+  oauthClientResource,
+  oauthClientResourceRelations,
   oauthConsent,
   oauthConsentRelations,
   oauthRefreshToken,
   oauthRefreshTokenRelations,
+  oauthResource,
+  oauthResourceRelations,
   principal,
   principalRelations,
   oneTimeToken,
@@ -179,6 +188,8 @@ export {
   sessionRelations,
   settings,
   settingsRelations,
+  workspaceExperiments,
+  workspaceExperimentsRelations,
   identityProvider,
   ssoVerifiedDomain,
   twoFactor,
@@ -247,6 +258,7 @@ export {
   channelAccounts,
   channelThreads,
   emailSendingDomains,
+  emailSesTenants,
   // Schema tables - office hours + SLA (support platform §4.6)
   officeHoursSchedules,
   slaPolicies,
@@ -289,6 +301,7 @@ export {
   conversations,
   conversationsRelations,
   conversationMessages,
+  workspaceAssistantThreads,
   conversationMessagesRelations,
   conversationTags,
   conversationTagsRelations,
@@ -332,6 +345,7 @@ export {
   postSubscriptions,
   postSubscriptionsRelations,
   unsubscribeTokens,
+  onboardingEmails,
   unsubscribeTokensRelations,
   // Schema tables - sentiment
   postSentiment,
@@ -458,16 +472,32 @@ export {
   // Schema tables - assistant knowledge documents
   assistantDocuments,
   assistantDocumentsRelations,
+  files,
+  filesRelations,
   // Schema tables - assistant web sources
   assistantWebSources,
   // Schema tables - assistant pending actions
   assistantPendingActions,
   ASSISTANT_PENDING_ACTION_STATUSES,
+  APPROVAL_RISKS,
+  APPROVAL_REQUEST_CHANNELS,
+  APPROVAL_DECISION_CHANNELS,
+  APPROVAL_EXECUTION_STATES,
+  type ApprovalRisk,
+  type ApprovalRequestChannel,
+  type ApprovalDecisionChannel,
+  type ApprovalExecutionState,
   // Schema tables - assistant tool-call audit log
   assistantToolCalls,
   ASSISTANT_TOOL_CALL_STATUSES,
   // Schema tables - assistant usage events (Copilot outcome loop)
   assistantEvents,
+  slackUserLinks,
+  slackThreadSessions,
+  integrationDeliveries,
+  integrationSyncOperations,
+  integrationSyncAttempts,
+  integrationSyncActions,
   // Schema tables - RBAC
   roles,
   permissions,
@@ -483,6 +513,8 @@ export {
   SYSTEM_ROLE_DEFS,
   SYSTEM_ROLE_PERMISSIONS,
   presetForLegacyRole,
+  // Client-safe permissions mirror renderer (pure; used by the drift test)
+  renderPermissionsMirror,
   // Migration ledger status (readiness probe)
   getMigrationStatus,
   // System-data reconcile (integration tests exercise the assignment heal)
@@ -490,6 +522,11 @@ export {
   // Types/constants
   REACTION_EMOJIS,
   USE_CASE_TYPES,
+  // Test-customer identity kept out of every metric
+  isTestPrincipalSql,
+  notTestPrincipal,
+  notTestConversation,
+  notTestTicket,
 } from '@quackback/db'
 
 // Re-export schema types not covered by @quackback/db/types
@@ -509,14 +546,21 @@ export type {
   MacroAction,
 } from '@quackback/db'
 export type { ServiceMetadata } from '@quackback/db'
+export type { FileRecord, NewFileRecord } from '@quackback/db'
 export type { IdentityProviderClaimMapping, ClaimRoleMapping } from '@quackback/db'
 export type { PermissionKey, PermissionCategory, SystemRoleKey } from '@quackback/db'
 export type {
   ChannelAccount,
   EmailSendingDomain,
+  EmailSesTenant,
   ChannelAccountConfig,
   SendingDomainDnsRecord,
   SendingDomainOwnershipRecord,
+  SendingDomainKeyRecord,
+  SendingDomainProofRecord,
+  SendingDomainDkimMode,
+  SendingDomainRecordCheck,
+  SendingDomainPreflight,
 } from '@quackback/db'
 export type { OfficeHoursSchedule, OfficeHoursInterval } from '@quackback/db'
 export type { ChangelogSubscriptionSource } from '@quackback/db'

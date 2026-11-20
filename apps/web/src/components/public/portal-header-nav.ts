@@ -182,3 +182,15 @@ export function isNavTypeHiddenByConfig(
   if (type === 'feedback') return false
   return Boolean(nav?.items?.some((item) => item.type === type && item.enabled === false))
 }
+
+export const isHelpPath = (pathname: string) => pathname === '/hc' || pathname.startsWith('/hc/')
+
+/**
+ * Whether a built-in tab is the current page. A post (/b/<board>/posts/<id>)
+ * belongs to Feedback, so the tab stays lit while one is open.
+ */
+export function isTabActive(to: string, pathname: string): boolean {
+  if (to === '/') return pathname === '/' || /^\/b\/[^/]+\/posts\//.test(pathname)
+  if (to === '/hc') return isHelpPath(pathname)
+  return pathname.startsWith(to)
+}

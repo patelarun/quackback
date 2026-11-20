@@ -7,6 +7,7 @@
  */
 
 import { z } from 'zod'
+import { PERMISSIONS, type PermissionKey } from '@/lib/shared/permissions'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { listInboxPosts } from '@/lib/server/domains/posts/post.inbox'
@@ -19,7 +20,7 @@ import {
   getArticleById,
   getCategoryById,
 } from '@/lib/server/domains/help-center/help-center.service'
-import { getTypeIdPrefix } from '@quackback/ids'
+import { ensureTypeId, getTypeIdPrefix } from '@quackback/ids'
 import { truncate } from '@/lib/shared/utils/string'
 import { contentJsonToMarkdown } from '@/lib/server/markdown-tiptap'
 import type { CommentTreeNode } from '@/lib/shared/comment-tree'
@@ -30,8 +31,10 @@ import type {
   ChangelogId,
   KbArticleId,
   KbCategoryId,
+  PrincipalId,
 } from '@quackback/ids'
 import type { McpAuthContext } from '../types'
+import { getBaseUrl } from '@/lib/server/config'
 import {
   registerTool,
   requireScope,
@@ -42,9 +45,12 @@ import {
   errorResult,
   encodeSearchCursor,
   decodeSearchCursor,
+  parseFlexibleDate,
   articleResult,
   categoryResult,
+  withAuthorFacts,
   READ_ONLY,
+  type AuthorAt,
 } from './helpers'
 
 // ============================================================================
@@ -84,7 +90,7 @@ const searchSchema = {
     .string()
     .optional()
     .describe(
-      'ISO 8601 date string for filtering posts created on or after this date (e.g. "2024-06-01")'
+      'Created on or after this time. ISO 8601 (e.g. "2024-06-01") or a relative window: 7d, 30d, 24h, this_week, this_month, today.'
     ),
   dateTo: z
     .string()
@@ -94,6 +100,39 @@ const searchSchema = {
     ),
   limit: z.number().min(1).max(100).default(20).describe('Max results per page'),
   cursor: z.string().optional().describe('Pagination cursor from previous response'),
+  authorPrincipalId: z
+    .string()
+    .optional()
+    .describe('Filter posts by author TypeID, or "me" for the authenticated teammate'),
+  authorEmail: z
+    .string()
+    .optional()
+    .describe('Filter posts by author email, or "me" for the authenticated teammate'),
+}
+
+/** What each search entity reveals, matching the REST list endpoints. */
+const SEARCH_PERMISSIONS: Record<SearchArgs['entity'], PermissionKey> = {
+  posts: PERMISSIONS.POST_VIEW_PRIVATE,
+  changelogs: PERMISSIONS.CHANGELOG_VIEW_DRAFT,
+  articles: PERMISSIONS.HELP_CENTER_MANAGE,
+}
+
+/** What each get_details entity reveals; an unparseable or unsupported id needs none. */
+const DETAIL_PERMISSIONS: Record<string, PermissionKey> = {
+  post: PERMISSIONS.POST_VIEW_PRIVATE,
+  changelog: PERMISSIONS.CHANGELOG_VIEW_DRAFT,
+  article: PERMISSIONS.HELP_CENTER_MANAGE,
+  kb_article: PERMISSIONS.HELP_CENTER_MANAGE,
+  kb_category: PERMISSIONS.HELP_CENTER_MANAGE,
+}
+
+function detailPermissions(id: string): PermissionKey[] {
+  try {
+    const permission = DETAIL_PERMISSIONS[getTypeIdPrefix(id)]
+    return permission ? [permission] : []
+  } catch {
+    return []
+  }
 }
 
 const getDetailsSchema = {
@@ -123,6 +162,8 @@ type SearchArgs = {
   sort: 'newest' | 'oldest' | 'votes'
   limit: number
   cursor?: string
+  authorPrincipalId?: string
+  authorEmail?: string
 }
 
 type GetDetailsArgs = { id: string }
@@ -134,6 +175,9 @@ type GetDetailsArgs = { id: string }
 export function registerSearchTools(server: McpServer, auth: McpAuthContext) {
   registerTool<SearchArgs>(server, auth, {
     name: 'search',
+    // Every branch is team-only; the per-branch scope gates stay in the handler.
+    teamOnly: true,
+    permissions: (args) => [SEARCH_PERMISSIONS[args.entity ?? 'posts']],
     description: `Search feedback posts, changelog entries, or help center articles. Returns paginated results with a cursor for fetching more.
 
 Examples:
@@ -143,7 +187,9 @@ Examples:
 - Search changelogs: search({ entity: "changelogs", status: "published" })
 - Search articles: search({ entity: "articles", query: "getting started" })
 - Filter articles by category: search({ entity: "articles", categoryId: "kb_category_01abc..." })
-- Sort by votes: search({ sort: "votes", limit: 10 })`,
+- Sort by votes: search({ sort: "votes", limit: 10 })
+- Posts created by the authenticated teammate: search({ authorPrincipalId: "me" })
+- Posts created by an email: search({ authorEmail: "ada@acme.com" })`,
     schema: searchSchema,
     annotations: READ_ONLY,
     handler: async (args) => {
@@ -173,18 +219,21 @@ Examples:
       if (args.entity === 'changelogs') {
         return searchChangelogs(args)
       }
-      return searchPosts(args)
+      return searchPosts(args, auth)
     },
   })
 
   registerTool<GetDetailsArgs>(server, auth, {
     name: 'get_details',
+    // Every branch is team-only; the per-branch scope gates stay in the handler.
+    teamOnly: true,
+    permissions: (args) => detailPermissions(args.id),
     description: `Get full details for any entity by TypeID. Entity type is auto-detected from the ID prefix.
 
 Examples:
 - Get a post: get_details({ id: "post_01abc..." })
 - Get a changelog: get_details({ id: "changelog_01xyz..." })
-- Get an article: get_details({ id: "kb_article_01abc..." })
+- Get an article: get_details({ id: "article_01abc..." })
 - Get a category: get_details({ id: "kb_category_01abc..." })`,
     schema: getDetailsSchema,
     annotations: READ_ONLY,
@@ -197,7 +246,7 @@ Examples:
       } catch {
         return errorResult(
           new Error(
-            `Invalid TypeID format: "${args.id}". Expected format: prefix_base32suffix (e.g., post_01abc..., kb_article_01abc...)`
+            `Invalid TypeID format: "${args.id}". Expected format: prefix_base32suffix (e.g., post_01abc..., article_01abc...)`
           )
         )
       }
@@ -222,6 +271,7 @@ Examples:
           if (roleDenied) return roleDenied
           return getChangelogDetails(args.id as ChangelogId)
         }
+        case 'article':
         case 'kb_article': {
           const flagDenied = await requireHelpCenter()
           if (flagDenied) return flagDenied
@@ -234,7 +284,7 @@ Examples:
           // unauthenticated path for the published slice.
           const roleDenied = requireTeamRole(auth)
           if (roleDenied) return roleDenied
-          return getArticleDetails(args.id as KbArticleId)
+          return getArticleDetails(ensureTypeId(args.id, 'article'))
         }
         case 'kb_category': {
           const flagDenied = await requireHelpCenter()
@@ -250,7 +300,7 @@ Examples:
         default:
           return errorResult(
             new Error(
-              `Unsupported entity type: "${prefix}". Supported: post, changelog, kb_article, kb_category`
+              `Unsupported entity type: "${prefix}". Supported: post, changelog, article, kb_category`
             )
           )
       }
@@ -262,7 +312,22 @@ Examples:
 // Search dispatchers
 // ============================================================================
 
-async function searchPosts(args: SearchArgs): Promise<CallToolResult> {
+/** Map "me" to the authenticated teammate; pass through TypeIDs and emails. */
+export function resolvePostAuthorFilter(
+  args: Pick<SearchArgs, 'authorPrincipalId' | 'authorEmail'>,
+  auth: Pick<McpAuthContext, 'principalId'>
+): { authorId?: PrincipalId; authorEmail?: string } {
+  if (args.authorPrincipalId === 'me' || args.authorEmail === 'me') {
+    return { authorId: auth.principalId }
+  }
+  if (args.authorPrincipalId) {
+    return { authorId: args.authorPrincipalId as PrincipalId }
+  }
+  if (args.authorEmail) return { authorEmail: args.authorEmail }
+  return {}
+}
+
+async function searchPosts(args: SearchArgs, auth: McpAuthContext): Promise<CallToolResult> {
   const decoded = decodeSearchCursor(args.cursor)
   // Reject cursors from a different entity
   if (args.cursor && decoded.entity && decoded.entity !== 'posts') {
@@ -272,13 +337,15 @@ async function searchPosts(args: SearchArgs): Promise<CallToolResult> {
   }
   // The cursor value is a PostId string from the previous page's last item
   const cursorValue = typeof decoded.value === 'string' ? decoded.value : undefined
+  const author = resolvePostAuthorFilter(args, auth)
 
   const result = await listInboxPosts({
     search: args.query,
+    excludeTest: true,
     boardIds: args.boardId ? [args.boardId as BoardId] : undefined,
     statusSlugs: args.status ? [args.status] : undefined,
     tagIds: args.tagIds as PostTagId[] | undefined,
-    dateFrom: args.dateFrom ? new Date(args.dateFrom) : undefined,
+    dateFrom: parseFlexibleDate(args.dateFrom),
     dateTo: (() => {
       if (!args.dateTo) return undefined
       const d = new Date(args.dateTo)
@@ -290,16 +357,19 @@ async function searchPosts(args: SearchArgs): Promise<CallToolResult> {
     sort: args.sort,
     cursor: cursorValue,
     limit: args.limit,
+    ...author,
   })
 
   // Encode nextCursor with entity type to prevent cross-entity misuse
   const lastItem = result.items[result.items.length - 1]
   const nextCursor = result.hasMore && lastItem ? encodeSearchCursor('posts', lastItem.id) : null
 
+  const origin = getBaseUrl()
   return compactJsonResult({
     posts: result.items.map((p) => ({
       id: p.id,
       title: p.title,
+      url: `${origin}/b/${encodeURIComponent(p.board.slug)}/posts/${p.id}`,
       excerpt: p.content ? truncate(p.content, 200) : '',
       voteCount: p.voteCount,
       commentCount: p.commentCount,
@@ -347,25 +417,29 @@ async function searchChangelogs(args: SearchArgs): Promise<CallToolResult> {
   const nextCursor =
     result.hasMore && lastItem ? encodeSearchCursor('changelogs', lastItem.id) : null
 
-  return compactJsonResult({
-    changelogs: result.items.map((c) => ({
-      id: c.id,
-      title: c.title,
-      excerpt: c.content ? truncate(c.content, 200) : '',
-      status: c.status,
-      authorName: c.author?.name ?? null,
-      linkedPosts: c.linkedPosts.map((p) => ({
-        id: p.id,
-        title: p.title,
-        voteCount: p.voteCount,
+  const changelogAuthors = result.items.map((c, i): AuthorAt => [`changelogs[${i}]`, c.author?.id])
+  return withAuthorFacts(
+    compactJsonResult({
+      changelogs: result.items.map((c) => ({
+        id: c.id,
+        title: c.title,
+        excerpt: c.content ? truncate(c.content, 200) : '',
+        status: c.status,
+        authorName: c.author?.name ?? null,
+        linkedPosts: c.linkedPosts.map((p) => ({
+          id: p.id,
+          title: p.title,
+          voteCount: p.voteCount,
+        })),
+        publishedAt: c.publishedAt,
+        displayDate: c.displayDate,
+        createdAt: c.createdAt,
       })),
-      publishedAt: c.publishedAt,
-      displayDate: c.displayDate,
-      createdAt: c.createdAt,
-    })),
-    nextCursor,
-    hasMore: result.hasMore,
-  })
+      nextCursor,
+      hasMore: result.hasMore,
+    }),
+    changelogAuthors
+  )
 }
 
 async function searchArticles(args: SearchArgs): Promise<CallToolResult> {
@@ -393,25 +467,28 @@ async function searchArticles(args: SearchArgs): Promise<CallToolResult> {
   const lastItem = result.items[result.items.length - 1]
   const nextCursor = result.hasMore && lastItem ? encodeSearchCursor('articles', lastItem.id) : null
 
-  return compactJsonResult({
-    articles: result.items.map((a) => ({
-      id: a.id,
-      slug: a.slug,
-      title: a.title,
-      excerpt: a.content ? truncate(a.content, 200) : '',
-      description: a.description,
-      status: a.publishedAt ? 'published' : 'draft',
-      categoryId: a.category.id,
-      categoryName: a.category.name,
-      categorySlug: a.category.slug,
-      authorName: a.author?.name ?? null,
-      publishedAt: a.publishedAt,
-      createdAt: a.createdAt,
-      updatedAt: a.updatedAt,
-    })),
-    nextCursor,
-    hasMore: result.hasMore,
-  })
+  return withAuthorFacts(
+    compactJsonResult({
+      articles: result.items.map((a) => ({
+        id: a.id,
+        slug: a.slug,
+        title: a.title,
+        excerpt: a.content ? truncate(a.content, 200) : '',
+        description: a.description,
+        status: a.publishedAt ? 'published' : 'draft',
+        categoryId: a.category.id,
+        categoryName: a.category.name,
+        categorySlug: a.category.slug,
+        authorName: a.author?.name ?? null,
+        publishedAt: a.publishedAt,
+        createdAt: a.createdAt,
+        updatedAt: a.updatedAt,
+      })),
+      nextCursor,
+      hasMore: result.hasMore,
+    }),
+    result.items.map((a, i): AuthorAt => [`articles[${i}]`, a.author?.id])
+  )
 }
 
 // ============================================================================
@@ -434,6 +511,14 @@ function serializeMcpComment(c: CommentTreeNode): Record<string, unknown> {
   }
 }
 
+/** Each comment's path in the result and its author, replies included. */
+function commentAuthors(comments: CommentTreeNode[], prefix: string): AuthorAt[] {
+  return comments.flatMap((c, i): AuthorAt[] => [
+    [`${prefix}[${i}]`, c.principalId],
+    ...commentAuthors(c.replies, `${prefix}[${i}].replies`),
+  ])
+}
+
 async function getPostDetails(postId: PostId): Promise<CallToolResult> {
   const [post, comments, mergedPosts] = await Promise.all([
     getPostWithDetails(postId),
@@ -441,7 +526,9 @@ async function getPostDetails(postId: PostId): Promise<CallToolResult> {
     getMergedPosts(postId),
   ])
 
-  return jsonResult({
+  const authors = commentAuthors(comments, 'comments')
+  if (post.pinnedComment) authors.push(['pinnedComment', post.pinnedComment.principalId])
+  const result = jsonResult({
     id: post.id,
     title: post.title,
     content: contentJsonToMarkdown(post.contentJson, post.content),
@@ -482,12 +569,13 @@ async function getPostDetails(postId: PostId): Promise<CallToolResult> {
     deletedAt: post.deletedAt ?? null,
     comments: comments.map(serializeMcpComment),
   })
+  return withAuthorFacts(result, authors)
 }
 
 async function getChangelogDetails(changelogId: ChangelogId): Promise<CallToolResult> {
   const entry = await getChangelogById(changelogId)
 
-  return jsonResult({
+  const result = jsonResult({
     id: entry.id,
     title: entry.title,
     content: contentJsonToMarkdown(entry.contentJson, entry.content),
@@ -504,6 +592,7 @@ async function getChangelogDetails(changelogId: ChangelogId): Promise<CallToolRe
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
   })
+  return withAuthorFacts(result, [['', entry.author?.id]])
 }
 
 async function getArticleDetails(articleId: KbArticleId): Promise<CallToolResult> {

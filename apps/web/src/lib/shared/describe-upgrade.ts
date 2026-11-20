@@ -1,6 +1,7 @@
 import {
   ENTITLEMENTS,
   PLAN_CATALOGUE,
+  canonicalPlanId,
   minimumPlanFor,
   type EntitlementKey,
   type PlanId,
@@ -21,7 +22,10 @@ export type UpgradeDescription = {
 /** Catalogue-backed copy for an entitlement. Plan names come from PLAN_CATALOGUE. */
 export function describeEntitlementUpgrade(key: EntitlementKey): UpgradeDescription {
   const definition = ENTITLEMENTS[key]
-  const plan = minimumPlanFor(key)
+  // Free is never an upgrade target: a feature Free includes that a workspace
+  // still lacks was withheld, which only support can change.
+  const cheapest = minimumPlanFor(key)
+  const plan = cheapest && cheapest.id !== 'free' ? cheapest : null
   const verb = definition.plural ? 'are' : 'is'
   if (!plan) {
     return {
@@ -88,8 +92,8 @@ export type UnlockedHighlights = {
 
 /**
  * Everything the workspace gains by moving from `currentPlan` to `requiredPlan`.
- * Catalogue highlights are incremental per plan, so a Free → Pro move also
- * brings Growth's list. Unknown current plan means only the target's list.
+ * Catalogue highlights are incremental per plan, so a Free → Business move also
+ * brings Pro's list. Unknown current plan means only the target's list.
  */
 export function unlockedHighlights(
   catalogue: BillingCatalogue | null | undefined,
@@ -112,7 +116,7 @@ export function cataloguePlanFor(
   planId: PlanId | null | undefined
 ): BillingCatalogue['plans'][number] | null {
   if (!catalogue || !planId) return null
-  return catalogue.plans.find((plan) => plan.id === planId) ?? null
+  return catalogue.plans.find((plan) => canonicalPlanId(plan.id) === planId) ?? null
 }
 
 function refusalMessage(error: unknown): string {

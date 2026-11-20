@@ -36,10 +36,12 @@ export const sv: EmailCatalogue = {
     'Du får det här mejlet eftersom {workspaceName} har skickat ett meddelande till dig.',
 
   // --- Konto och inloggning -----------------------------------------------
-  'invitation.subject': 'Du har blivit inbjuden till {workspaceName}',
+  'invitation.subject': '{invitedByName} har bjudit in dig till {workspaceName}',
   'portalInvite.subject': 'Du har blivit inbjuden till {workspaceName}',
   'welcome.subject': 'Välkommen till {workspaceName}!',
   'magicLink.subject': 'Din inloggningslänk',
+  'magicLink.subjectCode': '{code} är din inloggningskod',
+  'magicLink.subjectCodeFor': '{code} är din kod för {workspaceName}',
   'signupNotAllowed.subject': 'Angående din inloggningsförfrågan',
   'passwordReset.subject': 'Återställ ditt lösenord',
   'recoveryCodeUsed.subject': 'En återställningskod på ditt konto har just använts',
@@ -75,8 +77,7 @@ export const sv: EmailCatalogue = {
   'ticket.closed.subject': 'Ditt ärende {ticketLabel} har stängts',
   'ticket.closed.heading': 'Ditt ärende har stängts',
   'ticket.closed.intro': '{ticketLabel} ”{title}” har stängts av teamet på {workspaceName}.',
-  'ticket.closed.note':
-    'Har du en följdfråga? Svara i ärendetråden — ett svar öppnar ärendet igen.',
+  'ticket.closed.note': 'Har du en följdfråga? Svara i ärendetråden. Ett svar öppnar ärendet igen.',
   'ticket.resolved.subject': 'Ditt ärende {ticketLabel} har lösts',
   'ticket.resolved.heading': 'Ditt ärende har lösts',
   'ticket.resolved.intro':
@@ -110,6 +111,7 @@ export const sv: EmailCatalogue = {
   // --- Inloggningsmejl ----------------------------------------------------
   'magicLink.preview': 'Din inloggningslänk',
   'magicLink.heading': 'Logga in',
+  'magicLink.headingFor': 'Logga in på {workspaceName}',
   'magicLink.body': 'Klicka på knappen nedan för att slutföra inloggningen.',
   'magicLink.cta': 'Logga in',
   'magicLink.codeIntro': 'Eller ange den här koden på inloggningssidan:',
@@ -133,7 +135,7 @@ export const sv: EmailCatalogue = {
   'verifyAddress.bodyFor':
     'Ange den här koden för {workspaceName} för att bekräfta adressen. Den går ut om 10 minuter.',
   'verifyAddress.ignore':
-    'Om du inte har bett om detta kan du bortse från mejlet — inget ändras utan koden.',
+    'Om du inte har bett om detta kan du bortse från mejlet. Inget ändras utan koden.',
   'verifyAddress.footer':
     'Du får det här mejlet eftersom någon angav den här adressen på ett konto. Den används inte till något förrän den har bekräftats.',
 
@@ -152,11 +154,12 @@ export const sv: EmailCatalogue = {
 
   // --- Inbjudan till teamet -----------------------------------------------
   'invitation.preview': 'Gå med i {organizationName}',
-  'invitation.heading': 'Du är inbjuden!',
-  'invitation.headingNamed': 'Hej {inviteeName}, du är inbjuden!',
-  'invitation.body': '{invitedByName} har bjudit in dig till {organizationName}.',
+  'invitation.heading': 'Gå med i {organizationName}',
+  'invitation.headingNamed': 'Hej {inviteeName}, gå med i {organizationName}',
+  'invitation.body': '{invitedByName} har bjudit in dig till teamet {organizationName}.',
   'invitation.cta': 'Acceptera inbjudan',
-  'invitation.ignore': 'Om du inte väntade dig den här inbjudan kan du bortse från mejlet.',
+  'invitation.fallback': 'Eller klistra in den här länken i din webbläsare:',
+  'invitation.ignore': 'Väntade du dig inte det här? Då kan du bortse från mejlet.',
 
   // --- Inbjudan till portalen ---------------------------------------------
   'portalInvite.preview': 'Du har blivit inbjuden till portalen för {workspaceName}',
@@ -175,8 +178,14 @@ export const sv: EmailCatalogue = {
   'newSignIn.bodyFor':
     'Någon loggade just in på ditt konto hos {workspaceName} från en enhet vi inte sett tidigare.',
   'newSignIn.label.ip': 'IP:',
+  'newSignIn.label.location': 'Plats:',
   'newSignIn.advice':
-    'Var det du behöver du inte göra något. Var det inte du: byt lösenord och logga ut alla andra aktiva sessioner.',
+    'Var det du behöver du inte göra något. Var det inte du: ange eller byt lösenord i dina profilinställningar. Det loggar ut andra sessioner.',
+  'newSignIn.adviceSso':
+    'Var det du behöver du inte göra något. Var det inte du: byt lösenord hos din identitetsleverantör och be en administratör för arbetsytan att logga ut andra sessioner.',
+  'newSignIn.adviceLinkLead': 'Var det du behöver du inte göra något. Var det inte du:',
+  'newSignIn.adviceLinkText': 'ange eller byt lösenord',
+  'newSignIn.adviceLinkTail': 'i dina profilinställningar. Det loggar ut andra sessioner.',
   'newSignIn.footer':
     'Du får det här mejlet eftersom en ny inloggning upptäcktes på ditt konto. Den här aviseringen är obligatorisk och går inte att stänga av.',
   'recoveryCodeUsed.preview': 'En återställningskod har använts för inloggning',
@@ -191,7 +200,7 @@ export const sv: EmailCatalogue = {
   'recoveryCodeUsed.adviceYou':
     'Var det du behöver du inte göra något. Koden är nu förbrukad och kan inte återanvändas.',
   'recoveryCodeUsed.adviceNotYou':
-    'Var det inte du: logga in och byt ut dina återställningskoder omedelbart. Personen som använde koden har nu en aktiv session — avsluta den i dina säkerhetsinställningar.',
+    'Var det inte du: logga in och byt ut dina återställningskoder omedelbart. Personen som använde koden har nu en aktiv session. Avsluta den i dina säkerhetsinställningar.',
   'recoveryCodeUsed.footer':
     'Du får det här mejlet eftersom en återställningskod på ditt konto just användes. Den här aviseringen är obligatorisk och går inte att stänga av.',
   'signupNotAllowed.preview': 'Angående din inloggningsförfrågan',
@@ -268,7 +277,7 @@ export const sv: EmailCatalogue = {
   'statusIncident.heading': 'Ny driftstörning rapporterad',
   'statusIncident.body': '{workspaceName} har just publicerat en uppdatering på sin statussida.',
   'statusIncident.cta': 'Visa aktuell status',
-  'status.affectedComponents': 'Berörda komponenter',
+  'status.affectedComponents': 'Berörda tjänster',
   'status.reason': 'Du får det här mejlet eftersom du prenumererar på statusuppdateringar.',
   'statusMaintenance.preview': 'Planerat underhåll: {maintenanceTitle} ({startLabel})',
   'statusMaintenance.eyebrow': 'Planerat underhåll',

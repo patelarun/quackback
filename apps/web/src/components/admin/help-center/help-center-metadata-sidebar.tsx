@@ -1,7 +1,12 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { PlusIcon } from '@heroicons/react/24/solid'
+import { HandThumbDownIcon, LanguageIcon } from '@heroicons/react/24/outline'
 import { CategoryIcon } from '@/components/help-center/category-icon'
+import { ArticleAudienceControl } from '@/components/admin/help-center/article-audience-control'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import type { SegmentItem } from '@/components/admin/segments/segment-multi-select'
 import {
   Select,
   SelectContent,
@@ -23,11 +28,13 @@ interface HelpCenterMetadataSidebarProps {
   isPublished: boolean
   onPublishToggle: () => void
   authorName?: string | null
-  /** Validation message for the category field. The Select is a plain control
-   * rather than a react-hook-form FormField, so without this the host form has
-   * nowhere to render "Category is required" — and a submit blocked on it looks
-   * to the user like the button does nothing. */
-  categoryError?: string
+  segments?: SegmentItem[]
+  segmentIds?: string[]
+  onSegmentIdsChange?: (ids: string[]) => void
+  notHelpfulCount?: number
+  onOpenFeedback?: () => void
+  onOpenTranslations?: () => void
+  publishPending?: boolean
 }
 
 function SidebarContent({
@@ -36,7 +43,13 @@ function SidebarContent({
   isPublished,
   onPublishToggle,
   authorName,
-  categoryError,
+  segments,
+  segmentIds,
+  onSegmentIdsChange,
+  notHelpfulCount,
+  onOpenFeedback,
+  onOpenTranslations,
+  publishPending,
 }: HelpCenterMetadataSidebarProps) {
   const [createCategoryOpen, setCreateCategoryOpen] = useState(false)
   const { data: categories } = useQuery(helpCenterQueries.categories())
@@ -44,53 +57,54 @@ function SidebarContent({
   return (
     <>
       <SidebarRow label="Status">
-        <button type="button" onClick={onPublishToggle} className="flex items-center gap-2 text-sm">
+        <button
+          type="button"
+          onClick={onPublishToggle}
+          disabled={publishPending}
+          className="flex items-center gap-2 text-sm disabled:opacity-60"
+        >
           <span
             className="h-2 w-2 rounded-full shrink-0"
             style={{ backgroundColor: isPublished ? '#22c55e' : '#a1a1aa' }}
           />
-          {isPublished ? 'Published' : 'Draft'}
+          {publishPending
+            ? isPublished
+              ? 'Unpublishing…'
+              : 'Publishing…'
+            : isPublished
+              ? 'Published'
+              : 'Draft'}
         </button>
       </SidebarRow>
 
       <SidebarDivider />
 
-      <SidebarRow label="Category" alignTop={Boolean(categoryError)}>
-        <div className="flex flex-col items-end gap-1">
-          <div className="flex items-center gap-1.5">
-            <Select value={categoryId || undefined} onValueChange={onCategoryChange}>
-              <SelectTrigger
-                size="sm"
-                className="flex-1 min-w-0"
-                aria-invalid={Boolean(categoryError)}
-              >
-                <SelectValue placeholder="Select category..." />
-              </SelectTrigger>
-              <SelectContent align="end">
-                {categories?.map((cat) => (
-                  <SelectItem key={cat.id} value={cat.id}>
-                    <span className="flex items-center gap-1.5">
-                      {cat.icon && <CategoryIcon icon={cat.icon} className="w-4 h-4 shrink-0" />}
-                      <span className="truncate">{cat.name}</span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <button
-              type="button"
-              onClick={() => setCreateCategoryOpen(true)}
-              className="h-8 w-8 flex items-center justify-center rounded-md border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
-              title="Create new category"
-            >
-              <PlusIcon className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          {categoryError && (
-            <p role="alert" className="text-xs text-destructive">
-              {categoryError}
-            </p>
-          )}
+      <SidebarRow label="Category">
+        <div className="flex items-center gap-1.5">
+          <Select value={categoryId || undefined} onValueChange={onCategoryChange}>
+            <SelectTrigger size="sm" className="flex-1 min-w-0">
+              {/* Saving without a pick files the article under General. */}
+              <SelectValue placeholder="General" />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {categories?.map((cat) => (
+                <SelectItem key={cat.id} value={cat.id}>
+                  <span className="flex items-center gap-1.5">
+                    {cat.icon && <CategoryIcon icon={cat.icon} className="w-4 h-4 shrink-0" />}
+                    <span className="truncate">{cat.name}</span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <button
+            type="button"
+            onClick={() => setCreateCategoryOpen(true)}
+            className="h-8 w-8 flex items-center justify-center rounded-md border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+            title="Create new category"
+          >
+            <PlusIcon className="h-3.5 w-3.5" />
+          </button>
         </div>
       </SidebarRow>
 
@@ -108,6 +122,46 @@ function SidebarContent({
           </SidebarRow>
         </>
       )}
+
+      {segments && onSegmentIdsChange ? (
+        <>
+          <SidebarDivider />
+          <SidebarRow label="Audience">
+            <ArticleAudienceControl
+              segments={segments}
+              value={segmentIds ?? []}
+              onChange={onSegmentIdsChange}
+            />
+          </SidebarRow>
+        </>
+      ) : null}
+
+      {onOpenTranslations ? (
+        <>
+          <SidebarDivider />
+          <SidebarRow label="Translations">
+            <Button type="button" variant="ghost" size="sm" onClick={onOpenTranslations}>
+              <LanguageIcon className="h-3.5 w-3.5" />
+              Manage
+            </Button>
+          </SidebarRow>
+        </>
+      ) : null}
+
+      {onOpenFeedback && (notHelpfulCount ?? 0) > 0 ? (
+        <>
+          <SidebarDivider />
+          <SidebarRow label="Feedback">
+            <Button type="button" variant="ghost" size="sm" onClick={onOpenFeedback}>
+              <HandThumbDownIcon className="h-3.5 w-3.5" />
+              Unhelpful
+              <Badge size="sm" variant="secondary">
+                {notHelpfulCount}
+              </Badge>
+            </Button>
+          </SidebarRow>
+        </>
+      ) : null}
     </>
   )
 }

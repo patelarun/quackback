@@ -159,6 +159,7 @@ export const Route = createFileRoute('/api/v1/posts/$postId/comments')({
             role: auth.role as import('@/lib/server/policy/types').Role,
             principalType: callerType === 'service' ? ('service' as const) : ('user' as const),
             segmentIds: callerSegmentIds,
+            permissions: auth.permissions,
           }
 
           const result = await createComment(

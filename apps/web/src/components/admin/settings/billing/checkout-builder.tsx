@@ -1,9 +1,9 @@
-import { useState } from 'react'
-import { ArrowTopRightOnSquareIcon, CheckIcon } from '@heroicons/react/24/solid'
+import { useId, useState } from 'react'
+import { ArrowTopRightOnSquareIcon } from '@heroicons/react/24/solid'
 import type { BillingProjectionOverview } from '@/lib/server/domains/billing/projection-overview'
 import type { BillingCatalogue } from '@/lib/server/control-plane/client'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Button, NewTabHint } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ConfirmDialog } from '@/components/shared/confirm-dialog'
 import { cn } from '@/lib/shared/utils'
@@ -16,20 +16,19 @@ import {
   type PaidPlanId,
 } from '@/lib/shared/billing/plan-action'
 import {
-  annualSavingsPercent,
+  annualSavingsLabel,
   checkoutSummary,
   isPaidPlanId,
   type BillingPeriod,
 } from '@/lib/shared/billing/checkout-path'
-import { QuantityStepper } from './quantity-stepper'
-import { FreeDowngradeDialog } from './free-downgrade-dialog'
+import { FreeDowngradeDialog, PlanDowngradeDialog } from './free-downgrade-dialog'
+import { INLINE_LINK } from '@/components/admin/settings/inline-link'
 
 type CataloguePlan = BillingCatalogue['plans'][number]
 
 export type CheckoutSelection = {
   plan: PaidPlanId | null
   period: BillingPeriod
-  seats: number
   /** Branding removal added to the order. */
   branding: boolean
 }
@@ -38,14 +37,14 @@ export type CheckoutSelection = {
 export type CheckoutSelectionChange = Partial<{
   plan: PaidPlanId
   period: BillingPeriod
-  seats: number
   branding: boolean
 }>
 
 const PLANS_PATH = '/admin/settings/billing'
+const COMPARE_FEATURES_HREF = 'https://quackback.io/pricing'
 
 /**
- * The plan configurator: billing cycle, plan, seats and add-ons on the left,
+ * The plan configurator: billing cycle, plan, and add-ons on the left,
  * a live order summary on the right, then one hand-off to hosted checkout.
  * Selection lives in the URL so an upgrade prompt can deep-link with the plan
  * preselected and a refresh keeps the choice.
@@ -62,13 +61,11 @@ export function CheckoutBuilder(props: {
     .sort((a, b) => a.rank - b.rank)
   const freePlan = catalogue.plans.find((plan) => plan.id === 'free') ?? null
   const selectedPlan = paidPlans.find((plan) => plan.id === selection.plan) ?? null
-  const minSeats = Math.max(overview.seats?.used ?? 1, 1)
-  const seats = Math.max(selection.seats, minSeats)
   const trialedPlanIds = catalogueTrialedPlanIds(catalogue)
   const trialDays = catalogueTrialDays(catalogue)
   const savingsReference =
     selectedPlan ?? paidPlans.find((plan) => plan.recommended) ?? paidPlans[0]
-  const savings = savingsReference ? annualSavingsPercent(savingsReference) : null
+  const savings = annualSavingsLabel(savingsReference)
   const freeAction = freePlan ? billingPlanAction('free', overview, trialedPlanIds) : null
   const canPurchase = overview.canUpgrade || overview.canManageBilling
   const branding = catalogue.brandingRemoval ?? null
@@ -83,8 +80,7 @@ export function CheckoutBuilder(props: {
           <SectionTitle>Billing cycle</SectionTitle>
           <CycleToggle
             value={selection.period}
-            savingsPercent={savings}
-            discountMonths={catalogue.annualDiscountMonths}
+            savingsLabel={savings}
             onChange={(period) => props.onChange({ period })}
           />
         </section>
@@ -103,7 +99,8 @@ export function CheckoutBuilder(props: {
           <div
             role="radiogroup"
             aria-label="Plan"
-            className="divide-y divide-border/50 overflow-hidden rounded-xl border border-border/50 bg-card"
+            data-settings-card=""
+            className="divide-y divide-border/50 overflow-hidden border-y border-t-transparent"
           >
             {freePlan && freeAction ? <FreePlanRow plan={freePlan} action={freeAction} /> : null}
             {paidPlans.map((plan) => (
@@ -119,32 +116,6 @@ export function CheckoutBuilder(props: {
             ))}
           </div>
         </section>
-
-        {selectedPlan?.billedPer === 'seat' ? (
-          <section className="space-y-3">
-            <SectionTitle>Seats</SectionTitle>
-            <div className="rounded-xl border border-border/50 bg-card px-4 py-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <QuantityStepper
-                  value={seats}
-                  min={minSeats}
-                  onChange={(next) => props.onChange({ seats: next })}
-                  decreaseLabel="Fewer seats"
-                  increaseLabel="More seats"
-                />
-                <span className="text-[13px] text-muted-foreground">
-                  {seats === 1 ? 'seat' : 'seats'} (min. {minSeats} — already in use)
-                </span>
-              </div>
-              <p className="mt-2 text-[12px] text-muted-foreground">
-                Each member or pending invite uses a seat. You have {overview.seats?.members ?? 0}{' '}
-                {(overview.seats?.members ?? 0) === 1 ? 'member' : 'members'} and{' '}
-                {overview.seats?.pending ?? 0} pending{' '}
-                {(overview.seats?.pending ?? 0) === 1 ? 'invite' : 'invites'}.
-              </p>
-            </div>
-          </section>
-        ) : null}
 
         {branding ? (
           <section className="space-y-3">
@@ -165,7 +136,6 @@ export function CheckoutBuilder(props: {
         overview={overview}
         plan={selectedPlan}
         period={selection.period}
-        seats={seats}
         branding={brandingInOrder && branding ? branding : null}
         trialDays={trialDays}
         currentPlanRank={catalogue.plans.find((plan) => plan.id === overview.plan)?.rank ?? 0}
@@ -181,8 +151,7 @@ function SectionTitle(props: { children: React.ReactNode }) {
 
 function CycleToggle(props: {
   value: BillingPeriod
-  savingsPercent: number | null
-  discountMonths: number
+  savingsLabel: string | null
   onChange: (next: BillingPeriod) => void
 }) {
   return (
@@ -208,11 +177,9 @@ function CycleToggle(props: {
             )}
           >
             {option === 'annual' ? 'Yearly' : 'Monthly'}
-            {option === 'annual' ? (
-              <Badge size="sm" shape="pill" variant={active ? 'default' : 'secondary'}>
-                {props.savingsPercent != null
-                  ? `Save ${props.savingsPercent}%`
-                  : `${props.discountMonths} mo free`}
+            {option === 'annual' && props.savingsLabel ? (
+              <Badge size="sm" variant={active ? 'default' : 'secondary'}>
+                {props.savingsLabel}
               </Badge>
             ) : null}
           </button>
@@ -233,7 +200,7 @@ function PlanRow(props: {
   const { plan, period } = props
   const monthlyCents =
     period === 'annual' ? Math.round(plan.priceYearlyCents / 12) : plan.priceMonthlyCents
-  const unit = plan.billedPer === 'seat' ? '/seat/mo' : '/mo'
+  const unit = '/mo'
   const current = props.action.kind === 'current'
   return (
     <div
@@ -257,16 +224,25 @@ function PlanRow(props: {
           <div className="flex flex-wrap items-center gap-1.5">
             <h3 className="text-sm font-semibold">{plan.name}</h3>
             {current ? (
-              <Badge size="sm" shape="pill">
-                {props.trialActive ? 'Current · trial' : 'Current'}
-              </Badge>
+              <Badge size="sm">{props.trialActive ? 'Current · trial' : 'Current'}</Badge>
             ) : plan.recommended ? (
-              <Badge size="sm" shape="pill" variant="secondary">
+              <Badge size="sm" variant="secondary">
                 Recommended
               </Badge>
             ) : null}
           </div>
           <p className="mt-1 text-[13px] text-muted-foreground">{plan.bestFor}</p>
+          <a
+            href={COMPARE_FEATURES_HREF}
+            target="_blank"
+            rel="noreferrer"
+            className={`${INLINE_LINK} mt-1 inline-flex items-center gap-1 text-[13px]`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            View & compare features
+            <NewTabHint />
+            <ArrowTopRightOnSquareIcon className="size-3.5" />
+          </a>
         </div>
         <p className="shrink-0 text-right">
           <span className="text-lg font-semibold tracking-tight tabular-nums">
@@ -278,16 +254,6 @@ function PlanRow(props: {
           </span>
         </p>
       </div>
-      {props.selected ? (
-        <ul className="mt-3 grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
-          {plan.highlights.map((line) => (
-            <li key={line} className="flex items-start gap-2 text-[13px] leading-snug">
-              <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-primary" />
-              <span>{line}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
     </div>
   )
 }
@@ -300,13 +266,19 @@ function FreePlanRow(props: { plan: CataloguePlan; action: BillingPlanAction }) 
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-1.5">
           <h3 className="text-sm font-semibold">{props.plan.name}</h3>
-          {current ? (
-            <Badge size="sm" shape="pill">
-              Current
-            </Badge>
-          ) : null}
+          {current ? <Badge size="sm">Current</Badge> : null}
         </div>
         <p className="mt-1 text-[13px] text-muted-foreground">{props.plan.bestFor}</p>
+        <a
+          href={COMPARE_FEATURES_HREF}
+          target="_blank"
+          rel="noreferrer"
+          className={`${INLINE_LINK} mt-1 inline-flex items-center gap-1 text-[13px]`}
+        >
+          View & compare features
+          <NewTabHint />
+          <ArrowTopRightOnSquareIcon className="size-3.5" />
+        </a>
         {props.action.kind === 'downgrade' ? (
           <div className="mt-3">
             <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
@@ -341,10 +313,15 @@ function BrandingAddOnRow(props: {
   const intervalLabel = props.period === 'annual' ? 'yr' : 'mo'
   const price = `${formatUsd(brandingCents(props.price, props.period), 0)}/${intervalLabel}`
   const selectable = !props.hideBranding && props.canPurchase
+  // The box is a native <button> (see ui/checkbox): it gets no native label
+  // re-dispatch, so the row owns the toggle via htmlFor — one path only, no
+  // double-fire, real browsers and fireEvent alike.
+  const boxId = useId()
   return (
-    <label
+    <div
+      data-settings-card=""
       className={cn(
-        'flex items-center justify-between gap-3 rounded-xl border border-border/50 bg-card px-4 py-3',
+        'flex items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3',
         selectable && 'cursor-pointer',
         props.checked && 'bg-primary/5 ring-1 ring-inset ring-primary/40'
       )}
@@ -352,6 +329,7 @@ function BrandingAddOnRow(props: {
       <div className="flex min-w-0 items-start gap-3">
         {selectable ? (
           <Checkbox
+            id={boxId}
             className="mt-0.5"
             checked={props.checked}
             onCheckedChange={(value) => props.onCheckedChange(value === true)}
@@ -359,7 +337,9 @@ function BrandingAddOnRow(props: {
           />
         ) : null}
         <div className="min-w-0">
-          <div className="text-[13px] font-medium">Remove Quackback branding</div>
+          <label htmlFor={boxId} className="block cursor-pointer text-[13px] font-medium">
+            Remove Quackback branding
+          </label>
           <div className="text-[12px] text-muted-foreground">
             Hide the platform branding line in the footer of outgoing emails. Billed with your plan
             on the same {props.period === 'annual' ? 'yearly' : 'monthly'} cycle.
@@ -367,13 +347,13 @@ function BrandingAddOnRow(props: {
         </div>
       </div>
       {props.hideBranding ? (
-        <Badge size="sm" shape="pill" variant="secondary">
+        <Badge size="sm" variant="secondary">
           Included
         </Badge>
       ) : (
         <span className="shrink-0 text-[13px] font-medium tabular-nums">{price}</span>
       )}
-    </label>
+    </div>
   )
 }
 
@@ -381,7 +361,6 @@ function OrderSummary(props: {
   overview: BillingProjectionOverview
   plan: CataloguePlan | null
   period: BillingPeriod
-  seats: number
   branding: BrandingPrice | null
   trialDays: number
   currentPlanRank: number
@@ -389,7 +368,7 @@ function OrderSummary(props: {
 }) {
   const { overview, plan, period } = props
   const canAct = overview.canUpgrade || overview.canManageBilling
-  const summary = plan ? checkoutSummary(plan, period, props.seats) : null
+  const summary = plan ? checkoutSummary(plan, period) : null
   const intervalLabel = period === 'annual' ? 'year' : 'mo'
   const fromPaid = overview.plan !== 'free' && !overview.trialActive
   const movingDown = plan != null && fromPaid && plan.rank < props.currentPlanRank
@@ -403,7 +382,7 @@ function OrderSummary(props: {
 
   return (
     <aside className="lg:sticky lg:top-6">
-      <div className="overflow-hidden rounded-xl border border-border/50 bg-card">
+      <div data-settings-card="" className="overflow-hidden rounded-xl border bg-card">
         <div className="border-b border-border/50 px-5 py-4">
           <h2 className="text-sm font-semibold">Order summary</h2>
         </div>
@@ -413,7 +392,7 @@ function OrderSummary(props: {
               <span className="text-sm font-medium">
                 {plan ? `${plan.name} plan` : 'Add-ons only'}
               </span>
-              <Badge size="sm" shape="pill" variant="secondary">
+              <Badge size="sm" variant="secondary">
                 {period === 'annual' ? 'Yearly' : 'Monthly'}
               </Badge>
             </div>
@@ -421,9 +400,7 @@ function OrderSummary(props: {
               {plan && summary && planCharged ? (
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="text-muted-foreground">
-                    {summary.billedPer === 'seat'
-                      ? `${summary.quantity} ${summary.quantity === 1 ? 'seat' : 'seats'} × ${formatUsd(summary.unitCents, 0)}/${intervalLabel}`
-                      : `Workspace × ${formatUsd(summary.unitCents, 0)}/${intervalLabel}`}
+                    {`Workspace × ${formatUsd(summary.unitCents, 0)}/${intervalLabel}`}
                   </span>
                   <span className="tabular-nums">
                     {formatUsd(summary.totalCents, 0)}/{intervalLabel}
@@ -461,7 +438,6 @@ function OrderSummary(props: {
           <SummaryAction
             plan={plan}
             period={period}
-            quantity={summary?.quantity ?? 1}
             branding={props.branding != null}
             brandingOnly={brandingOnly}
             action={props.action}
@@ -476,7 +452,7 @@ function OrderSummary(props: {
                   ? 'You are already on this plan; only the add-on is charged, pro-rata on your current subscription.'
                   : 'Payment is handled by Stripe. Branding removal renews on its own cycle until you cancel it.'
                 : props.action?.kind === 'current'
-                  ? 'You are already on this plan. Seats can be changed from Plans & billing.'
+                  ? 'You are already on this plan.'
                   : overview.trialActive
                     ? 'Payment is handled by Stripe. Billing starts today and your trial ends when it goes through.'
                     : movingDown
@@ -494,7 +470,6 @@ function OrderSummary(props: {
 function SummaryAction(props: {
   plan: CataloguePlan | null
   period: BillingPeriod
-  quantity: number
   branding: boolean
   brandingOnly: boolean
   action: BillingPlanAction | null
@@ -527,7 +502,17 @@ function SummaryAction(props: {
       </Button>
     )
   }
-  if (!props.canAct || action.kind === 'unavailable' || action.kind === 'downgrade') {
+  if (action.kind === 'downgrade') {
+    return (
+      <PaidDowngradeAction
+        planName={plan.name}
+        planId={action.planId}
+        period={props.period}
+        branding={props.branding}
+      />
+    )
+  }
+  if (!props.canAct || action.kind === 'unavailable') {
     return (
       <Button type="button" className="w-full" disabled>
         Continue to payment
@@ -540,7 +525,7 @@ function SummaryAction(props: {
         <input type="hidden" name="action" value="checkout" />
         <input type="hidden" name="planId" value={plan.id} />
         <input type="hidden" name="billingPeriod" value={props.period} />
-        <input type="hidden" name="quantity" value={String(props.quantity)} />
+        <input type="hidden" name="quantity" value="1" />
         {props.branding ? <input type="hidden" name="brandingRemoval" value="true" /> : null}
         <Button type="submit" className="w-full">
           Continue to payment
@@ -550,6 +535,34 @@ function SummaryAction(props: {
         <TrialInstead planId={action.planId} planName={plan.name} trialDays={props.trialDays} />
       ) : null}
     </div>
+  )
+}
+
+function PaidDowngradeAction(props: {
+  planName: string
+  planId: string
+  period: BillingPeriod
+  branding: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Button type="button" className="w-full" variant="outline" onClick={() => setOpen(true)}>
+        Switch to {props.planName}
+      </Button>
+      {open ? (
+        <PlanDowngradeDialog
+          open
+          onOpenChange={setOpen}
+          planId={props.planId}
+          planName={props.planName}
+          checkout={{
+            period: props.period,
+            branding: props.branding,
+          }}
+        />
+      ) : null}
+    </>
   )
 }
 

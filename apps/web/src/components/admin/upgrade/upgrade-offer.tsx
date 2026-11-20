@@ -1,7 +1,7 @@
 import { Suspense, useState } from 'react'
 import { ArrowTopRightOnSquareIcon, CheckIcon, LockClosedIcon } from '@heroicons/react/24/solid'
 import { useSuspenseQuery } from '@tanstack/react-query'
-import { useLocation, useRouteContext } from '@tanstack/react-router'
+import { useLocation } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
 import { billingQueries } from '@/lib/client/queries/billing'
 import { usePermission } from '@/lib/client/hooks/use-permission'
@@ -12,7 +12,7 @@ import {
   catalogueTrialedPlanIds,
   type PaidPlanId,
 } from '@/lib/shared/billing/plan-action'
-import { checkoutPath, isPaidPlanId } from '@/lib/shared/billing/checkout-path'
+import { annualSavingsLabel, checkoutPath, isPaidPlanId } from '@/lib/shared/billing/checkout-path'
 import {
   cataloguePlanFor,
   unlockedHighlights,
@@ -22,6 +22,7 @@ import {
 import { cn } from '@/lib/shared/utils'
 import type { BillingCatalogue } from '@/lib/server/control-plane/client'
 import type { UpgradeContext } from '@/lib/server/domains/settings/cloud/upgrade-context'
+import { useBillingEnabled } from '@/lib/client/hooks/use-root-context'
 
 type BillingPeriod = 'monthly' | 'annual'
 
@@ -43,7 +44,7 @@ type UpgradeOfferProps = {
  * context are prefetched in the route loader so the first paint is complete.
  */
 export function UpgradeOffer(props: UpgradeOfferProps) {
-  const { billingEnabled } = useRouteContext({ from: '__root__' })
+  const billingEnabled = useBillingEnabled()
   const canCheckout = usePermission(PERMISSIONS.BILLING_MANAGE)
   if (!billingEnabled) {
     return (
@@ -153,7 +154,6 @@ function OfferFrame(props: OfferFrameProps) {
         <PriceRow
           plan={plan}
           period={period}
-          discountMonths={catalogue?.annualDiscountMonths ?? 2}
           onPeriodChange={setPeriod}
           trialDays={trialPlanId ? trialDays : null}
         />
@@ -216,14 +216,13 @@ function trialPlanIdFor(
   catalogue: BillingCatalogue | null
 ): PaidPlanId | null {
   if (!plan || !context?.trialEligible) return null
-  if (plan.id !== 'growth' && plan.id !== 'pro' && plan.id !== 'scale') return null
+  if (plan.id !== 'pro' && plan.id !== 'business' && plan.id !== 'enterprise') return null
   return catalogueTrialedPlanIds(catalogue).includes(plan.id) ? null : plan.id
 }
 
 function PriceRow(props: {
   plan: BillingCatalogue['plans'][number]
   period: BillingPeriod
-  discountMonths: number
   onPeriodChange: (next: BillingPeriod) => void
   trialDays: number | null
 }) {
@@ -231,7 +230,7 @@ function PriceRow(props: {
   const monthlyCents = isAnnual
     ? Math.round(props.plan.priceYearlyCents / 12)
     : props.plan.priceMonthlyCents
-  const unit = props.plan.billedPer === 'seat' ? '/seat/mo' : '/mo'
+  const unit = '/mo'
 
   return (
     <div className="mt-4 rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5">
@@ -249,7 +248,7 @@ function PriceRow(props: {
         </p>
         <PeriodToggle
           value={props.period}
-          discountMonths={props.discountMonths}
+          savingsLabel={annualSavingsLabel(props.plan)}
           onChange={props.onPeriodChange}
         />
       </div>
@@ -265,7 +264,7 @@ function PriceRow(props: {
 
 function PeriodToggle(props: {
   value: BillingPeriod
-  discountMonths: number
+  savingsLabel: string | null
   onChange: (next: BillingPeriod) => void
 }) {
   return (
@@ -289,9 +288,9 @@ function PeriodToggle(props: {
           )}
         >
           {option === 'annual' ? 'Annual' : 'Monthly'}
-          {option === 'annual' ? (
+          {option === 'annual' && props.savingsLabel ? (
             <span className="ms-1 text-[11px] font-semibold text-primary">
-              {props.discountMonths} mo free
+              {props.savingsLabel}
             </span>
           ) : null}
         </button>

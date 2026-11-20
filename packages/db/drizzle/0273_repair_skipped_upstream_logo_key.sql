@@ -1,0 +1,20 @@
+-- Repair for a second upstream migration this fork caused to be skipped.
+--
+-- Same failure as 0274_repair_skipped_upstream_0249, one release later. The
+-- fork's 0273_kb_articles_base_locale and upstream's
+-- 0273_identity_provider_logo_key both carried journal `when` 1785700000031.
+-- The migrator applies an entry only when its `when` is strictly GREATER than
+-- the newest applied `created_at`, and every install of this fork had already
+-- applied the fork's migrations up to 1785700000033 — so upstream's logo_key
+-- column was passed over on upgrade, and any query naming
+-- identity_provider.logo_key would throw `column "logo_key" does not exist`.
+--
+-- During the v0.15.0 merge the fork's entries were moved to unique `when`
+-- values directly after upstream's 0273 (…032 base_locale, …033 chunks, …034
+-- the 0249 repair) and this file was journalled at …035, above the fork's
+-- old high-water mark, so it runs on every existing install.
+--
+-- IF NOT EXISTS: a fresh install runs upstream's 0273 first and reaches this
+-- with the column present, where it is a no-op. Matches upstream's statement
+-- exactly, so both paths land on the same schema.
+ALTER TABLE "identity_provider" ADD COLUMN IF NOT EXISTS "logo_key" text;

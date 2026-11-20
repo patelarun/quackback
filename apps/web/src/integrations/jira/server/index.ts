@@ -1,9 +1,10 @@
+import { channelDestination } from '@/lib/server/integrations/destination'
 import type { IntegrationDefinition } from '@/lib/server/integrations/types'
-import { closeJiraIssue } from '@/integrations/jira/server/archive'
 import { fetchJiraStatuses } from '@/integrations/jira/server/statuses'
 import {
   registerJiraWebhook,
   deleteJiraWebhook,
+  jiraProjectRef,
 } from '@/integrations/jira/server/webhook-registration'
 import { jiraHook } from '@/integrations/jira/server/hook'
 import { jiraInboundHandler } from '@/integrations/jira/server/inbound'
@@ -21,6 +22,7 @@ const log = logger.child({ component: 'jira' })
 
 export const jiraIntegration: IntegrationDefinition = {
   id: 'jira',
+  destination: channelDestination(['cloudId', 'siteUrl']),
   catalog: jiraCatalog,
   oauth: {
     stateType: 'jira_oauth',
@@ -30,12 +32,12 @@ export const jiraIntegration: IntegrationDefinition = {
   hook: jiraHook,
   inbound: jiraInboundHandler,
   issues: jiraIssues,
-  archive: closeJiraIssue,
+  linkedItems: true,
   webhookRegistration: {
     register: async ({ accessToken, config, callbackUrl }) => {
       const cloudId = config.cloudId as string
       if (!cloudId) throw new Error('No Jira Cloud ID configured')
-      const projectRef = String(config.channelId ?? '').split(':')[0]
+      const projectRef = jiraProjectRef(config.channelId)
       if (!projectRef) throw new Error('No Jira project configured')
       const result = await registerJiraWebhook(accessToken, cloudId, callbackUrl, projectRef)
       return { externalWebhookId: result.webhookId }
