@@ -172,7 +172,7 @@ pg_restore -d quackback quackback_backup.dump
 
 ### Prerequisites
 
-- **Bun** 1.4.0+
+- **Bun** 1.4.4+
 - **PostgreSQL** 14+ with pgvector 0.5.0+ and `pg_trgm` (see [Database Setup](#database-setup))
 - **Docker**, for the development database and object storage started by `bun run setup`
 

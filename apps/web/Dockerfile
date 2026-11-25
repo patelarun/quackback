@@ -13,7 +13,7 @@
 # ============================================================================
 
 # Base image with Bun
-FROM oven/bun:1.4.0 AS base
+FROM oven/bun:1.4.4 AS base
 WORKDIR /app
 
 # ============================================================================
@@ -109,7 +109,7 @@ RUN bun build apps/web/scripts/fleet-migrator.ts \
 # ============================================================================
 # Production runner
 # ============================================================================
-FROM oven/bun:1.4.0-alpine AS runner
+FROM oven/bun:1.4.4-alpine AS runner
 
 WORKDIR /app
 
